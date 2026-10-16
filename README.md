@@ -11,6 +11,8 @@ See [the feature status](docs/FEATURES.md) for current capabilities and limitati
 [WASAPI](docs/WASAPI.md), [ASIO build notes and SDK terms](docs/ASIO.md), and
 [stem setup](docs/STEMS.md). Controller integrations remain in development.
 
+For development on another machine, start with the [Codex handover](docs/HANDOVER.md).
+
 The original project overview follows; its baseline feature descriptions predate
 the custom changes above.
 

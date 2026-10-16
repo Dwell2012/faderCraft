@@ -2,6 +2,7 @@
 
 djcraft is an open-source DJ application in Rust with a GPUI interface. Read
 `README.md` for what it does and `docs/FEATURES.md` for the plan.
+Read `docs/HANDOVER.md` for current custom-build context and cross-machine setup.
 
 ## Commands
 
