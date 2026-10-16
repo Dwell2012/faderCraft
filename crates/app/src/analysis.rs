@@ -11,8 +11,9 @@ use djcraft_library::{Camelot, CuePoint, KeyResult, Library, TempoResult};
 
 /// Raise this when the analysis changes enough that every track should be
 /// analysed again. Version 2 added energy and cue points; version 3, key;
-/// version 4, bars and waveforms.
-const ANALYSIS_VERSION: i64 = 4;
+/// version 4, bars and waveforms; version 5, bass phase; version 6,
+/// actual opening attacks and opening-bar anchoring.
+const ANALYSIS_VERSION: i64 = 6;
 /// Tempo and key do not need treble, and a lower rate is quicker to decode.
 const ANALYSIS_RATE: u32 = 22_050;
 const MAX_WORKERS: usize = 4;

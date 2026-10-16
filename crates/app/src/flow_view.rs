@@ -120,6 +120,7 @@ pub struct FlowView {
     cues: Vec<CuePoint>,
     /// Where the player's waveform is on screen, as of the last frame.
     wave: Rc<Cell<Bounds<Pixels>>>,
+    wave_cache: Rc<std::cell::RefCell<crate::waveform::OverviewCache>>,
     /// Whether the player's key panel is showing.
     key_open: bool,
     /// When that panel was last closed by a click outside it.
@@ -150,7 +151,7 @@ impl FlowView {
         cx.subscribe(&browser, |this, _, event: &LibraryEvent, cx| match event {
             LibraryEvent::Load { id, .. } => this.append_track(*id, cx),
             LibraryEvent::Selected { id } => this.play_track(*id, cx),
-            LibraryEvent::Changed | LibraryEvent::Columns(_) => {}
+            LibraryEvent::Changed | LibraryEvent::Columns(_) | LibraryEvent::Queue(_) => {}
         })
         .detach();
 
@@ -170,6 +171,7 @@ impl FlowView {
             playing: None,
             cues: Vec::new(),
             wave: Rc::default(),
+            wave_cache: Rc::default(),
             key_open: false,
             key_dismissed: None,
             focus: cx.focus_handle(),
@@ -663,6 +665,12 @@ impl FlowView {
             )
             .child(
                 Button::new("zoom-out")
+                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                        this.zoom = (this.zoom * 1.2f32.powf(crate::wheel::steps(event)))
+                            .clamp(MIN_ZOOM, MAX_ZOOM);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
                     .ghost()
                     .small()
                     .icon(IconName::ZoomOut)
@@ -675,6 +683,12 @@ impl FlowView {
             )
             .child(
                 Button::new("zoom-in")
+                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                        this.zoom = (this.zoom * 1.2f32.powf(crate::wheel::steps(event)))
+                            .clamp(MIN_ZOOM, MAX_ZOOM);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
                     .ghost()
                     .small()
                     .icon(IconName::ZoomIn)
@@ -819,10 +833,9 @@ impl FlowView {
     /// until a track has been picked.
     fn player(&self, deck: Option<&DeckState>, cx: &mut Context<Self>) -> Option<Div> {
         let theme = cx.theme();
-        let (border, muted, accent, foreground, tile) = (
+        let (border, muted, foreground, tile) = (
             theme.border,
             theme.muted_foreground,
-            theme.primary,
             theme.foreground,
             theme.secondary,
         );
@@ -882,6 +895,20 @@ impl FlowView {
 
         let waveform = div()
             .id("player-wave")
+            .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                if let Some(state) = this.player.as_mut().map(|player| player.state()) {
+                    if let Some(deck) = state.decks.first() {
+                        let end = deck.track.as_ref().map_or(duration, |track| {
+                            track.loaded_seconds.min(track.duration_seconds)
+                        });
+                        let seconds = (deck.position_seconds + crate::wheel::steps(event) as f64)
+                            .clamp(0., end.max(0.));
+                        this.deck(DeckAction::Seek { seconds });
+                        cx.notify();
+                    }
+                }
+                cx.stop_propagation();
+            }))
             .relative()
             .flex_1()
             .h(px(PLAYER_WAVE_HEIGHT))
@@ -892,10 +919,12 @@ impl FlowView {
                 this.child(overview(
                     audio,
                     position / duration,
+                    self.wave_cache.clone(),
                     wave_bounds,
-                    accent,
-                    muted,
                     foreground,
+                    [None; djcraft_protocol::HOT_CUES],
+                    Default::default(),
+                    0,
                 ))
             })
             .children(flags)
@@ -1364,6 +1393,14 @@ impl FlowView {
 
         div()
             .id("flow-timeline")
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                if event.modifiers.control {
+                    this.zoom = (this.zoom * 1.2f32.powf(crate::wheel::steps(event)))
+                        .clamp(MIN_ZOOM, MAX_ZOOM);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 let key = event.keystroke.key.as_str();

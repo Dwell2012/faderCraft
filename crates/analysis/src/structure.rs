@@ -238,3 +238,83 @@ mod tests {
         assert_eq!(detect_structure(&[], RATE, None), None);
     }
 }
+
+/// Conservative energy-based labels, not semantic or vocal recognition.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SectionLabel {
+    Intro,
+    Build,
+    Breakdown,
+    Drop,
+    Outro,
+    Section,
+}
+pub fn label_sections(structure: &Structure) -> Vec<SectionLabel> {
+    let cues = &structure.cues;
+    cues.iter()
+        .enumerate()
+        .map(|(i, cue)| {
+            if cues.len() == 1 {
+                return SectionLabel::Section;
+            }
+            if i == 0 {
+                return SectionLabel::Intro;
+            }
+            if i + 1 == cues.len() && cue.energy < cues[i - 1].energy {
+                return SectionLabel::Outro;
+            }
+            let before = cues[i - 1].energy;
+            if cue.energy >= before.saturating_add(2) {
+                SectionLabel::Drop
+            } else if before >= cue.energy.saturating_add(2) {
+                SectionLabel::Breakdown
+            } else if cues
+                .get(i + 1)
+                .is_some_and(|next| next.energy >= cue.energy.saturating_add(2))
+            {
+                SectionLabel::Build
+            } else {
+                SectionLabel::Section
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    #[test]
+    fn energy_labels_are_conservative_and_follow_changes() {
+        let structure = Structure {
+            energy: 8,
+            cues: [2, 9, 3, 9, 2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, energy)| Cue {
+                    seconds: i as f64 * 32.,
+                    energy,
+                })
+                .collect(),
+        };
+        assert_eq!(
+            label_sections(&structure),
+            vec![
+                SectionLabel::Intro,
+                SectionLabel::Drop,
+                SectionLabel::Breakdown,
+                SectionLabel::Drop,
+                SectionLabel::Outro
+            ]
+        );
+        assert_eq!(
+            label_sections(&Structure {
+                energy: 5,
+                cues: vec![Cue {
+                    seconds: 0.,
+                    energy: 5
+                }]
+            }),
+            vec![SectionLabel::Section]
+        );
+    }
+}

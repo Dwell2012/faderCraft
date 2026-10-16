@@ -1,8 +1,8 @@
 use std::fmt;
 use std::fs::File;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Indexing, Resampler};
@@ -30,8 +30,12 @@ pub struct Track {
     pub sample_rate: u32,
     /// Interleaved stereo, as `f32` bits.
     samples: Box<[AtomicU32]>,
+    stems: OnceLock<[Box<[f32]>; 4]>,
+    vocal_regions: OnceLock<Vec<[f64; 2]>>,
+    loudness: OnceLock<Option<djcraft_protocol::LoudnessInfo>>,
     /// Peak amplitude of each block of `FRAMES_PER_PEAK` frames, as `f32` bits.
     peaks: Box<[AtomicU32]>,
+    bands: Box<[AtomicU32]>,
     /// Peaks already known from the waveform cache, ahead of decoding.
     cached_peaks: usize,
     /// Length reported until decoding finishes and the real one is known.
@@ -76,7 +80,11 @@ impl Track {
             title,
             sample_rate,
             samples: zeroed(capacity * CHANNELS),
+            stems: OnceLock::new(),
+            vocal_regions: OnceLock::new(),
+            loudness: OnceLock::new(),
             peaks: zeroed(capacity.div_ceil(FRAMES_PER_PEAK)),
+            bands: zeroed(capacity.div_ceil(FRAMES_PER_PEAK) * 3),
             cached_peaks: 0,
             estimated_frames,
             decoded_frames: AtomicUsize::new(0),
@@ -89,18 +97,36 @@ impl Track {
         assert_eq!(samples.len() % CHANNELS, 0);
         let frames = samples.len() / CHANNELS;
         let track = Self::with_capacity(title.into(), sample_rate, frames, frames);
-        track.append(&samples);
+        track.append(&samples, &mut crate::spectrum::Spectrum::new(sample_rate));
         track.finish();
         track
     }
 
     /// Adds decoded audio, dropping anything beyond the track's capacity.
     /// Only the one thread loading the track may call this.
-    fn append(&self, samples: &[f32]) {
+    fn append(&self, samples: &[f32], spectrum: &mut crate::spectrum::Spectrum) {
         let start = self.decoded_frames.load(Ordering::Relaxed);
         let capacity = self.samples.len() / CHANNELS;
         let frames = (samples.len() / CHANNELS).min(capacity - start);
         let end = start + frames;
+        for (offset, frame) in samples[..frames * CHANNELS]
+            .chunks_exact(CHANNELS)
+            .enumerate()
+        {
+            let index = start + offset;
+            if index % FRAMES_PER_PEAK == 0 {
+                spectrum.next_block();
+            }
+            spectrum.push(frame);
+            if index / FRAMES_PER_PEAK >= self.cached_peaks
+                && ((index + 1) % FRAMES_PER_PEAK == 0 || index + 1 == end)
+            {
+                for (band, value) in spectrum.levels().into_iter().enumerate() {
+                    self.bands[index / FRAMES_PER_PEAK * 3 + band]
+                        .store(value.to_bits(), Ordering::Relaxed);
+                }
+            }
+        }
         for (slot, sample) in self.samples[start * CHANNELS..end * CHANNELS]
             .iter()
             .zip(samples)
@@ -158,13 +184,91 @@ impl Track {
         f32::from_bits(self.samples[index].load(Ordering::Relaxed))
     }
 
-    /// Copies interleaved samples starting at `frame` into `out`.
-    pub(crate) fn read(&self, frame: usize, out: &mut [f32]) {
-        let start = frame * CHANNELS;
-        let slots = &self.samples[start..start + out.len()];
-        for (out, slot) in out.iter_mut().zip(slots) {
-            *out = f32::from_bits(slot.load(Ordering::Relaxed));
+    /// Read only on a worker for analysis, never copy stems on the audio thread.
+    pub fn loudness(&self) -> Option<Option<djcraft_protocol::LoudnessInfo>> {
+        self.loudness.get().copied()
+    }
+    pub fn set_loudness(
+        &self,
+        value: Option<djcraft_protocol::LoudnessInfo>,
+    ) -> Result<(), String> {
+        if !self.is_complete() || value.is_some_and(|v| !v.valid()) {
+            return Err("Invalid loudness report".into());
         }
+        self.loudness
+            .set(value)
+            .map_err(|_| "Loudness already analysed".into())
+    }
+    pub fn vocal_stem(&self) -> Option<&[f32]> {
+        self.stems.get().map(|s| s[0].as_ref())
+    }
+    pub fn vocal_regions(&self) -> Option<&[[f64; 2]]> {
+        self.vocal_regions.get().map(Vec::as_slice)
+    }
+    pub fn set_vocal_regions(&self, regions: Vec<[f64; 2]>) -> Result<(), String> {
+        if !self.stems_ready()
+            || regions.iter().any(|r| {
+                !r[0].is_finite()
+                    || !r[1].is_finite()
+                    || r[0] < 0.
+                    || r[0] >= r[1]
+                    || r[1] > self.duration_seconds() + 0.001
+            })
+            || regions.windows(2).any(|r| r[0][1] > r[1][0])
+        {
+            return Err("Invalid vocal regions".into());
+        }
+        self.vocal_regions
+            .set(regions)
+            .map_err(|_| "Vocal analysis already attached".into())
+    }
+
+    pub fn stems_ready(&self) -> bool {
+        self.stems.get().is_some()
+    }
+
+    /// Publish immutable, aligned stems off the audio thread. Instrument residual
+    /// reconstruction keeps the unity mix identical to the decoded original.
+    pub fn attach_stems(&self, mut stems: [Box<[f32]>; 4]) -> Result<(), String> {
+        let count = self.decoded_frames() * CHANNELS;
+        if !self.is_complete()
+            || stems
+                .iter()
+                .any(|stem| stem.len() != count || stem.iter().any(|v| !v.is_finite()))
+        {
+            return Err("Stem length or samples do not match the complete track".into());
+        }
+        for i in 0..count {
+            stems[1][i] = self.sample(i) - stems[0][i] - stems[2][i] - stems[3][i];
+            if !stems[1][i].is_finite() {
+                return Err("Stem reconstruction exceeds the audio range".into());
+            }
+        }
+        self.stems
+            .set(stems)
+            .map_err(|_| "Stems already attached".into())
+    }
+
+    pub fn export_stereo(&self) -> Vec<f32> {
+        (0..self.decoded_frames() * CHANNELS)
+            .map(|i| self.sample(i))
+            .collect()
+    }
+
+    pub(crate) fn mixed_sample(&self, index: usize, gains: [f32; 4]) -> f32 {
+        let original = self.sample(index);
+        if gains == [1.; 4] {
+            return original;
+        }
+        let Some(stems) = self.stems.get() else {
+            return original;
+        };
+        original
+            + stems
+                .iter()
+                .zip(gains)
+                .map(|(stem, gain)| stem[index] * (gain - 1.))
+                .sum::<f32>()
     }
 
     /// Everything decoded so far, mixed down to one channel, for analysis.
@@ -196,6 +300,13 @@ impl Track {
     /// Peak amplitude, 0.0 to 1.0, of one block of `frames_per_peak` frames.
     pub fn peak(&self, index: usize) -> f32 {
         f32::from_bits(self.peaks[index].load(Ordering::Relaxed))
+    }
+
+    /// Low, mid and high RMS amplitudes for a display block, independent of mixer EQ.
+    pub fn bands(&self, index: usize) -> [f32; 3] {
+        std::array::from_fn(|band| {
+            f32::from_bits(self.bands[index * 3 + band].load(Ordering::Relaxed))
+        })
     }
 
     /// Decodes a whole file, resampled to `sample_rate`. Blocking.
@@ -233,7 +344,10 @@ impl Track {
             .and_then(|entry| entry.read(sample_rate, FRAMES_PER_PEAK));
         let save = |track: &Self| {
             if let (Some(entry), None) = (&entry, &cached) {
-                let peaks = (0..track.peak_count()).map(|i| track.peak(i));
+                let peaks = (0..track.peak_count()).map(|i| {
+                    let [low, mid, high] = track.bands(i);
+                    [track.peak(i), low, mid, high]
+                });
                 // Best effort: without it the next load just decodes again.
                 let _ = entry.write(sample_rate, FRAMES_PER_PEAK, track.frames(), peaks);
             }
@@ -277,16 +391,22 @@ impl Track {
         let mut track = Self::with_capacity(title, sample_rate, estimated, capacity);
         if let Some(cached) = &cached {
             for (slot, peak) in track.peaks.iter().zip(&cached.peaks) {
-                slot.store(peak.to_bits(), Ordering::Relaxed);
+                slot.store(peak[0].to_bits(), Ordering::Relaxed);
+            }
+            for (slots, peak) in track.bands.chunks_exact(3).zip(&cached.peaks) {
+                for (slot, value) in slots.iter().zip(&peak[1..]) {
+                    slot.store(value.to_bits(), Ordering::Relaxed);
+                }
             }
             track.cached_peaks = cached.peaks.len().min(track.peaks.len());
         }
         let track = Arc::new(track);
+        let mut spectrum = crate::spectrum::Spectrum::new(sample_rate);
         let mut opened = Some(opened);
         loop {
             converted.clear();
             converter.push(&packet, &mut converted)?;
-            track.append(&converted);
+            track.append(&converted, &mut spectrum);
             if let Some(opened) = opened.take() {
                 opened(track.clone());
             } else if Arc::strong_count(&track) == 1 {
@@ -300,7 +420,7 @@ impl Track {
         }
         converted.clear();
         converter.finish(&mut converted)?;
-        track.append(&converted);
+        track.append(&converted, &mut spectrum);
         track.finish();
         save(&track);
         Ok(())

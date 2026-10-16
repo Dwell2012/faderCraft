@@ -179,6 +179,7 @@ const COLUMNS: [(Field, &str, f32); 10] = [
 
 /// What the library asks the rest of the app to do.
 pub enum LibraryEvent {
+    Queue(Vec<djcraft_protocol::QueueTrack>),
     /// A track was chosen (double-clicked, or sent to a deck from its menu).
     /// On the decks that loads it onto `deck`, or onto whichever is free.
     Load {
@@ -187,7 +188,9 @@ pub enum LibraryEvent {
         deck: Option<usize>,
     },
     /// A track was picked out in one of the compact browsers.
-    Selected { id: i64 },
+    Selected {
+        id: i64,
+    },
     /// A scan or analysis moved on, so the database may hold different
     /// tracks, or new results for them.
     Changed,
@@ -200,6 +203,7 @@ pub enum LibraryEvent {
 pub struct DraggedTrack {
     pub id: i64,
     pub title: SharedString,
+    pub path: PathBuf,
 }
 
 impl Render for DraggedTrack {
@@ -492,7 +496,8 @@ impl TableDelegate for TrackTable {
         };
         let mut menu = menu
             .item(item("Load to Deck 1".into(), LibraryView::load_to_deck, 0))
-            .item(item("Load to Deck 2".into(), LibraryView::load_to_deck, 1));
+            .item(item("Load to Deck 2".into(), LibraryView::load_to_deck, 1))
+            .item(item("Add to Automix".into(), LibraryView::queue_track, 0));
         if track.missing {
             menu = menu
                 .separator()
@@ -553,6 +558,7 @@ impl TableDelegate for TrackTable {
                 DraggedTrack {
                     id: track.id,
                     title: track.title.clone().into(),
+                    path: track.path.clone(),
                 },
                 |dragged, _, _, cx| cx.new(|_| dragged.clone()),
             ),
@@ -1097,6 +1103,69 @@ impl LibraryView {
         self.reload(cx);
     }
 
+    fn queue_track(&mut self, id: i64, _: i64, cx: &mut Context<Self>) {
+        if let Some(track) = self
+            .table
+            .read(cx)
+            .delegate()
+            .tracks
+            .iter()
+            .find(|t| t.id == id)
+        {
+            cx.emit(LibraryEvent::Queue(vec![djcraft_protocol::QueueTrack {
+                grid: None,
+                path: track.path.to_string_lossy().into_owned(),
+                title: track.title.clone(),
+            }]));
+        }
+    }
+    pub fn save_automix_playlist(
+        &mut self,
+        tracks: &[djcraft_protocol::QueueTrack],
+        cx: &mut Context<Self>,
+    ) -> Result<String, String> {
+        let library = self.library.as_mut().ok_or("Library unavailable")?;
+        let mut ids = Vec::new();
+        for track in tracks {
+            let id = library
+                .track_at(Path::new(&track.path))
+                .map_err(|e| e.to_string())?
+                .ok_or("A queued track is no longer in the library")?;
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            return Err("Queue is empty".into());
+        }
+        let name = format!(
+            "Automix {}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_secs()
+        );
+        let playlist = library.create_playlist(&name).map_err(|e| e.to_string())?;
+        library
+            .add_to_playlist(playlist.id, &ids)
+            .map_err(|e| e.to_string())?;
+        self.reload(cx);
+        cx.emit(LibraryEvent::Changed);
+        Ok(name)
+    }
+    fn queue_view(&mut self, cx: &mut Context<Self>) {
+        let tracks = self
+            .table
+            .read(cx)
+            .delegate()
+            .tracks
+            .iter()
+            .map(|t| djcraft_protocol::QueueTrack {
+                grid: None,
+                path: t.path.to_string_lossy().into_owned(),
+                title: t.title.clone(),
+            })
+            .collect();
+        cx.emit(LibraryEvent::Queue(tracks));
+    }
     fn load_to_deck(&mut self, track: i64, deck: i64, cx: &mut Context<Self>) {
         let tracks = &self.table.read(cx).delegate().tracks;
         if let Some(track) = tracks.iter().find(|t| t.id == track) {
@@ -2729,6 +2798,11 @@ impl LibraryView {
             rows.push(
                 div()
                     .id(("playlist", id as usize))
+                    .drag_over::<DraggedTrack>(|s, _, _, _| s.bg(rgb(0x183849)))
+                    .on_drop(cx.listener(move |this, track: &DraggedTrack, _, cx| {
+                        this.add_to_playlist(track.id, id, cx);
+                        cx.stop_propagation();
+                    }))
                     .flex()
                     .items_center()
                     .gap_2()
@@ -3263,6 +3337,7 @@ impl LibraryView {
                             .w(px(320.))
                             .child(Input::new(&self.search).cleanable(true)),
                     )
+                    .child(Button::new("queue-view").small().outline().label("Queue all").tooltip("Append the displayed tracks to Automix in this order").on_click(cx.listener(|this,_,_,cx|this.queue_view(cx))))
                     .child(div().flex_1())
                     .child(
                         div()

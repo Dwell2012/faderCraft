@@ -6,6 +6,10 @@ DJs' live mixes, and remote collaboration.
 
 Status key: `[ ]` to do, `[~]` in progress, `[x]` done.
 
+For this custom build's agreed requirements and proposed delivery order, see
+[PRODUCT-PLAN.md](PRODUCT-PLAN.md). The broader upstream roadmap below is not
+the committed scope of the custom build.
+
 ## Project decisions
 
 - **Licence:** MIT. No GPL code is linked into the app.
@@ -49,10 +53,17 @@ Status key: `[ ]` to do, `[~]` in progress, `[x]` done.
 ### Analysis
 
 - [~] BPM and beat grid detection (constant tempo and four beats to the bar
-      only; tested on synthetic audio only, so accuracy on real tracks is
-      not measured yet)
+      only; kick phase uses uncompressed bass strength to reject quieter
+      offbeat notes, with attack timing refined from spectral flux. Covered by
+      synthetic regression tests and checked against Castles In The Sky;
+      broader real-track accuracy is unmeasured; manual grid editing is missing)
 - [~] Key detection (one key per track, major or minor; tested on
       synthetic music only, so accuracy on real tracks is not measured yet)
+- [x] Smooth deck waveform scrolling between audio-buffer updates, with
+      audio-clock correction and immediate seek positioning
+- [x] Drag the main waveform with audible vinyl-style forward/reverse
+      scrubbing; click or drag the overview to seek. Release restores the
+      previous playback state; holding the main waveform still stops its audio.
 - [x] Waveform generation (overview and detail)
 - [x] Analysis cache stored alongside the library database
 - [x] Tempo range limits (minimum and maximum BPM) and precision setting
@@ -174,25 +185,42 @@ Feature set modelled on Mixed In Key 10.
 ### Decks
 
 - [x] Two decks with scrolling and overview waveforms
+- [x] Frequency-coloured waveforms: low red, mid green, high blue, with
+      three independently smoothed translucent overlays, dimmed played sections
+      and cached stereo band analysis (250 Hz/2.5 kHz splits)
 - [~] Play/pause, cue, jump to start (play and pause only)
 - [~] Tempo fader with selectable ranges (slower and faster buttons in 1%
       steps over one fixed range; no fader)
 - [x] Master tempo (key lock)
-- [ ] Beat sync and quantize
+- [~] Per-deck Sync matches effective BPM; with both decks playing it
+      smoothly corrects to the nearest beat (one-shot sync; quantize pending)
 - [ ] Hot cues (8 per deck)
 - [ ] Memory cues
-- [ ] Manual loop in/out, auto beat loop, loop halve/double
+- [x] Manual loop in/out, auto beat loop, loop halve/double
 - [ ] Beat jump
+
+- [x] Click the tempo percentage to ease back to 0% over two seconds;
+      manual tempo changes or Sync cancel the return
+- [x] Deck header shows analysed BPM multiplied by the current tempo ratio
+      (updates with speed/pitch controls; unknown BPM displays a dash)
+
+- [x] Mousewheel adjusts mixer knobs/faders/crossfader and deck tempo/BPM;
+      main waveforms scrub audibly when paused and nudge by 5 ms per wheel
+      step while playing without stopping. Overviews and preview waveforms seek.
+      Shift gives 10x finer steps. Flow zoom buttons accept the wheel;
+      Ctrl+wheel zooms its timeline while ordinary scrolling remains available.
 
 ### Mixer
 
-- [~] Trim, channel fader, crossfader with selectable curves (the engine
-      and protocol have a volume per deck and a master gain; no controls on
-      screen, and no trim or crossfader)
-- [ ] 3-band EQ
+- [x] Centre mixer: trim (+/-12 dB), channel and master faders, crossfader
+      with Smooth, Equal Power and Cut curves; smoothed audio gain changes.
+      Vertical faders expand with panel height; master meters span the knob area
+- [x] Three-band complementary EQ (250 Hz / 2.5 kHz crossovers, neutral
+      centre, band kill to +6 dB); drag knobs vertically, double-click to reset
 - [ ] Channel filter
 - [ ] Headphone cue with cue/master mix
-- [ ] Master limiter and level meters
+- [~] Mirrored channel meters and separate L/R master peak meters with clip indicators (output still
+      hard-clips; a transparent master limiter is not implemented)
 - [ ] Audio device and output routing settings
 
 ### Core effects
@@ -213,7 +241,7 @@ Feature set modelled on Mixed In Key 10.
 - [ ] Four decks
 - [ ] Slip mode
 - [ ] Reverse play
-- [ ] Loop move
+- [x] Loop move and independent In / Out adjustment
 - [ ] 16 hot cues per deck
 - [~] Key shift and key sync (a block in Flow can be shifted by semitones
       for planning; the decks cannot shift key yet)
@@ -237,15 +265,19 @@ Feature set modelled on Mixed In Key 10.
 - [ ] Pad FX
 - [ ] Beat jump
 - [ ] Beat loop
-- [ ] Sampler
+- [~] Sampler [persistent shared bank and disk imports implemented; multiple banks pending]
 - [ ] Keyboard
 - [ ] Key shift
 
 ### Stems and sampler
 
-- [ ] Stem separation (vocals, drums, bass, other), model downloaded on first use
-- [ ] Per-stem mute, solo and level
-- [ ] Sampler with banks, one-shot and loop modes
+- [x] Local cached four-source separation (vocals, instruments, bass, drums);
+      optional CPU Demucs runtime/model installed with `tools/setup-stems.ps1`
+- [x] EQ dropdown beside Stems: Classic, EZRemix, Modern EQ and four-stem layouts
+      (see [STEMS.md](STEMS.md) for source grouping and setup)
+- [~] Per-stem level / full cut, mousewheel, double-click reset and smoothed gains
+      (dedicated solo buttons still missing)
+- [~] Sampler with banks, one-shot and loop modes [16-slot persistent bank with original defaults; multiple named banks pending]
 - [ ] Vocal position markers on the waveform
 
 ### Step sequencer
@@ -285,7 +317,7 @@ Feature set modelled on Mixed In Key 10.
 - [ ] Browse live stations by genre and listener count
 - [ ] In-app player with live tracklist
 - [ ] Follow DJs and get notified when they go live
-- [ ] Auto-DJ mode: play a playlist with automatic transitions when nobody is
+- [~] Auto-DJ mode: queued playlists, preload, beatmatching and staged EQ crossfades implemented; marker-based phrase planning implemented; stem-based vocal overlap ranking implemented; semantic understanding pending. Plays when nobody is
       mixing
 
 ## Milestone 5: remote collab
@@ -392,7 +424,10 @@ waveforms, and options tucked into popovers.
       stems, FX
 - [ ] Popover panels for per-deck options: BPM, key, beat grid, EQ, crossfader
 - [~] Drag and drop from library to deck, deck to deck, and into playlists
-      (tracks can be dragged from the library onto Flow's lanes only)
+      (library tracks can be dropped onto either deck, Flow lanes, playlist rows and Automix; deck-to-deck pending)
+- [x] Confirm replacing a playing deck with an open master output route;
+      respects channel/master faders, crossfader curves and EQ/stem kills.
+      The warning also covers library load actions and the deck file picker.
 - [ ] First-run setup wizard: theme, waveform style, jog wheels on or off,
       import an existing library
 - [~] Light and dark themes, plus user themes (light, dark and match-system;
@@ -421,3 +456,126 @@ waveforms, and options tucked into popovers.
 - **Public broadcasting:** streaming copyrighted music needs licences in most
   countries. Responsibility sits with whoever operates the stream host or a
   public directory.
+
+### Performance layout refresh
+
+- [x] Pro-inspired stacked rhythm waveforms, paired deck displays and central mixer above the browser
+- [x] Neon yellow-green deck A and sapphire deck B accents, with existing frequency waveform colours
+- [x] Large tempo/remaining-time displays, beat indicators and draggable platter displays
+- [x] Perform / Library navigation in the top bar; unused social and placeholder toolbar controls removed
+
+### Deck loops
+
+- [x] Per-deck auto loops from 1/4 to 64 beats, aligned to the analysed grid
+- [x] Manual In / Out, Exit, half/double and mousewheel loop sizing
+- [x] Audio-thread wrapping with tempo, stems and key lock; seek/load exits loops
+- [x] Sixteen saved slots per track (first four in the loop panel), persistent across restarts, with delete and reloop
+- [x] Loop-region waveform shading and separate roll background-position marker
+- [x] Main / Adjust / Saved / Record / Direct views, clickable size and loop progress
+- [x] Smart manual loops, backward loops, 1-beat quantize and loop rolls
+- [~] Record view exports original-source selections to Sampler Recordings (live post-mixer capture pending)
+
+### Deck effects
+
+- [x] Six independent serial pre-fader slots per deck with 20 native audio effects
+- [x] Pro FX x1 / FX x3 / FX x3 Full / FX x6 layouts; hidden slots remain active
+- [x] Click-name activation, adjacent selector, details dock beside the browser
+- [x] Drag/wheel dials, Shift fine control, double-click reset, feedback controls
+- [x] BPM/tempo-synced timing from 1/16 to 2 beats, with manual fallback
+- [x] Delay/reverb tails after pause/bypass, optional tail cut, live-load tail protection
+- [x] Allocation-free DSP with preallocated storage and validated protocol controls
+- [~] Pitch Shift/Spiral use creative granular processing (listening/tuning still needed)
+- [ ] Master/post-fader effects, stem routing, floating details, custom lists and external plugins
+
+### Pro performance pads
+
+- [x] Per-deck eight-pad layout, page dropdown/favourites, options and two parameter lanes
+- [x] Split pages and FX-area Pads 16 (split disabled in 16-pad mode)
+- [x] Hot Cues, Loop, Loop Roll, Slicer, Beat Jump, CueLoop, Saved Loops, Manual Loop, Stems and Pad FX
+- [x] Sixteen persistent hot cues per track, loop cues, shift-delete, edit lock and quantize-on-set
+- [x] Momentary roll/slicer with background transport, stutter cues, temporary FX slot restoration
+- [x] Saved-loop arm versus Shift-jump, 16-slot storage with backwards-compatible four-slot loading
+- [x] Stem mute/isolate pads work with Classic EQ and prepared stems
+- [x] Cue flags on rhythm waveforms, parameter wheel controls and page cycling
+- [x] Automated Scratch: eight native patterns, quantized starts, Over/Cut and transport recovery
+- [~] Sampler: 16 persistent slots, disk/library imports, 12 original defaults, source capture, On/Off/Hold/Stutter, looping and master output [multiple banks and routing pending]
+- [ ] StemSwap, Keycue, Scratchbank, DMX, custom scripting/editor and hardware pad assignments
+
+
+### Playlists and Automix
+
+- [x] Queue a displayed playlist/view, individual library tracks or dropped tracks
+- [x] Reorder/remove queued tracks and save the upcoming queue as a library playlist
+- [x] Persistent remaining queue without autoplay on restart
+- [x] Automatic alternate-deck preload, adjustable audio-thread crossfades, Next and Stop
+- [x] Missing-file skipping, short-track handling and manual takeover
+- [x] Beat + EQ automix: effective tempo match (±8%), audio-thread grid-phase alignment and staged high/mid/bass handover
+- [x] Marker-based phrase-aware automix: 8/16/32-bar planning, preview, section-aware bass handover, manual point priority and cancellable audio-thread scheduling.
+- [x] Vocal-aware transition ranking from cached stems, overlap preview, purple activity strip, manual marker priority and missing-stem fallback.
+- [ ] Pitch-preserving automix, silence trim, LUFS/true-peak normalization, shuffle/repeat and named automix queues
+
+See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
+
+- [x] Automix Take over / Resume preserves the remaining queue and current mix;
+  resumes loading on a non-playing deck, waiting when both decks are playing.
+
+### Phrase and mix preparation
+
+- [x] Background energy-based section suggestions with editable Intro/Build/Breakdown/Drop/Outro/Section labels, coloured overview strip, drag/wheel boundary editing, add/remove sections.
+- [x] Per-track persistent MIX IN/MIX OUT markers, 8/16/32-bar transition override and adjustable EQ bass-swap point; automix reads saved preparation without changing the queue.
+- [~] Phrase understanding: energy-based suggestions implemented; automatic phrase-to-phrase selection implemented in automix; stem-based vocal activity implemented; semantic recognition remains pending. See [PREPARATION.md](PREPARATION.md).
+
+- [x] Suggested hot cues from phrase/vocal/grid data: ghost markers, individual acceptance, fill empty slots, existing cue/loop preservation and normal cue persistence.
+- [x] Gated stereo RMS auto trim with sample-peak headroom, per-load manual override, paused/explicit application, background measurement and automix preload integration.
+- [ ] Standards-based integrated LUFS and oversampled true-peak measurement.
+
+- [x] Compact performance workspace: aligned decks, pinned transport controls, independent Loops / Effects / Pads / Prepare tabs, bounded mixer and scrollable tool panels above the library.
+
+- [x] Performance actions use bordered buttons with hover descriptions across deck tools, preparation, cues, effects, loops and automix.
+- [x] Windows executable reserves an 8 MiB main-thread stack for nested GPUI tool panels (including Loops in debug builds).
+
+- [x] Main waveforms use playback-time scaling so matched tempos share beat spacing and scroll speed; deck elapsed, remaining and total times reflect the current tempo ratio. Overview positions and saved cues retain source time.
+
+- [x] Continuous fractional-pixel waveform envelopes replace per-pixel bars, with optimised desktop rendering in development builds.
+
+- [x] Opaque waveform layers: lows at the back, mids above lows and highs on top; whole-track overview envelopes cached between playhead updates.
+
+- [x] Beat analysis anchors the first beat to a repeated opening attack rather than extrapolating into leading silence. Opening accents determine bar phase, with the first supported kick as the default for unaccented percussive intros. Analysis version 6 refreshes cached grids.
+
+- [x] Suggested cue labels use compact minutes:seconds; saved cue positions retain full sub-second precision.
+
+- [x] Hot cue names and colours: right-click editor, deck-themed default slot colours, accepted suggestion names, persistent per-track metadata and numbered/named flags on rhythm waveforms and compact colour-only flags on deck overviews.
+
+- [x] Polyphonic sampler: immediate overlapping one-shot triggers with 16 fixed voices per slot, loop toggle and whole-slot stop.
+
+- [x] Prepare auto cues snap to the nearest analysed 4/4 bar start, respect opening silence and track end, and wait for a beat grid. Existing saved cues remain unchanged.
+
+- [x] Mirrored deck displays with centred platters, track information beside inner vertical pitch faders, transport aligned opposite tabs, key lock enabled at startup, hold Cue preview/return, automatic deck selection on track load, deck-coloured A/B selection, thicker matching active-deck borders and Space transport.
+
+- [x] Ctrl-click Hot Cues to jump to the stored cue with playback paused; normal trigger and Shift-delete remain available.
+
+- [x] Filter primary control sweeps 20 Hz–20 kHz low-pass below centre and high-pass above centre. Echo/reverb preserve dry attacks; modulation avoids duplicate dry attenuation.
+
+- [x] Native external audio-file drops onto either deck or rhythm waveform, with audible-deck replacement confirmation and automatic deck selection. Multi-file drops load the first supported file.
+
+- [x] Cue preview returns atomically and silently on release, retaining its anchor across rapid repeated presses until another transport action.
+
+- [x] Windows ASIO output via CPAL, installed driver/device selection and requested buffer sizes in Audio settings. Changes apply on restart; master uses the first stereo output pair. Hardware latency remains driver-dependent.
+
+- [x] Settings gear receives clicks independently of the Windows title-bar drag region; Ctrl+, opens Settings on Windows.
+
+- [x] Direct Windows WASAPI exclusive stereo output, event-driven rendering with MMCSS priority, native format negotiation, buffer alignment and actual buffer duration display. Select in Audio settings and restart; shared WASAPI and ASIO remain available. Separate headphone routing and live device switching remain pending.
+
+- [x] Crossfader curve selectors show deck-coloured gain diagrams using the actual mixer curves, with names on hover.
+
+- [x] Seeking, waveform scrubbing and ordinary hot cues retain an active loop when the destination is inside its bounds. Outside jumps exit it; saved loop cues replace it.
+
+- [x] Deck transport and tool-tab groups mirror their positions while retaining the same left-to-right button order on both decks.
+
+- [x] Effect rows use compact toggles with all parameter knobs and relevant sync/tail controls inline; master stereo meters fit below their channel headings without overlapping volume labels.
+
+- [x] Larger deck-selection buttons sit separately at each deck’s inner edge beside the mixer.
+
+- [x] Sync compensates for entering/leaving Key Lock processing and tempo-dependent stretcher latency so forward and backward corrections reach the requested beat phase.
+
+- [x] Timed effects default to beat sync and follow live effective deck tempo; inline effect controls distribute across the available row width.

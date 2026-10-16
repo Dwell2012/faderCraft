@@ -91,6 +91,10 @@ impl StartTab {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub audio_asio: bool,
+    pub audio_exclusive: bool,
+    pub audio_device: String,
+    pub audio_buffer: u32,
     pub theme: ThemeChoice,
     pub start_tab: StartTab,
     /// Check the library's folders for changes when the app opens.
@@ -169,6 +173,10 @@ pub fn format_bpm(bpm: f64, decimals: u8) -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            audio_asio: false,
+            audio_exclusive: false,
+            audio_device: String::new(),
+            audio_buffer: 0,
             theme: ThemeChoice::default(),
             start_tab: StartTab::default(),
             scan_on_startup: true,
@@ -251,6 +259,10 @@ mod tests {
         assert_eq!(Settings::load(&dir), Settings::default());
 
         let settings = Settings {
+            audio_asio: true,
+            audio_exclusive: false,
+            audio_device: "Example ASIO".into(),
+            audio_buffer: 256,
             theme: ThemeChoice::Light,
             start_tab: StartTab::Library,
             scan_on_startup: false,
@@ -270,10 +282,22 @@ mod tests {
         settings.save(&dir).unwrap();
         assert_eq!(Settings::load(&dir), settings);
 
+        let exclusive = Settings {
+            audio_asio: false,
+            audio_exclusive: true,
+            ..settings.clone()
+        };
+        exclusive.save(&dir).unwrap();
+        assert_eq!(Settings::load(&dir), exclusive);
+
         // A file with only some settings, and one this version doesn't know.
         std::fs::write(dir.join(FILE_NAME), r#"{"theme":"system","future":1}"#).unwrap();
         let partial = Settings::load(&dir);
         assert_eq!(partial.theme, ThemeChoice::System);
+        assert!(!partial.audio_asio);
+        assert!(!partial.audio_exclusive);
+        assert!(partial.audio_device.is_empty());
+        assert_eq!(partial.audio_buffer, 0);
         assert!(partial.scan_on_startup);
         assert!(partial.watch_folders);
         assert_eq!(partial.tempo_range(), TempoRange::default());
@@ -303,4 +327,59 @@ mod tests {
         assert_eq!(format_bpm(127.976, 2), "127.98");
         assert_eq!(format_bpm(127.976, 9), "127.98");
     }
+}
+
+/// Keep a broken native driver from taking down the UI on startup.
+pub fn open_audio(
+    settings: &Settings,
+) -> Result<djcraft_engine::Engine, djcraft_engine::EngineError> {
+    use djcraft_engine::{Engine, EngineError};
+    if settings.audio_asio {
+        let probe = || -> Result<(), String> {
+            let mut command =
+                std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+            command.args([
+                "--asio-probe",
+                &settings.audio_device,
+                &settings.audio_buffer.to_string(),
+            ]);
+            command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let mut child = command.spawn().map_err(|e| e.to_string())?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "ASIO driver test failed ({status}). Choose another driver or System audio in Settings, then restart."
+                        ))
+                    };
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("ASIO driver test timed out. Choose another driver or System audio in Settings, then restart.".into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        probe().map_err(EngineError::Device)?;
+    }
+    if settings.audio_exclusive && !settings.audio_asio {
+        return Engine::with_wasapi_exclusive(Some(&settings.audio_device), settings.audio_buffer);
+    }
+    Engine::with_output(
+        settings.audio_asio,
+        Some(&settings.audio_device),
+        settings.audio_buffer,
+    )
 }

@@ -1,0 +1,644 @@
+use super::*;
+use djcraft_protocol::{EFFECT_SLOTS, EffectKind as Kind, EffectState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+const VIEWS: [&str; 5] = ["FX x3", "FX x1", "FX x3 Full", "FX x6", "Pads 16"];
+const BEATS: [f32; 6] = [0.0625, 0.125, 0.25, 0.5, 1., 2.];
+const BEAT_LABELS: [&str; 6] = ["1/16", "1/8", "1/4", "1/2", "1", "2"];
+fn value(fx: EffectState, parameter: u8) -> f32 {
+    let parameter = if fx.kind == Kind::Filter && parameter < 2 {
+        1 - parameter
+    } else {
+        parameter
+    };
+    match parameter {
+        0 => fx.amount,
+        1 => fx.parameter,
+        _ => fx.feedback / 0.9,
+    }
+}
+fn set_value(fx: &mut EffectState, parameter: u8, value: f32) {
+    let value = value.clamp(0., 1.);
+    let parameter = if fx.kind == Kind::Filter && parameter < 2 {
+        1 - parameter
+    } else {
+        parameter
+    };
+    match parameter {
+        0 => fx.amount = value,
+        1 => {
+            fx.parameter = value;
+            if fx.kind == Kind::Filter {
+                fx.amount = 1.;
+            }
+        }
+        _ => fx.feedback = value * 0.9,
+    }
+}
+fn parameter_label(fx: EffectState, parameter: u8) -> String {
+    let parameter = if fx.kind == Kind::Filter && parameter < 2 {
+        1 - parameter
+    } else {
+        parameter
+    };
+    if parameter == 0 {
+        return format!("Mix {:.0}%", fx.amount * 100.);
+    }
+    if parameter == 2 {
+        return format!("Feedback {:.0}%", fx.feedback * 100.);
+    }
+    if fx.sync && fx.kind.timed() {
+        return format!("{:.4} beats", fx.beats).replace(".0000", "");
+    }
+    let p = fx.parameter;
+    match fx.kind {
+        Kind::Filter => {
+            if (p - 0.5).abs() < 0.0001 {
+                "Filter 50% · Neutral".into()
+            } else {
+                let hz = if p < 0.5 {
+                    20. * 1000f32.powf((p / 0.49).min(1.))
+                } else {
+                    20. * 1000f32.powf(((p - 0.51) / 0.49).max(0.))
+                };
+                format!("{} {:.0} Hz", if p < 0.5 { "LP" } else { "HP" }, hz)
+            }
+        }
+        Kind::Echo
+        | Kind::Delay
+        | Kind::PingPong
+        | Kind::LowCutEcho
+        | Kind::EchoOut
+        | Kind::Spiral => format!("Time {:.0} ms", 50. + p * 950.),
+        Kind::Flanger | Kind::Chorus | Kind::Phaser => format!("Rate {:.2} Hz", 0.1 + p * 1.9),
+        Kind::Cut | Kind::Tremolo | Kind::AutoPan => format!("Rate {:.1} Hz", 0.1 + p * 15.9),
+        Kind::Reverb => format!("Size {:.0}%", p * 100.),
+        Kind::Distortion => format!("Drive {:.1}x", 1. + p * 29.),
+        Kind::Bitcrusher => format!("Crush {:.0}%", p * 100.),
+        Kind::Noise => format!("Colour {:.0}%", p * 100.),
+        Kind::PitchShift => format!("Pitch {:+.1} st", (p - 0.5) * 24.),
+        Kind::BeatRepeat => format!("Slice {:.0} ms", 30. + p * 1970.),
+        Kind::Brake => format!("Stop {:.2} s", 0.2 + p * 3.8),
+    }
+}
+fn detail_help(kind: Kind) -> &'static str {
+    match kind {
+        Kind::EchoOut => "Dry audio fades into repeating echoes. Use 100% Mix for a full exit.",
+        Kind::Spiral => "Each feedback repeat rises by seven semitones.",
+        Kind::PitchShift => "Dual-grain pitch shifter: -12 to +12 semitones. Centre is neutral.",
+        Kind::BeatRepeat => {
+            "Repeats the preceding slice (or fills one first). Timing changes resample the slice; toggle to recapture."
+        }
+        Kind::Brake => {
+            "Slows the sound to a stop while the deck timeline continues. Toggle to retrigger; 100% Mix gives a complete stop."
+        }
+        Kind::Noise => {
+            "Filtered noise follows the incoming audio level; silent input stays silent."
+        }
+        Kind::Delay => "A single delayed copy. Echo adds repeating feedback.",
+        Kind::Reverb => {
+            "Stereo feedback-network reverb. Size changes the space; feedback controls decay."
+        }
+        _ => {
+            "Drag dials vertically or scroll. Shift-wheel is fine; double-click resets. Slots run in numbered order."
+        }
+    }
+}
+impl Shell {
+    fn update_effect(
+        &mut self,
+        deck: usize,
+        slot: usize,
+        change: impl FnOnce(&mut EffectState),
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(engine) = self.engine.as_mut() {
+            let mut effect = engine.state().decks[deck].effects[slot];
+            change(&mut effect);
+            self.send(
+                deck,
+                DeckAction::SetEffect {
+                    slot: slot as u8,
+                    effect,
+                },
+            );
+        }
+        cx.notify();
+    }
+    pub(super) fn move_effect_control(&mut self, y: f32, cx: &mut Context<Self>) {
+        if let Some((deck, slot, parameter, start, value)) = self.effect_drag {
+            let has_grid = self.grids[deck].is_some();
+            self.update_effect(
+                deck,
+                slot,
+                |fx| {
+                    let v = (value + (start - y) / 160.).clamp(0., 1.);
+                    if parameter == 1 && fx.sync && fx.kind.timed() && has_grid {
+                        fx.beats = BEATS[(v * 5.).round() as usize];
+                    } else {
+                        set_value(fx, parameter, v);
+                    }
+                },
+                cx,
+            );
+        }
+    }
+    fn effect_dial(
+        &self,
+        deck: usize,
+        slot: usize,
+        parameter: u8,
+        fx: EffectState,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let accent = if deck == 0 {
+            rgb(0xc8ff38)
+        } else {
+            rgb(0x3864e8)
+        };
+        let synced = parameter == 1 && fx.sync && fx.kind.timed() && self.grids[deck].is_some();
+        let v = if synced {
+            BEATS
+                .iter()
+                .position(|b| (*b - fx.beats).abs() < 0.001)
+                .unwrap_or(3) as f32
+                / 5.
+        } else {
+            value(fx, parameter)
+        };
+        div()
+            .id(("fx-dial", deck * 100 + slot * 10 + parameter as usize))
+            .flex()
+            .flex_col()
+            .items_center()
+            .w(px(91.))
+            .cursor_pointer()
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let mid =
+                            bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
+                        let mut dot = |x: f32, y: f32, colour| {
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    mid + point(px(x - 1.), px(y - 1.)),
+                                    size(px(2.), px(2.)),
+                                ),
+                                colour,
+                            ))
+                        };
+                        for step in 0..48 {
+                            let a = step as f32 / 48. * std::f32::consts::TAU;
+                            dot(a.sin() * 12., -a.cos() * 12., rgb(0x646b75));
+                        }
+                        let a = (v - 0.5) * std::f32::consts::PI * 1.5;
+                        for r in 2..11 {
+                            dot(a.sin() * r as f32, -a.cos() * r as f32, accent);
+                        }
+                    },
+                )
+                .w(px(30.))
+                .h(px(30.)),
+            )
+            .child(div().text_size(px(10.)).child(parameter_label(
+                EffectState {
+                    sync: fx.sync && self.grids[deck].is_some(),
+                    ..fx
+                },
+                parameter,
+            )))
+            .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                let step = crate::wheel::steps(event);
+                this.update_effect(
+                    deck,
+                    slot,
+                    |fx| {
+                        if synced {
+                            let i = BEATS
+                                .iter()
+                                .position(|b| (*b - fx.beats).abs() < 0.001)
+                                .unwrap_or(3) as i32;
+                            fx.beats = BEATS[(i + if step > 0. {
+                                1
+                            } else if step < 0. {
+                                -1
+                            } else {
+                                0
+                            })
+                            .clamp(0, 5) as usize];
+                        } else {
+                            set_value(fx, parameter, value(*fx, parameter) + step * 0.02);
+                        }
+                    },
+                    cx,
+                );
+                cx.stop_propagation();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if event.click_count == 2 {
+                        this.effect_drag = None;
+                        this.update_effect(
+                            deck,
+                            slot,
+                            |fx| {
+                                if synced {
+                                    fx.beats = 0.5;
+                                } else {
+                                    set_value(fx, parameter, 0.5);
+                                }
+                            },
+                            cx,
+                        );
+                    } else {
+                        this.effect_drag =
+                            Some((deck, slot, parameter, event.position.y.as_f32(), v));
+                    }
+                    cx.stop_propagation();
+                }),
+            )
+            .into_any_element()
+    }
+    fn effect_row(
+        &self,
+        deck: usize,
+        slot: usize,
+        fx: EffectState,
+        dials: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let weak = cx.entity().downgrade();
+        let accent = if deck == 0 {
+            rgb(0xc8ff38)
+        } else {
+            rgb(0x3864e8)
+        };
+        let mut row = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .p_1()
+            .rounded_md()
+            .border_1()
+            .border_color(if fx.enabled {
+                accent.into()
+            } else {
+                cx.theme().border
+            });
+        let selector = div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new(("fx-toggle", deck * 6 + slot))
+                    .small()
+                    .outline()
+                    .flex_1()
+                    .min_w_0()
+                    .selected(fx.enabled)
+                    .tooltip("Enable or bypass this effect.")
+                    .label(format!("{} · {}", slot + 1, fx.kind.label()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_effect(deck, slot, |fx| fx.enabled = !fx.enabled, cx);
+                    })),
+            )
+            .child(
+                Button::new(("fx-select", deck * 6 + slot))
+                    .tooltip("Choose the effect for this slot.")
+                    .xsmall()
+                    .outline()
+                    .label("▾")
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for kind in Kind::ALL {
+                            let weak = weak.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(kind.label())
+                                    .checked(kind == fx.kind)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = weak.update(cx, |this, cx| {
+                                            this.update_effect(
+                                                deck,
+                                                slot,
+                                                |fx| {
+                                                    *fx = EffectState {
+                                                        kind,
+                                                        enabled: fx.enabled,
+                                                        ..EffectState::default()
+                                                    };
+                                                },
+                                                cx,
+                                            )
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            )
+            .when(dials == 0, |selector| {
+                selector.child(
+                    Button::new(("fx-details", deck * 6 + slot))
+                        .tooltip("Show or hide this effect’s detailed controls.")
+                        .xsmall()
+                        .outline()
+                        .label("…")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.effect_details[deck] = if this.effect_details[deck] == Some(slot) {
+                                None
+                            } else {
+                                Some(slot)
+                            };
+                            cx.notify();
+                        })),
+                )
+            });
+        row = row.child(selector);
+        let dials = if dials == 0 {
+            0
+        } else if fx.kind.feedback_control() && fx.kind != Kind::Delay {
+            3
+        } else {
+            2
+        };
+        let mut parameters = div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .justify_around()
+            .gap_2()
+            .flex_wrap();
+        for parameter in 0..dials {
+            parameters = parameters.child(self.effect_dial(deck, slot, parameter as u8, fx, cx));
+        }
+        if dials > 0 {
+            let mut options = div().flex().flex_col().gap_1();
+            if fx.kind.timed() {
+                options = options.child(Button::new(("fx-row-sync", deck * 6 + slot))
+                    .xsmall().outline().label("Beat sync").selected(fx.sync)
+                    .tooltip("Sync effect timing to the track tempo; use the timing knob to choose beats.")
+                    .disabled(self.grids[deck].is_none() && !fx.sync)
+                    .on_click(cx.listener(move |this, _, _, cx| this.update_effect(deck, slot, |fx| fx.sync = !fx.sync, cx))));
+            }
+            if fx.kind.has_tail() {
+                options = options.child(
+                    Button::new(("fx-row-tails", deck * 6 + slot))
+                        .xsmall()
+                        .outline()
+                        .label("Tails")
+                        .selected(fx.tails)
+                        .tooltip("Let the effect tail ring out after bypassing it.")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_effect(deck, slot, |fx| fx.tails = !fx.tails, cx)
+                        })),
+                );
+            }
+            parameters = parameters.child(options);
+            row = row.child(parameters);
+        }
+        row.into_any_element()
+    }
+    pub(super) fn effect_panel(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let view = self.effect_view[deck];
+        if view == 4 {
+            return self.pad_panel(deck, state, true, cx).into_any_element();
+        }
+        let selected = self.effect_selected[deck];
+        let weak = cx.entity().downgrade();
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded_md();
+        let mut header = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .flex_wrap()
+            .child(
+                Button::new(("fx-cycle", deck))
+                    .tooltip("Cycle through effect layouts.")
+                    .xsmall()
+                    .outline()
+                    .label(VIEWS[view])
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.effect_view[deck] = (this.effect_view[deck] + 1) % VIEWS.len();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new(("fx-view", deck))
+                    .tooltip("Choose the effect layout.")
+                    .xsmall()
+                    .outline()
+                    .label("▾")
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for (i, name) in VIEWS.into_iter().enumerate() {
+                            let weak = weak.clone();
+                            menu = menu.item(PopupMenuItem::new(name).checked(i == view).on_click(
+                                move |_, _, cx| {
+                                    let _ = weak.update(cx, |this, cx| {
+                                        this.effect_view[deck] = i;
+                                        cx.notify();
+                                    });
+                                },
+                            ));
+                        }
+                        menu
+                    }),
+            )
+            .child(div().text_size(px(10.)).child(format!(
+                "PRE-FADER · {} active",
+                state.effects.iter().filter(|fx| fx.enabled).count()
+            )));
+        if view == 1 {
+            for slot in 0..EFFECT_SLOTS {
+                header = header.child(
+                    Button::new(("fx-focus", deck * 6 + slot))
+                        .tooltip("Select this effect slot.")
+                        .xsmall()
+                        .outline()
+                        .label(format!(
+                            "{}{}",
+                            slot + 1,
+                            if slot == selected { "•" } else { "" }
+                        ))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.effect_selected[deck] = slot;
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+        panel = panel.child(header);
+        match view {
+            1 => {
+                panel =
+                    panel.child(self.effect_row(deck, selected, state.effects[selected], 2, cx));
+            }
+            3 => {
+                for pair in 0..3 {
+                    let mut row = div().flex().gap_1();
+                    for slot in pair * 2..pair * 2 + 2 {
+                        row = row.child(div().flex_1().min_w_0().child(self.effect_row(
+                            deck,
+                            slot,
+                            state.effects[slot],
+                            0,
+                            cx,
+                        )));
+                    }
+                    panel = panel.child(row);
+                }
+            }
+            _ => {
+                for slot in 0..3 {
+                    panel = panel.child(self.effect_row(
+                        deck,
+                        slot,
+                        state.effects[slot],
+                        if view == 2 { 2 } else { 1 },
+                        cx,
+                    ));
+                }
+            }
+        }
+        panel.into_any_element()
+    }
+    pub(super) fn effect_detail_panel(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let slot = self.effect_details[deck]?;
+        let fx = state.effects[slot];
+        let mut details = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded_md()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .child(format!(
+                        "Deck {} · {} · {}",
+                        if deck == 0 { "A" } else { "B" },
+                        slot + 1,
+                        fx.kind.label()
+                    ))
+                    .child(
+                        Button::new(("fx-close", deck))
+                            .tooltip("Close the effect detail panel.")
+                            .xsmall()
+                            .outline()
+                            .label("×")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.effect_details[deck] = None;
+                                cx.notify();
+                            })),
+                    ),
+            );
+        let mut controls = div().flex().items_center().gap_1().flex_wrap();
+        // Separate IDs for the expanded instance of a dial.
+        controls = controls.child(
+            div()
+                .id(("fx-expanded", deck))
+                .flex()
+                .flex_wrap()
+                .child(self.effect_dial(deck, slot, 0, fx, cx))
+                .child(self.effect_dial(deck, slot, 1, fx, cx))
+                .when(
+                    fx.kind.feedback_control() && fx.kind != Kind::Delay,
+                    |row| row.child(self.effect_dial(deck, slot, 2, fx, cx)),
+                ),
+        );
+        details = details.child(controls);
+        let mut options = div().flex().gap_1().items_center().flex_wrap();
+        if fx.kind.timed() {
+            let bpm = self.grids[deck].map(|g| g.bpm * state.tempo);
+            options = options.child(
+                Button::new(("fx-sync", deck))
+                    .tooltip("Toggle effect timing synced to the track tempo.")
+                    .xsmall()
+                    .outline()
+                    .label(if fx.sync {
+                        "Beat sync ON"
+                    } else {
+                        "Beat sync OFF"
+                    })
+                    .disabled(bpm.is_none() && !fx.sync)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_effect(deck, slot, |fx| fx.sync = !fx.sync, cx)
+                    })),
+            );
+            if fx.sync && bpm.is_some() {
+                let weak = cx.entity().downgrade();
+                options = options.child(
+                    Button::new(("fx-beats", deck))
+                        .tooltip("Choose the effect timing in beats.")
+                        .xsmall()
+                        .outline()
+                        .label(format!("{} beats ▾", fx.beats))
+                        .dropdown_menu(move |mut menu, _, _| {
+                            for (beats, label) in BEATS.into_iter().zip(BEAT_LABELS) {
+                                let weak = weak.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked((fx.beats - beats).abs() < 0.001)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = weak.update(cx, |this, cx| {
+                                                this.update_effect(
+                                                    deck,
+                                                    slot,
+                                                    |fx| fx.beats = beats,
+                                                    cx,
+                                                )
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        }),
+                );
+            }
+            options = options.child(div().text_size(px(10.)).child(
+                bpm.map_or("No beat grid · manual timing".into(), |bpm| {
+                    format!("{bpm:.1} BPM")
+                }),
+            ));
+        }
+        if fx.kind.has_tail() {
+            options = options.child(
+                Button::new(("fx-tails", deck))
+                    .tooltip("Allow the effect tail to ring out after switching it off.")
+                    .xsmall()
+                    .outline()
+                    .label(if fx.tails { "Tails ON" } else { "Tails OFF" })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update_effect(deck, slot, |fx| fx.tails = !fx.tails, cx)
+                    })),
+            );
+        }
+        details = details
+            .child(options)
+            .child(div().text_size(px(10.)).child(detail_help(fx.kind)));
+        Some(details.into_any_element())
+    }
+}

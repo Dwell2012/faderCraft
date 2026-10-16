@@ -8,10 +8,46 @@ use crate::track::CHANNELS;
 /// Frames rendered per pass when the device format needs converting.
 const CONVERT_FRAMES: usize = 1024;
 
-pub(crate) fn default_device() -> Result<(cpal::Device, SupportedStreamConfig), EngineError> {
-    let device = cpal::default_host()
-        .default_output_device()
-        .ok_or(EngineError::NoOutputDevice)?;
+fn host(asio: bool) -> Result<cpal::Host, EngineError> {
+    if asio {
+        #[cfg(target_os = "windows")]
+        {
+            return cpal::host_from_id(cpal::HostId::Asio)
+                .map_err(|e| EngineError::Device(e.to_string()));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Err(EngineError::Device(
+                "ASIO is available on Windows only".into(),
+            ));
+        }
+    }
+    Ok(cpal::default_host())
+}
+/// Enumerates installed output drivers/devices for the selected backend.
+pub fn output_devices(asio: bool) -> Result<Vec<String>, EngineError> {
+    let host = host(asio)?;
+    let devices = host
+        .output_devices()
+        .map_err(|e| EngineError::Device(e.to_string()))?;
+    Ok(devices
+        .filter_map(|d| d.description().ok().map(|d| d.name().to_owned()))
+        .collect())
+}
+pub(crate) fn device(
+    asio: bool,
+    name: Option<&str>,
+) -> Result<(cpal::Device, SupportedStreamConfig), EngineError> {
+    let host = host(asio)?;
+    let device = if let Some(name) = name.filter(|s| !s.is_empty()) {
+        host.output_devices()
+            .map_err(|e| EngineError::Device(e.to_string()))?
+            .find(|d| d.description().is_ok_and(|d| d.name() == name))
+            .ok_or_else(|| EngineError::Device(format!("Output device '{name}' is unavailable")))?
+    } else {
+        host.default_output_device()
+            .ok_or(EngineError::NoOutputDevice)?
+    };
     let config = device
         .default_output_config()
         .map_err(|e| EngineError::Device(e.to_string()))?;
@@ -22,13 +58,28 @@ pub(crate) fn start(
     device: &cpal::Device,
     config: SupportedStreamConfig,
     mixer: Mixer,
+    buffer_frames: u32,
 ) -> Result<cpal::Stream, EngineError> {
     let format = config.sample_format();
-    let config: StreamConfig = config.into();
+    if buffer_frames > 0 {
+        if let cpal::SupportedBufferSize::Range { min, max } = config.buffer_size() {
+            if buffer_frames < *min || buffer_frames > *max {
+                return Err(EngineError::Device(format!(
+                    "Buffer {buffer_frames} is unsupported; driver range is {min}–{max} frames. Choose Driver default."
+                )));
+            }
+        }
+    }
+    let mut config: StreamConfig = config.into();
+    if buffer_frames > 0 {
+        config.buffer_size = cpal::BufferSize::Fixed(buffer_frames);
+    }
     let stream = match format {
         SampleFormat::F32 => build::<f32>(device, config, mixer),
         SampleFormat::I16 => build::<i16>(device, config, mixer),
         SampleFormat::U16 => build::<u16>(device, config, mixer),
+        SampleFormat::F64 => build::<f64>(device, config, mixer),
+        SampleFormat::I24 => build::<cpal::I24>(device, config, mixer),
         SampleFormat::I32 => build::<i32>(device, config, mixer),
         other => Err(EngineError::Device(format!(
             "unsupported sample format {other}"

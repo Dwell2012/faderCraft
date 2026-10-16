@@ -19,3 +19,7 @@ opt-level = 3
 
 [profile.dev.package.djcraft-analysis]
 opt-level = 3
+
+# The animated GPUI views must also keep up with display refresh in dev builds.
+[profile.dev.package.djcraft]
+opt-level = 2

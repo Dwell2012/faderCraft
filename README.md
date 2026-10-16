@@ -1,5 +1,19 @@
 # djcraft
 
+This is Dwell2012’s custom development version, based on
+[danielchim/djcraft](https://github.com/danielchim/djcraft). The original MIT licence
+and Git history are retained.
+
+The custom Windows build includes two-deck mixing, layered waveforms, beat grids,
+hot cues, loops, effects, pads, a polyphonic sampler, local stem preparation,
+playlist automix, loudness matching, and WASAPI exclusive / installed ASIO output.
+See [the feature status](docs/FEATURES.md) for current capabilities and limitations,
+[WASAPI](docs/WASAPI.md), [ASIO build notes and SDK terms](docs/ASIO.md), and
+[stem setup](docs/STEMS.md). Controller integrations remain in development.
+
+The original project overview follows; its baseline feature descriptions predate
+the custom changes above.
+
 An open-source DJ application written in Rust: a music library manager, a live
 mixing engine, in-app radio for listening to other DJs' live mixes, and remote
 back-to-back sessions. The interface is built with [GPUI](https://www.gpui.rs)

@@ -335,16 +335,42 @@ impl SettingsView {
                     ),
                 ]
             }
-            Page::Audio => vec![self.section(
-                "Output",
-                vec![self.row(
-                    "Output device",
-                    "djcraft plays through the system's default output. Choosing a device is not available yet.",
-                    self.info(self.audio.clone(), cx),
-                    cx,
-                )],
-                cx,
-            )],
+            Page::Audio => {
+                let backend = self.dropdown("audio-backend", if self.settings.audio_asio { 2u8 } else if self.settings.audio_exclusive { 1 } else { 0 }, &[0, 1, 2],
+                    |mode| match mode { 1 => "WASAPI exclusive", 2 => "ASIO (Windows)", _ => "System / WASAPI shared" },
+                    |s, mode| { s.audio_asio = mode == 2; s.audio_exclusive = mode == 1; s.audio_device.clear(); s.audio_buffer = 0; }, cx);
+                let view = cx.weak_entity();
+                let asio = self.settings.audio_asio;
+                let current = self.settings.audio_device.clone();
+                let device = Button::new("audio-device").outline().w(px(260.))
+                    .label(if current.is_empty() { "Driver default".into() } else { current.clone() })
+                    .dropdown_caret(true).dropdown_menu(move |mut menu, _, _| {
+                        let entries = djcraft_engine::output_devices(asio);
+                        let mut names = vec![String::new()];
+                        match entries {
+                            Ok(devices) => names.extend(devices),
+                            Err(error) => return menu.item(PopupMenuItem::new(error.to_string()).disabled(true)),
+                        }
+                        for name in names {
+                            let view = view.clone();
+                            menu = menu.item(PopupMenuItem::new(if name.is_empty() { "Driver default".to_string() } else { name.clone() })
+                                .checked(name == current).on_click(move |_, _, cx| {
+                                    let name = name.clone();
+                                    let _ = view.update(cx, |v, cx| v.change(|s| s.audio_device = name, cx));
+                                }));
+                        }
+                        menu
+                    });
+                let buffer = self.dropdown("audio-buffer", self.settings.audio_buffer, &[0, 64, 128, 256, 512, 1024],
+                    |n| match n { 64 => "64 frames", 128 => "128 frames", 256 => "256 frames", 512 => "512 frames", 1024 => "1024 frames", _ => "Driver default" },
+                    |s, n| s.audio_buffer = n, cx);
+                vec![self.section("Output", vec![
+                    self.row("Currently running", "New audio selections take effect after restarting DJCraft.", self.info(self.audio.clone(), cx), cx),
+                    self.row("Audio backend", "WASAPI exclusive uses the device directly and prevents other apps sharing that output. ASIO uses an installed driver.", backend, cx),
+                    self.row("Output device", "Connect your audio interface before opening this menu.", device, cx),
+                    self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
+                ], cx)]
+            }
             Page::Library => {
                 let scan = Switch::new("scan-on-startup")
                     .checked(self.settings.scan_on_startup)
@@ -603,7 +629,10 @@ impl Render for SettingsView {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|_, _: &CloseSettings, _, cx| cx.emit(SettingsEvent::Closed)))
-            .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Closed)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Closed)),
+            )
             .child(
                 div()
                     .id("settings")
@@ -618,6 +647,7 @@ impl Render for SettingsView {
                     .overflow_hidden()
                     .shadow_lg()
                     // Clicks inside the dialog are not clicks on the backdrop.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(sidebar)
                     .child(

@@ -2,12 +2,17 @@ mod analysis;
 mod flow_view;
 mod library_view;
 mod lookup_view;
+mod loop_store;
 mod organise_view;
+mod pad_store;
+mod preparation;
 mod settings;
 mod settings_view;
 mod shell;
+mod stems;
 mod tag_tools;
 mod waveform;
+mod wheel;
 
 use gpui_kit::assets::AllAssets;
 use gpui_kit::*;
@@ -18,6 +23,21 @@ actions!(
 );
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--asio-probe") {
+        let device = std::env::args().nth(2).unwrap_or_default();
+        let buffer = std::env::args()
+            .nth(3)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        match djcraft_engine::Engine::with_output(true, Some(&device), buffer) {
+            Ok(_engine) => {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+            Err(_) => std::process::exit(1),
+        }
+        return;
+    }
+
     gpui_kit::application().with_assets(AllAssets).run(|cx| {
         gpui_kit::init(cx);
         let settings = settings::Settings::load(&settings::data_dir());
@@ -32,6 +52,7 @@ fn main() {
             KeyBinding::new("cmd-2", ShowLive, None),
             KeyBinding::new("cmd-3", ShowRadio, None),
             KeyBinding::new("cmd-,", OpenSettings, None),
+            KeyBinding::new("ctrl-,", OpenSettings, None),
             KeyBinding::new(
                 "escape",
                 settings_view::CloseSettings,

@@ -77,6 +77,115 @@ impl Tempo {
     }
 }
 
+fn downbeat_opening(
+    samples: &[f32],
+    rate: u32,
+    first: f64,
+    period: f64,
+    end: usize,
+    fallback: u8,
+) -> u8 {
+    let mut scores = [0.; 4];
+    let mut counts = [0; 4];
+    for beat in 0..32 {
+        let start = ((first + beat as f64 * period) * rate as f64) as usize;
+        let stop = (start + (0.08 * rate as f64) as usize).min(end);
+        if start >= stop {
+            break;
+        }
+        // Transient brightness distinguishes a crash/accent from otherwise
+        // identical bass kicks without letting their bass energy drown it out.
+        scores[beat % 4] += samples[start..stop]
+            .windows(2)
+            .map(|w| (w[1] as f64 - w[0] as f64).powi(2))
+            .sum::<f64>()
+            / (stop - start) as f64;
+        counts[beat % 4] += 1;
+    }
+    if counts.iter().any(|&n| n < 4) {
+        return fallback;
+    }
+    for i in 0..4 {
+        scores[i] /= counts[i] as f64;
+    }
+    let best = (0..4)
+        .max_by(|&a, &b| scores[a].total_cmp(&scores[b]))
+        .unwrap();
+    let mean = scores.iter().sum::<f64>() / 4.;
+    // Require agreement with the whole-track evidence before treating an
+    // opening accent as a pickup. Otherwise use the first supported kick.
+    if best == fallback as usize && scores[best] > mean * 1.2 {
+        best as u8
+    } else {
+        0
+    }
+}
+
+/// Refine the spectral phase against sharp time-domain attacks. Require a
+/// repeated run near the measured beat phase, rather than treating the first
+/// nonzero sample (which may be noise or a pickup) as a beat.
+fn opening_attack(samples: &[f32], sample_rate: u32, phase: f64, period: f64) -> Option<f64> {
+    let hop = (sample_rate as usize / 1000).max(1);
+    let dt = hop as f64 / sample_rate as f64;
+    let energy: Vec<f64> = samples
+        .chunks(hop)
+        .take((32. * period / dt) as usize)
+        .map(|c| (c.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt())
+        .collect();
+    if energy.len() < 20 {
+        return None;
+    }
+    let smooth: Vec<f64> = (0..energy.len())
+        .map(|i| energy[i.saturating_sub(4)..=i].iter().sum::<f64>() / (i.min(4) + 1) as f64)
+        .collect();
+    let peak = smooth.iter().copied().fold(0., f64::max);
+    if peak < 1e-4 {
+        return None;
+    }
+    let reach = (0.08 / dt) as usize;
+    let mut attacks = Vec::new();
+    for beat in 0..32 {
+        let expected = phase + beat as f64 * period;
+        let centre = (expected / dt) as usize;
+        let from = centre.saturating_sub(reach);
+        let to = (centre + reach).min(smooth.len().saturating_sub(1));
+        if from >= to {
+            continue;
+        }
+        let rise = |i: usize| smooth[i] - smooth[i.saturating_sub(10)];
+        let at = (from..=to).max_by(|&a, &b| rise(a).total_cmp(&rise(b)))?;
+        if rise(at) < peak * 0.15 {
+            continue;
+        }
+        let baseline = smooth[at.saturating_sub(20)..=at.saturating_sub(10)]
+            .iter()
+            .copied()
+            .fold(f64::INFINITY, f64::min);
+        let threshold = baseline + (smooth[at] - baseline) * 0.1;
+        let onset = (at.saturating_sub(25)..=at)
+            .rev()
+            .find(|&i| smooth[i] <= threshold)
+            .map_or(at.saturating_sub(25), |i| i + 1);
+        attacks.push((beat, onset as f64 * dt, onset as f64 * dt - expected));
+    }
+    if attacks.len() < 8 {
+        return None;
+    }
+    let mut offsets: Vec<_> = attacks.iter().map(|a| a.2).collect();
+    offsets.sort_by(f64::total_cmp);
+    let median = offsets[offsets.len() / 2];
+    let consistent: Vec<_> = attacks
+        .iter()
+        .filter(|a| (a.2 - median).abs() < 0.012)
+        .collect();
+    if consistent.len() * 4 < attacks.len() * 3 {
+        return None;
+    }
+    let first = consistent.first()?;
+    // Keep the absolute first supported beat; do not wrap it back into silence.
+    Some((phase + first.0 as f64 * period + median).max(0.))
+}
+
 /// Finds the tempo and beat positions of mono audio, assuming the tempo does
 /// not change. Returns `None` for audio that is too short or has no rhythm
 /// to measure.
@@ -87,7 +196,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     }
     let hop = ((sample_rate as f64 * ENVELOPE_STEP_SECONDS).round() as usize).max(1);
     let rate = sample_rate as f64 / hop as f64;
-    let (envelope, bass) = onset_envelopes(samples, sample_rate, hop);
+    let (envelope, bass, bass_strength) = onset_envelopes(samples, sample_rate, hop);
     if envelope.iter().all(|value| *value <= 0.0) {
         return None;
     }
@@ -97,9 +206,20 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     let (bpm, _) = best_fold(&envelope, rate, coarse, 1.5, 0.01);
     let (bpm, fold) = best_fold(&envelope, rate, bpm, 0.01, 0.001);
 
-    // Off-beat hi-hats can out-shout the kick across the whole spectrum, so
-    // take the beat's position from the bass where it is clear.
-    let bass_fold = self::fold(&bass, rate, bpm);
+    // Log compression is useful for tempo, but can let a quiet offbeat bass
+    // note outvote the kick. Locate the strong bass attack without compression,
+    // then refine its timing using log flux in that neighbourhood.
+    let strength_fold = self::fold(&bass_strength, rate, bpm);
+    let bass_fold = if strength_fold.confidence >= BASS_CONFIDENCE {
+        fold_near(
+            &bass,
+            rate,
+            bpm,
+            Some((strength_fold.phase, 0.060 * bpm / 60.0)),
+        )
+    } else {
+        self::fold(&bass, rate, bpm)
+    };
     let phase = if bass_fold.confidence >= BASS_CONFIDENCE {
         bass_fold.phase
     } else {
@@ -108,10 +228,12 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
 
     let period = 60.0 / bpm;
     let window_centre = FRAME as f64 / 2.0 / sample_rate as f64;
-    let first_beat = (phase * period + window_centre + ONSET_LAG_SECONDS).rem_euclid(period);
+    let phase_beat = (phase * period + window_centre + ONSET_LAG_SECONDS).rem_euclid(period);
+    let opening = opening_attack(samples, sample_rate, phase_beat, period);
+    let first_beat = opening.unwrap_or(phase_beat);
     // Where on the envelope something heard at `seconds` shows.
     let envelope_index = |seconds: f64| (seconds - window_centre - ONSET_LAG_SECONDS) * rate;
-    let downbeat = downbeat(
+    let mut downbeat = downbeat(
         samples,
         sample_rate,
         &envelope,
@@ -119,6 +241,19 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
         first_beat,
         period,
     );
+    // With a clean percussive opening, equal kicks do not establish an
+    // alternative bar phase. Prefer the first actual attack in that case.
+    if first_beat > 0.05 && opening.is_some() {
+        let intro_end = ((first_beat + 32. * period) * sample_rate as f64) as usize;
+        downbeat = downbeat_opening(
+            samples,
+            sample_rate,
+            first_beat,
+            period,
+            intro_end.min(samples.len()),
+            downbeat,
+        );
+    }
     Some(Tempo {
         bpm,
         first_beat_seconds: first_beat,
@@ -202,8 +337,12 @@ fn downbeat(
 
 /// Spectral flux: for each step, the total rise in level across frequency
 /// bands since the previous step, with the slowly varying average removed.
-/// Returns the envelope for the whole spectrum and for the bass alone.
-fn onset_envelopes(samples: &[f32], sample_rate: u32, hop: usize) -> (Vec<f32>, Vec<f32>) {
+/// Returns full-spectrum log flux, bass log flux and uncompressed bass flux.
+fn onset_envelopes(
+    samples: &[f32],
+    sample_rate: u32,
+    hop: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
     let fft = FftPlanner::<f32>::new().plan_fft_forward(FRAME);
     let window: Vec<f32> = (0..FRAME)
         .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FRAME as f32).cos())
@@ -212,6 +351,7 @@ fn onset_envelopes(samples: &[f32], sample_rate: u32, hop: usize) -> (Vec<f32>, 
     let mut scratch = vec![Complex::new(0.0, 0.0); fft.get_inplace_scratch_len()];
     let bins = FRAME / 2;
     let mut previous = vec![0f32; bins];
+    let mut previous_magnitude = vec![0f32; bins];
 
     let bass_bins =
         ((BASS_LIMIT_HZ * FRAME as f64 / sample_rate as f64).ceil() as usize).clamp(1, bins);
@@ -219,6 +359,7 @@ fn onset_envelopes(samples: &[f32], sample_rate: u32, hop: usize) -> (Vec<f32>, 
     let frames = samples.len().saturating_sub(FRAME) / hop + 1;
     let mut flux = Vec::with_capacity(frames);
     let mut bass_flux = Vec::with_capacity(frames);
+    let mut bass_strength = Vec::with_capacity(frames);
     for frame in 0..frames {
         let start = frame * hop;
         for (slot, (sample, weight)) in buffer
@@ -228,22 +369,30 @@ fn onset_envelopes(samples: &[f32], sample_rate: u32, hop: usize) -> (Vec<f32>, 
             *slot = Complex::new(sample * weight, 0.0);
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);
-        let (mut rise, mut bass_rise) = (0.0, 0.0);
+        let (mut rise, mut bass_rise, mut strength) = (0.0, 0.0, 0.0);
         for (index, (bin, last)) in buffer[..bins].iter().zip(previous.iter_mut()).enumerate() {
             // Compressing the level stops loud bass from drowning out
             // quieter but sharper sounds such as hi-hats.
-            let level = (1.0 + 100.0 * bin.norm()).ln();
+            let magnitude = bin.norm();
+            let level = (1.0 + 100.0 * magnitude).ln();
             let change = (level - *last).max(0.0);
             rise += change;
             if index < bass_bins {
                 bass_rise += change;
+                strength += (magnitude - previous_magnitude[index]).max(0.0);
             }
             *last = level;
+            previous_magnitude[index] = magnitude;
         }
         flux.push(rise);
         bass_flux.push(bass_rise);
+        bass_strength.push(strength);
     }
-    (above_local_average(flux), above_local_average(bass_flux))
+    (
+        above_local_average(flux),
+        above_local_average(bass_flux),
+        above_local_average(bass_strength),
+    )
 }
 
 /// Keeps only what stands above the average of the surrounding half second.
@@ -314,6 +463,10 @@ struct Fold {
 /// Lays the envelope over itself one beat at a time. At the right tempo,
 /// onsets pile up in the same place every beat; slightly off, they smear.
 fn fold(envelope: &[f32], rate: f64, bpm: f64) -> Fold {
+    fold_near(envelope, rate, bpm, None)
+}
+
+fn fold_near(envelope: &[f32], rate: f64, bpm: f64, neighbourhood: Option<(f64, f64)>) -> Fold {
     let period = 60.0 * rate / bpm;
     let mut bins = [0f64; PHASE_BINS];
     for (index, value) in envelope.iter().enumerate() {
@@ -322,6 +475,12 @@ fn fold(envelope: &[f32], rate: f64, bpm: f64) -> Fold {
     }
     let total: f64 = bins.iter().sum();
     let (peak, sharpness) = (0..PHASE_BINS)
+        .filter(|i| {
+            neighbourhood.is_none_or(|(centre, reach)| {
+                let distance = ((*i as f64 + 0.5) / PHASE_BINS as f64 - centre).rem_euclid(1.0);
+                distance.min(1.0 - distance) <= reach
+            })
+        })
         .map(|i| {
             let around =
                 bins[(i + PHASE_BINS - 1) % PHASE_BINS] + bins[i] + bins[(i + 1) % PHASE_BINS];
@@ -423,6 +582,76 @@ mod tests {
             "{bpm} BPM: confidence {}",
             tempo.confidence
         );
+    }
+
+    #[test]
+    fn phase_refinement_rejects_offbeat_peak_and_wraps_at_zero() {
+        let rate = 200.;
+        let bpm = 120.;
+        let mut envelope = vec![0.; 6000];
+        for beat in 0..60 {
+            envelope[beat * 100 + 98] = 1.;
+            envelope[beat * 100 + 48] = 2.;
+        }
+        let unrestricted = fold(&envelope, rate, bpm);
+        assert!((unrestricted.phase - 0.48).abs() < 0.02);
+        // The strong kick is just before phase zero; its weaker log-flux
+        // peak must still win over the larger offbeat one across the wrap.
+        let refined = fold_near(&envelope, rate, bpm, Some((0.01, 0.12)));
+        assert!((refined.phase - 0.98).abs() < 0.02);
+        assert!(refined.confidence >= BASS_CONFIDENCE);
+    }
+
+    #[test]
+    fn kick_phase_wins_over_quieter_offbeat_bass() {
+        let bpm = 140.0;
+        let first = 0.12;
+        let period = 60.0 / bpm;
+        let mut samples = vec![0.; (60 * RATE) as usize];
+        for beat in 0..138 {
+            let start = ((first + beat as f64 * period) * RATE as f64) as usize;
+            for i in 0..3000 {
+                let t = i as f32 / RATE as f32;
+                samples[start + i] +=
+                    0.8 * (-t * 30.).exp() * (std::f32::consts::TAU * 60. * t).sin();
+            }
+        }
+        for beat in 0..138 {
+            let start = ((first + (beat as f64 + 0.5) * period) * RATE as f64) as usize;
+            for i in 0..3000 {
+                let t = i as f32 / RATE as f32;
+                // A quieter, harmonically rich bass note has a large relative
+                // rise in more bins than the kick, despite carrying less energy.
+                for frequency in [45., 90., 135., 180.] {
+                    samples[start + i] +=
+                        0.10 * (-t * 18.).exp() * (std::f32::consts::TAU * frequency * t).sin();
+                }
+            }
+        }
+        let tempo = detect_tempo(&samples, RATE, TempoRange::default()).unwrap();
+        assert!((tempo.bpm - bpm).abs() < 0.02, "{tempo:?}");
+        let error = (tempo.first_beat_seconds - first).rem_euclid(period);
+        assert!(error.min(period - error) < 0.012, "{tempo:?}");
+    }
+
+    #[test]
+    fn first_beat_is_an_actual_attack_after_leading_silence() {
+        for (bpm, first) in [(140., 60. / 140.), (136., 0.292), (128., 1.42)] {
+            let tempo =
+                detect_tempo(&pattern(bpm, first, 60.), RATE, TempoRange::default()).unwrap();
+            assert!(
+                (tempo.first_beat_seconds - first).abs() < 0.012,
+                "{tempo:?}; expected {first}"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_refinement_requires_repeated_attacks() {
+        assert!(super::opening_attack(&vec![0.; RATE as usize * 10], RATE, 0., 0.5).is_none());
+        let mut audio = vec![0.; RATE as usize * 10];
+        audio[RATE as usize] = 1.;
+        assert!(super::opening_attack(&audio, RATE, 0., 0.5).is_none());
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 4] = b"DJCW";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const HEADER_LEN: usize = 24;
 /// Bytes hashed from each end of a file to identify it.
 const KEY_SAMPLE: u64 = 64 * 1024;
@@ -17,7 +17,7 @@ pub(crate) struct CachedWaveform {
     /// Track length at the sample rate asked for: exact if the entry was
     /// made at that rate, otherwise to within a frame.
     pub(crate) frames: usize,
-    pub(crate) peaks: Vec<f32>,
+    pub(crate) peaks: Vec<[f32; 4]>,
 }
 
 /// Where the waveform for one audio file is cached.
@@ -57,11 +57,14 @@ impl Entry {
             && u32_at(4) == VERSION
             && stored_rate > 0
             && stored_per_peak > 0
-            && peaks.len() == frames.div_ceil(stored_per_peak);
+            && peaks.len() == frames.div_ceil(stored_per_peak).checked_mul(4)?;
         if !valid {
             return None;
         }
-        let peaks: Vec<f32> = peaks.iter().map(|peak| *peak as f32 / 255.0).collect();
+        let peaks: Vec<[f32; 4]> = peaks
+            .chunks_exact(4)
+            .map(|peak| std::array::from_fn(|i| peak[i] as f32 / 255.0))
+            .collect();
         if (stored_rate, stored_per_peak) == (sample_rate, frames_per_peak) {
             return Some(CachedWaveform { frames, peaks });
         }
@@ -76,7 +79,12 @@ impl Entry {
             .map(|peak| {
                 let from = stored_index(peak * frames_per_peak);
                 let to = (stored_index((peak + 1) * frames_per_peak - 1) + 1).min(peaks.len());
-                peaks[from.min(to)..to].iter().copied().fold(0.0, f32::max)
+                std::array::from_fn(|band| {
+                    peaks[from.min(to)..to]
+                        .iter()
+                        .map(|peak| peak[band])
+                        .fold(0.0, f32::max)
+                })
             })
             .collect();
         Some(CachedWaveform {
@@ -90,15 +98,19 @@ impl Entry {
         sample_rate: u32,
         frames_per_peak: usize,
         frames: usize,
-        peaks: impl Iterator<Item = f32>,
+        peaks: impl Iterator<Item = [f32; 4]>,
     ) -> io::Result<()> {
-        let mut bytes = Vec::with_capacity(HEADER_LEN + frames.div_ceil(frames_per_peak));
+        let mut bytes = Vec::with_capacity(HEADER_LEN + frames.div_ceil(frames_per_peak) * 4);
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.extend_from_slice(&sample_rate.to_le_bytes());
         bytes.extend_from_slice(&(frames_per_peak as u32).to_le_bytes());
         bytes.extend_from_slice(&(frames as u64).to_le_bytes());
-        bytes.extend(peaks.map(|peak| (peak.clamp(0.0, 1.0) * 255.0).round() as u8));
+        bytes.extend(
+            peaks
+                .flatten()
+                .map(|peak| (peak.clamp(0.0, 1.0) * 255.0).round() as u8),
+        );
 
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir)?;
