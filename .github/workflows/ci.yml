@@ -14,6 +14,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Locate Windows SDK resource compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $resourceCompiler = Get-ChildItem -LiteralPath $sdkBin -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'x64\rc.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $resourceCompiler) { throw 'Windows SDK x64 resource compiler was not found' }
+          Split-Path -Parent $resourceCompiler | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |

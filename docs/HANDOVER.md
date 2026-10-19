@@ -4,6 +4,11 @@ Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
 
 ## Latest checkpoint and verification
 
+Windows GitHub CI explicitly adds the installed Windows SDK x64 resource compiler
+directory to PATH before building. The initial branding push failed only on
+Windows because rc.exe was missing from the runner PATH; Linux, macOS and licence
+checks passed. Local dev-shell already provides this SDK setup.
+
 This checkpoint includes faderCraft branding/icon, current-set Played history,
 remove-from-library without deleting audio, reviewed year-tag edits, beat-anchor
 fixes, the 16-beat negative timeline, and the intro-aware EQ Automix changes below.
