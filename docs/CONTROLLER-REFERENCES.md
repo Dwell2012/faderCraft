@@ -1,5 +1,56 @@
 # Controller references
 
+## Official Numark references (19 October 2026)
+
+The connected Windows device identifies as **MixTrack Pro II**,
+`USB VID_15E4 PID_004B`. Native `midir` discovery also lists `MixTrack Pro II`.
+This resolves the earlier uncertainty about the model; it does not establish
+that every control has passed a physical test.
+
+The user subsequently confirmed the initial 24 mapped controls work. Jog movement
+CC A/B `19/18`, top touch notes `4D/4E`, Scratch buttons `48/50`, and the official
+600-count rotation are now used in independent bridge bindings. Two's-complement
+direction comes from the earlier inspected community script. Physical jog
+direction, sensitivity, stationary hold and release still need listening checks.
+
+Downloaded and inspected read-only from the user's manufacturer links:
+
+- [VirtualDJ Pro mapping ZIP](https://www.numark.com/images/product_downloads/Mixtrack_Pro_II_-_VirtualDJ_Pro_Mapping.zip).
+  SHA-256 `5C981DBE552D908942D61642F0CCDB50AA344E687D1073EE10998CE71595FF40`.
+  Contains an Atomix device definition, mapper XML and instructions PDF.
+- [Traktor Pro 2 mapping ZIP](https://www.numark.com/images/product_downloads/MixTrack_Pro_II_Traktor_Pro__2_Mapping.zip).
+  SHA-256 `8E64A2904EEF43E91A45A2C887A517F86AF0A3E0EB070303E7AAA726CD66F870`.
+  Contains Mac/Windows NIXML `.tsi` presets (114 entries each) and a PDF guide.
+  Controller assignments are in an encoded `DeviceIO.Config.Controller` field;
+  this was not decoded or executed. It is not a source of newly verified addresses.
+- [User guide v1.0](https://www.numark.com/images/product_downloads/Mixtrack_Pro_II_-_User_Guide_-_v1.0.pdf).
+  SHA-256 `DAD92455957E46864C8BEFCB1DD4024C453964FF5939A382EA0716FBCE311BF3`.
+  English pages 3-6 describe controls, Shift combinations, pad modes and audio.
+
+The VirtualDJ definition confirms the existing community-map transport, pitch,
+EQ, volume, jog, headphone and master addresses and the connected USB IDs.
+It additionally gives Sync notes A/B `40/47`, Scratch `48/50`, Stutter `4A/4C`,
+Pitch -/+ `43/44` and `45/46`, browse CC `1A`, browse press note `76` and
+Back `77`. FX encoder CCs are `1B/1C/1D` and `1E/1F/20`; FX button notes
+are `59/5A/5B` and `5D/5E/5F`, with Tap `5C/60`.
+
+Pad notes depend on mode: Loop A `53/54/55/63`, B `56/57/58/64`;
+Sampler A `65-68`, B `69-6C`; Hot Cue A `6D-70`, B `71-74`.
+LED addresses are separately described, often matching button notes. The device
+definition includes initialization SysEx `F000013F7F4B60000404010703F7` and
+inverts pitch and crossfader axes. Their actual behavior still needs testing;
+the starter sends no SysEx or LED output. Do not assume mode changes work merely
+by assigning the corresponding pad notes.
+
+The manual distinguishes transport Cue from headphone Cue, touch scratching
+from pitch bending, and documents Shift-dependent controls. Mic gain is a
+hardware control; controller mapping does not add a software microphone path.
+Preserve those distinctions when extending the [mapping bridge](CONTROLLERS.md).
+
+Only factual MIDI addresses and independently authored Rust/JSON are used here;
+the downloaded third-party definitions, presets and action scripts are not
+redistributed or executed. Downloads remain in the local temporary directory.
+
 ## XDJ-RX3
 
 Primary source: [AlphaTheta MIDI Message List E1](https://downloads.support.alphatheta.com/software_info/all-in-one-dj-systems/XDJ-RX3/XDJ-RX3_MIDI_Message_List_E1.pdf).

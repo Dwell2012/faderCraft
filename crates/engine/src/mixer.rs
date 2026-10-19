@@ -125,6 +125,10 @@ pub(crate) enum Command {
     Nudge {
         deck: usize,
         frames: f64,
+        transient: bool,
+    },
+    EndNudge {
+        deck: usize,
     },
     Sync {
         deck: usize,
@@ -280,6 +284,7 @@ struct Deck {
     playing: bool,
     tempo: f64,
     nudge_frames: f64,
+    nudge_timeout: Option<usize>,
     key_lock: bool,
     volume: f32,
     eq: Eq,
@@ -291,6 +296,7 @@ struct Deck {
     scratch: Option<f64>,
     scratch_position: Option<f64>,
     scratch_follow_frames: f64,
+    scratch_gain: f64,
     /// Current speed on the varispeed path; follows the target smoothly.
     speed: f64,
     speed_smoothing: f64,
@@ -334,6 +340,7 @@ impl Deck {
             playing: false,
             tempo: 1.0,
             nudge_frames: 0.,
+            nudge_timeout: None,
             key_lock: false,
             volume: 1.0,
             eq: Eq::new(sample_rate),
@@ -345,6 +352,7 @@ impl Deck {
             scratch: None,
             scratch_position: None,
             scratch_follow_frames: sample_rate as f64 * 0.015,
+            scratch_gain: 0.,
             speed: 0.0,
             speed_smoothing: 1.0 - (-1.0 / (SPEED_SMOOTHING_SECONDS * sample_rate as f64)).exp(),
             gain: 1.0,
@@ -413,6 +421,15 @@ impl Deck {
     /// Fills `out` with the deck's signal before gain. Returns false, leaving
     /// `out` untouched, when the deck is silent.
     fn render(&mut self, out: &mut [f32]) -> bool {
+        // Controller bends must expire even if the UI stalls. Sync and ordinary
+        // one-shot nudges retain their existing completion behavior.
+        if let Some(remaining) = &mut self.nudge_timeout {
+            *remaining = remaining.saturating_sub(out.len() / CHANNELS);
+            if *remaining == 0 {
+                self.nudge_frames = 0.;
+                self.nudge_timeout = None;
+            }
+        }
         // Count negative transport time in the audio callback, not UI timers.
         // Split the crossing block so the first sample is not delayed by a buffer.
         if self.position < 0. {
@@ -591,13 +608,24 @@ impl Deck {
                     if distance.abs() < 1.0 {
                         self.position = destination;
                         self.speed = 0.;
-                        frame.fill(0.);
-                        continue;
+                    } else {
+                        // Ease velocity between coarse MIDI targets, without
+                        // jumping the read head or overshooting the hand.
+                        let desired = (distance / self.scratch_follow_frames)
+                            .clamp(-MAX_SCRATCH_SPEED, MAX_SCRATCH_SPEED);
+                        self.speed += (desired - self.speed) * self.speed_smoothing;
+                        if self.speed.signum() == distance.signum() {
+                            self.speed = self.speed.clamp(-distance.abs(), distance.abs());
+                        }
                     }
-                    // Position feedback follows the hand, stops when it stops,
-                    // and reverses without seeks or resetting the stretcher.
-                    self.speed = (distance / self.scratch_follow_frames)
-                        .clamp(-MAX_SCRATCH_SPEED, MAX_SCRATCH_SPEED);
+                    // Keep full volume even at slow wheel speeds and through
+                    // reversals. Only fade once the read head reaches the hand;
+                    // a speed-dependent gate pumps between sparse MIDI packets.
+                    let gain = if distance.abs() < 1.0 { 0. } else { 1. };
+                    self.scratch_gain += (gain - self.scratch_gain) * self.speed_smoothing;
+                    if gain == 0. && self.scratch_gain < 1e-6 {
+                        self.scratch_gain = 0.;
+                    }
                 } else {
                     self.speed += (target - self.speed) * self.speed_smoothing;
                 }
@@ -616,6 +644,11 @@ impl Deck {
                     self.position,
                     self.current_stems,
                 ));
+                if self.scratch_position.is_some() {
+                    for sample in frame.iter_mut() {
+                        *sample *= self.scratch_gain as f32;
+                    }
+                }
                 self.position = armed_position(self.position + self.speed, region, self.loop_armed);
             }
             self.position = self.position.clamp(0.0, available as f64);
@@ -1339,11 +1372,21 @@ impl Mixer {
                 self.decks[deck].tempo = ratio;
                 self.decks[deck].nudge_frames = 0.;
             }
-            Command::Nudge { deck, frames } => {
+            Command::Nudge {
+                deck,
+                frames,
+                transient,
+            } => {
+                self.decks[deck].nudge_timeout =
+                    transient.then_some((self.sample_rate as usize * 40) / 1000);
                 self.decks[deck].nudge_frames = (self.decks[deck].nudge_frames + frames).clamp(
                     -(self.sample_rate as f64) * 0.5,
                     self.sample_rate as f64 * 0.5,
                 );
+            }
+            Command::EndNudge { deck } => {
+                self.decks[deck].nudge_frames = 0.;
+                self.decks[deck].nudge_timeout = None;
             }
             Command::Sync {
                 deck,
@@ -1381,6 +1424,7 @@ impl Mixer {
                 };
                 deck.tempo = ratio;
                 deck.nudge_frames = frames + latency_change;
+                deck.nudge_timeout = None;
             }
             Command::KeyLock { deck, on } => {
                 let deck = &mut self.decks[deck];
@@ -1402,6 +1446,9 @@ impl Mixer {
             Command::ScratchTo { deck, frame } => {
                 let deck = &mut self.decks[deck];
                 if let Some(track) = &deck.track {
+                    if deck.scratch_position.is_none() {
+                        deck.scratch_gain = if deck.playing { 1. } else { 0. };
+                    }
                     if deck.stretching {
                         deck.position = deck.audible_position();
                     }

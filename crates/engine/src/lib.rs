@@ -421,6 +421,7 @@ impl Engine {
                     && !matches!(
                         action,
                         DeckAction::SetBeatGrid { .. }
+                            | DeckAction::EndNudge
                             | DeckAction::SetHotCues { .. }
                             | DeckAction::SetCueAppearance { .. }
                             | DeckAction::SetEffectTempo { .. }
@@ -854,8 +855,20 @@ impl Engine {
                 self.send(Command::Nudge {
                     deck,
                     frames: seconds * self.sample_rate as f64,
+                    transient: false,
                 })
             }
+            DeckAction::PitchBend { seconds } => {
+                if !(-0.5..=0.5).contains(&seconds) {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::Nudge {
+                    deck,
+                    frames: seconds * self.sample_rate as f64,
+                    transient: true,
+                })
+            }
+            DeckAction::EndNudge => self.send(Command::EndNudge { deck }),
             DeckAction::Sync {
                 ratio,
                 offset_seconds,

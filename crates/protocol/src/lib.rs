@@ -315,6 +315,12 @@ pub enum DeckAction {
     Nudge {
         seconds: f64,
     },
+    /// Discard unapplied temporary phase nudges without changing tempo.
+    EndNudge,
+    /// Jog/button phase bend; unused correction expires after 40 ms of audio.
+    PitchBend {
+        seconds: f64,
+    },
     /// Set matched tempo and smoothly correct track position by this offset.
     Sync {
         ratio: f64,

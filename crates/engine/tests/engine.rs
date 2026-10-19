@@ -10,6 +10,77 @@ const RATE: u32 = 48_000;
 /// Frames per simulated audio callback.
 const CALLBACK: usize = 480;
 
+#[test]
+fn slow_continuous_jog_packets_do_not_modulate_volume() {
+    let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 4]);
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 0.5 }))
+        .unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: 0.5 }))
+        .unwrap();
+    let mut target = 0.5;
+    let mut block = vec![0.; CALLBACK * 2];
+    let mut minimum = 1f32;
+    for packet in 0..30 {
+        target += 0.003;
+        engine
+            .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: target }))
+            .unwrap();
+        // A slowly rotated wheel sends one count every 40 ms.
+        for _ in 0..4 {
+            mixer.render(&mut block);
+            if packet > 2 {
+                minimum = block.iter().fold(minimum, |a, v| a.min(v.abs()));
+            }
+        }
+    }
+    assert!(
+        minimum > 0.38,
+        "steady motion pumped the gain down to {minimum}"
+    );
+    for _ in 0..30 {
+        mixer.render(&mut block);
+    }
+    assert!(block.iter().all(|v| v.abs() < 0.001));
+}
+
+#[test]
+fn stepped_jog_targets_fade_smoothly_to_silence_between_packets() {
+    // Constant input exposes discontinuities independently of waveform frequency.
+    let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 4]);
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 0.5 }))
+        .unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: 0.5 }))
+        .unwrap();
+    let mut block = vec![0.; CALLBACK * 2];
+    let mut previous = 0f32;
+    let mut largest_jump = 0f32;
+    let mut peak = 0f32;
+    for target in [0.503, 0.506, 0.503, 0.500] {
+        engine
+            .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: target }))
+            .unwrap();
+        for _ in 0..25 {
+            mixer.render(&mut block);
+            for frame in block.chunks_exact(2) {
+                peak = peak.max(frame[0].abs());
+                largest_jump = largest_jump.max((frame[0] - previous).abs());
+                previous = frame[0];
+            }
+        }
+        assert!(
+            previous.abs() < 0.001,
+            "stationary scratch must be silent: {previous}"
+        );
+        assert!((engine.state().decks[0].position_seconds - target).abs() < 0.0001);
+    }
+    assert!(peak > 0.05, "movement must remain audible");
+    assert!(largest_jump < 0.01, "MIDI-step click: {largest_jump}");
+}
+
 fn sine(frequency: f32, seconds: f32, rate: u32) -> Vec<f32> {
     (0..(seconds * rate as f32) as usize)
         .flat_map(|i| {
@@ -819,7 +890,8 @@ fn position_scrubbing_is_audible_bidirectional_and_stops_at_the_hand() {
         .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: 0.5 }))
         .unwrap();
     let reverse = render(&mut mixer, 0.3);
-    assert!(reverse[100] > reverse[2000]);
+    // Compare after the short scratch attack has opened the gain envelope.
+    assert!(reverse[1200] > reverse[2400]);
     assert!(reverse.iter().any(|s| s.abs() > 0.1));
     assert!((position(&mut engine) - 0.5).abs() < 0.0001);
     assert!(render(&mut mixer, 0.1).iter().all(|s| *s == 0.));
@@ -827,7 +899,7 @@ fn position_scrubbing_is_audible_bidirectional_and_stops_at_the_hand() {
         .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: 1.0 }))
         .unwrap();
     let forward = render(&mut mixer, 0.3);
-    assert!(forward[100] < forward[2000]);
+    assert!(forward[1200] < forward[2400]);
     assert!((position(&mut engine) - 1.0).abs() < 0.0001);
     engine
         .apply(Role::Host, deck(DeckAction::Scratch { speed: None }))
@@ -1028,6 +1100,52 @@ fn fine_nudges_accumulate_without_stopping_or_changing_base_tempo() {
             engine.apply(Role::Host, deck(action)),
             Err(Rejection::InvalidValue)
         );
+    }
+}
+
+#[test]
+fn pitch_bend_expires_on_audio_clock_and_does_not_expire_a_subsequent_sync() {
+    for ratio in [0.92, 1., 1.08] {
+        for key_lock in [false, true] {
+            let (mut engine, mut mixer) = engine_with(sine(220., 8., RATE));
+            for action in [
+                DeckAction::SetTempo { ratio },
+                DeckAction::SetKeyLock { on: key_lock },
+                DeckAction::Play,
+            ] {
+                engine.apply(Role::Host, deck(action)).unwrap();
+            }
+            render(&mut mixer, 0.2);
+            engine
+                .apply(Role::Host, deck(DeckAction::PitchBend { seconds: 0.5 }))
+                .unwrap();
+            // No UI tick or release command: the audio thread must stop the bend.
+            render(&mut mixer, 0.1);
+            let before = position(&mut engine);
+            let out = render(&mut mixer, 0.5);
+            assert!((position(&mut engine) - before - ratio * 0.5).abs() < 0.001);
+            let expected_pitch = 220. * if key_lock { 1. } else { ratio as f32 };
+            assert!((frequency(&out[out.len() / 2..]) - expected_pitch).abs() < 2.);
+            assert_eq!(engine.state().decks[0].tempo, ratio);
+            engine
+                .apply(Role::Host, deck(DeckAction::PitchBend { seconds: 0.5 }))
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    deck(DeckAction::Sync {
+                        ratio,
+                        offset_seconds: 0.16,
+                    }),
+                )
+                .unwrap();
+            let before = position(&mut engine);
+            render(&mut mixer, 2.5);
+            assert!(
+                (position(&mut engine) - before - (ratio * 2.5 + 0.16)).abs() < 0.002,
+                "jog expiry interrupted Sync at ratio {ratio}, key lock {key_lock}"
+            );
+        }
     }
 }
 

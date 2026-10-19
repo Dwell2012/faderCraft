@@ -303,10 +303,25 @@ Feature set modelled on Mixed In Key 10.
 
 ### Controllers
 
-- [ ] MIDI input and LED output
+- [~] MIDI input and LED output [native input transport, mapping bridge and
+      profile-owned Scratch LEDs implemented; other feedback pending. See CONTROLLERS.md.]
 - [ ] djcraft mapping format: declarative file plus optional plugin script
 - [ ] Built-in mappings for common DDJ controllers
-- [ ] MIDI Learn
+- [~] MIDI Learn [Rust API and JSON profile import/export, Shift conditions,
+      state-aware toggles, absolute/relative controls and fader soft takeover;
+      graphical editor/Learn UI pending. Numark starter needs hardware validation.]
+- [~] Bundled MixTrack Pro II profile based on official Numark MIDI addresses
+      [40 bindings: transport/mixer/pitch/headphone/hot-cue controls with pickup,
+      plus latched Scratch-mode buttons/LED feedback, scratching while playing
+      or paused with top contact, and rim pitch bend even with Scratch on.
+      Mode remains latched after releasing the top. Hot cues now set empty slots and recall existing cues,
+      and Sync/Cue/headphone Cue/Stutter, held pitch bends and Shift key lock are
+      mapped. Scratch sensitivity reduced fourfold after hardware feedback,
+      stopped jogs scrub with Scratch off; rim/button bends expire after 40 ms
+      of audio to prevent queued correction tails. Pitch covers the app's full
+      -50%/+100% range with exact neutral and pickup,
+      with the desktop's persistence/near-beat snap/edit lock. Initial controls work; jog hardware
+      calibration, LEDs and remaining buttons pending. Launch via tools/run-mixtrack.ps1.]
 - [ ] Import mapping files from the user's own rekordbox install
 
 ## Milestone 4: radio
@@ -635,3 +650,17 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Main waveform extends 16 beats before file start: continuous grid, negative-time drag/wheel seeking, silent playback to zero, pitch/key-lock and cue support. No separate pre-roll menu.
 - [x] Beat-phase fallback keeps confident uncompressed bass timing when log-flux is weak; opening refinement checks 128 beats to handle longer intros (analysis version 7).
 - [x] Opening-grid anchor tolerates modest first-kick attack variation without relaxing the timing consensus (analysis version 8).
+
+- [x] Mixtrack Pro II headphone Cue LEDs follow the selected monitor deck.
+
+- [x] Mixtrack Pro II Loop In/Out, Reloop/Exit, half/double length, per-deck sampler slots 1–4 (Shift stops), and FX1–3 slot toggles [hardware retest pending].
+
+- [x] Smooth jog scratch velocity and stationary fade to remove hard cuts between discrete position targets [hardware listening retest pending].
+
+- [x] Debounce pulsed jog contact releases to preserve a continuous scratch gesture [30 ms release grace; hardware retest pending].
+
+- [x] Remove speed-dependent scratch volume pumping between sparse jog packets [hardware retest pending].
+
+- [x] Mixtrack Pro II FX1–3 encoders adjust each deck’s corresponding effect parameter [relative CC, preserves other FX settings; Shift selection/Beats encoder pending].
+
+- [x] FX encoders follow the first UI dial for every effect type: Filter cutoff, otherwise Mix, including synced FX.

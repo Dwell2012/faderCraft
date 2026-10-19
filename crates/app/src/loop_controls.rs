@@ -61,6 +61,44 @@ fn manual_region(
 }
 
 impl Shell {
+    pub(super) fn controller_loop_pad(
+        &mut self,
+        deck: usize,
+        pad: u8,
+        alternate: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.loop_state(deck).filter(|s| s.track.is_some()) else {
+            return;
+        };
+        match pad {
+            0 => {
+                self.loop_in[deck] = Some(state.position_seconds);
+                self.send(deck, DeckAction::ClearLoop);
+            }
+            1 => {
+                if let Some(start) = self.loop_in[deck] {
+                    let [a, b] = manual_region(
+                        start,
+                        state.position_seconds,
+                        self.grids[deck],
+                        self.loop_options[deck],
+                    );
+                    self.apply_loop(deck, a, b, cx);
+                }
+            }
+            2 => {
+                if state.loop_region.is_some() {
+                    self.send(deck, DeckAction::ClearLoop);
+                } else if let Some([a, b]) = self.loop_last[deck] {
+                    self.apply_loop(deck, a, b, cx);
+                }
+            }
+            3 => self.resize_loop(deck, if alternate { 1 } else { -1 }, cx),
+            _ => {}
+        }
+        cx.notify();
+    }
     pub(super) fn loop_state(&mut self, deck: usize) -> Option<DeckState> {
         self.engine.as_mut().map(|e| e.state().decks[deck].clone())
     }

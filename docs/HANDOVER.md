@@ -2,6 +2,193 @@
 
 Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
 
+## Controller bridge checkpoint (current-machine work)
+
+FX rotary correction: user reported only Filter responded. Raw secondary parameter can be bypassed by beat sync; mapped EffectParameter now follows the first UI dial: Filter cutoff (and Mix=1, matching set_value), otherwise wet/dry Mix. Type/enabled/timing/feedback are preserved. Existing Echo regression first reproduced unchanged Mix; corrected target fixes it. Added all-20-effect-kind synced-state regression. Same 84 mappings; no profile rewrite needed.
+
+User confirms scratch now sounds much better. Lower pad functions and FX buttons also confirmed working; initial concern was trying auto loops with manual-loop controls. Actual outstanding issue was unmapped FX knobs. Added EffectParameter scalar target preserving full EffectState, and six relative CC bindings (0x1B–0x20, 1% per tick). Current profile has 84 mappings; no pad changes or auto-loop shortcuts added. Shift effect selection/fourth Beats encoder remain pending. Regression covers both decks/all three slots, direction, limits, neutral packets, port isolation and invalid slots.
+
+Latest scratch gain fix: user still heard quick volume cutting. Reproduced headlessly with constant 0.4 audio and one jog count every 40 ms: speed-dependent gain dipped to 0.294 during steady motion. Removed speed-dependent gain; scratch stays at unity while travelling toward the target and fades only after reaching it. Added regression requiring steady-motion output above 0.38, plus stationary silence. This supersedes the earlier below-0.02 speed fade. Sensitivity, velocity smoothing and contact release grace are unchanged. Hardware listening retest pending.
+
+Contact-pulse verification: 269 workspace tests pass (one ignored); formatting and licence/source checks pass.
+
+User clarified residual sound is extremely rapid fading during movement. App trace contains many alternating 0x4E contact on/off messages. Previous immediate release issued Scratch(None)+Seek and the next press re-grabbed the read head. Contact release now waits 30 ms and a re-press cancels it without re-grabbing, preserving accumulated wheel distance. Disconnect/manual takeover remain immediate. Regression simulates 40 contact pulses at 5 ms intervals on each deck and verifies no release/re-anchor until the final grace interval, then exactly one final settle. Earlier audio smoothing remains. Hardware retest pending.
+
+Scratch-click verification: 268 workspace tests pass, one ignored; formatting and licence/source checks pass.
+
+Scratch-click fix: reproduced a 0.4-amplitude discontinuity with constant audio and spaced forward/reverse ScratchTo targets. The engine previously emitted audio at full level until it reached a one-frame position threshold, then hard-zeroed it. It now eases velocity using the existing 4 ms smoothing and fades speed below 0.02 to silence, including the final held sample; no audio-thread allocation/locks/I/O. Travel stays 0.003 seconds/count and rim bend is unchanged. Headless regression verifies audible movement, silent settling, exact final position and adjacent-sample jump below 0.01. Hardware listening retest pending.
+
+Latest verification: 267 workspace tests pass (one ignored); formatting and licence/source checks pass.
+
+Latest: 78-binding profile adds lower-row Loop In/Out, Reloop/Exit, half length (Shift doubles), Sample slots 1–4 per deck (Shift stops), and three upper FX slot toggles. Tap stays unmapped per user. Sample slots must already be loaded in the UI; level/repeat follow the UI. Loop handling reuses Smart/Quantize helpers and retained regions; FX toggles preserve all slot parameters through protocol actions. Scratch sensitivity restored to 0.003 seconds/count at user request (supersedes the reduced sensitivity below); bend unchanged.
+
+Headphone Cue LEDs now follow monitor selection from hardware or UI using optional HostButton LED addresses. Mode-cycle capture received only Shift release; no separate mode-identifying Note/CC was observed. Pad notes distinguish Loop/Sample/Cue.
+
+Current bend fix: user reported rim bending did not return to the set tempo.
+Reproduced in headless audio: after fast forward jogs, ratio 0.92 advanced a
+full 1.0 source seconds per output second because queued +8% nudges remained.
+Native rim/buttons now emit PitchBend, whose unapplied phase correction expires
+after 40 ms of rendered audio, independently of the UI. Ordinary Nudge and Sync
+retain completion semantics; Sync clears the transient timeout. EndNudge
+cleans up idle/released/disconnected bends and does not itself take over Automix.
+Manual Sync cancels controller bend holds before applying fresh alignment.
+Audio tests verify prompt return at ratios 0.92/1/1.08, both key-lock states,
+and that a later Sync is not canceled by an old bend timeout. No new locks,
+allocation or logging were added to the audio thread.
+
+User also clarified: Scratch OFF + stopped jog should scrub audibly; Scratch OFF
+while playing should pitch bend. Restored the stopped fallback with 80 ms idle
+release, keeping Scratch ON top/rim differentiation and latching unchanged.
+Pitch fader changed from fixed +/-8% to match the full app ratio range 0.5-2.0
+(-50%/+100%): inverted raw endpoints 0=>2, 127=>0.5, exact centre 64=>1, pickup
+retained. The bundled, generated and installed profiles all use this range.
+
+Verification: 264 workspace tests passed, one ignored; formatting, licence/source,
+whitespace and Windows build checks passed. The reproduced sustained-rim-bend
+failure is now a passing regression. App restarted gracefully with the new
+binary/profile; window responsive and MixTrack Pro II connected with 40 mappings.
+Hardware/listening retest of bend recovery and the larger pitch range is pending.
+
+Latest expansion: user confirms the top/rim and latching behavior works, but
+scratching is too fast. Travel reduced from 0.003 to 0.00075 seconds/count (4x
+slower); bend sensitivity unchanged. Profile now has 40 bindings: new Sync,
+transport Cue hold/release, headphone Cue deck selection, Stutter, held pitch
+bend +/- and Shift + Pitch- key lock for both decks. Existing personal mappings
+were preserved; installed/bundled profiles had only missing bindings added and
+jog sensitivity adjusted. Before-buttons backups preserve earlier profiles.
+
+HostButton mappings queue HostCommand intents; the desktop resolves them via
+existing UI logic and applies concrete protocol actions under Host role. API
+consumers must drain take_commands after process/disconnect/replace so held Cue
+releases are not lost. Headphone Cue selects one active monitor deck. Stutter
+uses a retained Cue anchor, or zero if none. Bend mappings emit small 3% Nudge
+corrections while held, stop on release/disconnect, and never rewrite tempo or
+key lock. Paused holds do not build up a phase jump. Shift + Pitch+ range remains
+unmapped, along with browser navigation, load-selected-track, FX and loop pads.
+
+Expansion verification: 261 workspace tests passed, one ignored; formatting,
+licence/source, whitespace and Windows build checks passed. The app was closed
+gracefully and relaunched with the updated local profile; the replacement window
+is responsive and logs `Controller connected: MixTrack Pro II (40 mappings)`.
+Bounded 96-note diagnostics are enabled for button testing. Hardware confirmation
+of the new buttons and reduced scratch sensitivity is pending.
+
+Current jog behavior supersedes the touch:null experiment below: user confirmed
+that the rim should still pitch bend in Scratch mode. Both Numark jog mappings
+again use top-touch notes 4D/4E, while the Scratch buttons and LEDs remain latched.
+Scratch on + top touched = scratch; no top contact = rim bend while playing.
+Releasing the top resumes playback without disabling Scratch mode or its lamp.
+Scratch off = bend regardless of top contact. This uses the existing engine/API;
+the bundled profile, generator and installed local profile were corrected.
+
+Rim/top correction verified by 257 passing workspace tests (one ignored),
+formatting and licence/source checks. The app was restarted with the corrected
+profile using the already-built binary (runtime source unchanged). Its window
+is responsive and the 26-mapping controller connection is confirmed.
+
+Latest jog correction: user wants the Scratch button latched, not held. The
+Numark profile now starts in bend mode (`scratch_enabled:false`, `touch:null`).
+Press once enables scratch until the next press; note release never changes mode.
+Scratch applies to moving jogs during both playback and pause, releasing the audio
+override after 80 ms idle while retaining the mode. Bend mode leaves paused decks
+still and sends Nudge only while playing. The optional touch-based API remains
+available for other profiles. Captured notes show normal Scratch down/up at 72
+(A); touch notes at 77 were also observed, but do not gate this profile's mode.
+
+Profile-owned `scratch_led` sources now drive corresponding MIDI output notes
+(100 on/0 off) on connection and mode changes, and resend on button release to
+override a local momentary lamp. Only named, unambiguous paired output ports are
+opened for explicit LED mappings. Output failure leaves input available and logs
+an error. Physical mode/LED behavior still needs user confirmation.
+
+This correction passed 256 workspace tests (one ignored), formatting,
+licence/source, whitespace and Windows build checks. The app was restarted
+gracefully with the updated profile; the replacement window is responsive and
+the controller connection is confirmed. No LED-output errors were logged at
+startup. Bounded 64-note tracing is enabled for the user's latch retest.
+
+Latest verification: 255 workspace tests passed, one ignored; formatting,
+licence/source, whitespace checks and the Windows build passed. At the user's
+explicit request the old window was closed gracefully and the new build started
+with the updated local 26-binding profile. The window is responsive and its log
+confirms `Controller connected: MixTrack Pro II (26 mappings)`. Bounded tracing
+of 128 note events was enabled for the hot-cue retest. Do not assume physical
+jog/hot-cue acceptance until the user confirms it.
+
+Hot-cue follow-up: the user reports Cue mode lights correctly but pads do nothing.
+The initial profile only emitted TriggerHotCue, which rejects an empty slot; the
+running log contained InvalidValue rejections. Native hot_cue bindings now emit
+SetHotCues on first press, then TriggerHotCue on subsequent presses. The desktop
+persists those edits through the existing cue store, respecting editing lock and
+near-beat quantization. Original protocol TriggerHotCue semantics remain unchanged.
+No undocumented device initialization was added. Bounded diagnostic note tracing
+is available via DJCRAFT_MIDI_TRACE_NOTES. Physical retest remains necessary.
+
+Jog update: the user confirms the original 24 MixTrack bindings work. The profile
+now has 26 mappings, with compound jog bindings for movement, top touch and Scratch
+mode on each deck. Touch scratching defaults on; the physical Scratch buttons
+toggle it. Rim movement while playing emits bounded Nudge actions; while paused
+it scrubs audibly, releasing after 80 ms idle. Touch holds do not expire. Targets
+accumulate between audio callbacks, clamp to decoded file bounds and settle on
+release, even for a whole gesture delivered before one callback. Playback and
+key-lock state are preserved; the bridge never toggles key lock to scratch.
+
+The default calibration is 600 counts per 1.8 source seconds, with 0.00025-second
+bend nudges per count. Direction can be inverted in the profile. Physical jog
+direction/sensitivity and listening remain to be checked. Negative waveform time
+is not exposed by these jog bindings. LED mode feedback is still pending.
+
+The desktop calls Bridge::tick between events and releases grabs before manual
+transport/load actions. The active local profile was extended by adding only
+the two absent jog mappings; a timestamped .before-jog backup preserves the
+original. The running app was preserved while building its replacement; no
+playback was interrupted. Restart is needed to use the new binary. Headless jog
+tests cover direction/bursts, holds, idle release, mode changes, bounds, isolation,
+disconnect/replacement/manual takeover, and audible resume for playing/paused
+with key lock on/off. Existing engine realtime code was not changed.
+
+The user confirmed and connected a Numark MixTrack Pro II; Windows USB IDs are
+`15E4:004B` and native MIDI discovery lists `MixTrack Pro II`. Official Numark
+VirtualDJ/Traktor mappings and the manual were supplied and inspected as references;
+see CONTROLLER-REFERENCES.md for hashes, addresses and limits.
+
+New `crates/controllers` provides a UI-independent mapping API with versioned JSON,
+Learn/replacement hooks, press/release actions, play/key-lock toggles, Shift
+conditions, absolute/relative parameter controls and soft takeover. Pickup is a
+user requirement: software volume at 100% must remain untouched while hardware
+rises from 0; only reaching/crossing the software value acquires control. Software
+changes re-arm pickup; exact MIDI 64/8192 centres are supported.
+
+The optional native `midir` transport is enabled by the desktop app. Set
+`DJCRAFT_CONTROLLER_MAP` to an explicit JSON file to enable input; otherwise no
+ports open. Protocol Actions still use the existing host-role engine route,
+including the app's audible-track replacement prompt. Callback work is bounded
+enqueueing, with mapping on the control thread. The host scans named inputs once
+per second and resets held actions/pickup when disconnects are observed.
+
+See CONTROLLERS.md for monitor/profile-generator commands and the public API.
+The Numark starter is deliberately partial and unverified on physical controls.
+Graphical mapping UI, LED output/initialization, jog semantics, dynamic effect
+targets, browser commands and paired CC assembly remain pending. The app was not
+launched or its audio configuration changed as part of this implementation.
+
+Verification: 240 workspace tests passed, one ignored; formatting,
+licence/source checks and Windows development build passed. The native monitor
+opened `MixTrack Pro II` successfully for a two-second read-only connection check;
+no physical control events were captured. An editable 24-binding starter was
+created at `$env:LOCALAPPDATA\DJCraft-Development\mixtrack-pro-ii.json`. No
+mapping was enabled in a running app and physical acceptance remains pending.
+
+Subsequent launch: bundled `profiles/numark-mixtrack-pro-ii.json` adds the
+24 official-address bindings to Git. `tools/run-mixtrack.ps1` copies it once to
+the development data `controllers` directory, preserving edits on subsequent
+launches, enables that profile and starts the existing build with timestamped
+logs. The app launched successfully with a responsive faderCraft window and no
+startup errors in its stderr log. 241 tests passed, one ignored; formatting,
+licence/source and whitespace checks passed. Physical controls remain unverified;
+this is an independently authored supported-control profile, not a complete
+VirtualDJ import. Jog/LED and remaining buttons are still pending.
+
 ## Latest checkpoint and verification
 
 Windows GitHub CI explicitly adds the installed Windows SDK x64 resource compiler

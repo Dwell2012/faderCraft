@@ -137,6 +137,7 @@ pub struct Shell {
     /// Set when the dialog has just opened and should take keyboard focus.
     focus_settings: bool,
     engine: Option<Engine>,
+    controllers: Option<crate::controllers::Controllers>,
     engine_error: Option<SharedString>,
     /// The file last loaded onto each deck.
     deck_paths: Vec<Option<PathBuf>>,
@@ -289,6 +290,13 @@ impl Shell {
             settings_view: None,
             focus_settings: false,
             engine,
+            controllers: match crate::controllers::Controllers::load() {
+                Ok(controllers) => controllers,
+                Err(error) => {
+                    eprintln!("Controller setup: {error}");
+                    None
+                }
+            },
             engine_error,
             deck_focus: cx.focus_handle(),
             active_deck: 0,
@@ -373,6 +381,22 @@ impl Shell {
         };
         for (deck, path) in tracks.into_iter().enumerate() {
             shell.send(deck, DeckAction::Load { path });
+        }
+        if shell.controllers.is_some() {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(5))
+                        .await;
+                    if this
+                        .update(cx, |this, cx| this.poll_controllers(cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
         }
         // Queue progression must not depend on animation frames or a visible window.
         cx.spawn(async move |this, cx| {
@@ -784,6 +808,27 @@ impl Shell {
 
     /// Sends a deck action to the engine as the session host.
     fn send(&mut self, deck: usize, action: DeckAction) {
+        if matches!(
+            action,
+            DeckAction::Load { .. }
+                | DeckAction::Play
+                | DeckAction::Pause
+                | DeckAction::Seek { .. }
+                | DeckAction::Jump { .. }
+                | DeckAction::TriggerHotCue { .. }
+                | DeckAction::CuePreview { .. }
+                | DeckAction::AutoScratch { .. }
+                | DeckAction::Sync { .. }
+                | DeckAction::Scratch { .. }
+                | DeckAction::ScratchTo { .. }
+        ) && let Some(controllers) = &mut self.controllers
+        {
+            for release in controllers.cancel_deck(deck as u8) {
+                if let Some(engine) = &mut self.engine {
+                    let _ = engine.apply(Role::Host, release);
+                }
+            }
+        }
         if !matches!(action, DeckAction::CuePreview { .. }) {
             self.cue_anchor[deck] = None;
         }
@@ -852,6 +897,111 @@ impl Shell {
             Err(reason) => eprintln!("action rejected: {reason:?}"),
             _ => {}
         }
+    }
+
+    fn poll_controllers(&mut self, cx: &mut Context<Self>) {
+        let Some(mut controllers) = self.controllers.take() else {
+            return;
+        };
+        let batches = controllers.drain();
+        for action in controllers.take_releases() {
+            self.controller_action(action, cx);
+        }
+        for command in controllers.take_commands() {
+            self.controller_command(command, cx);
+        }
+        for (port, events) in batches {
+            for event in events {
+                let Some(engine) = &mut self.engine else {
+                    break;
+                };
+                let state = engine.state();
+                for action in controllers.process(&port, event, &state) {
+                    self.controller_action(action, cx);
+                }
+                for command in controllers.take_commands() {
+                    self.controller_command(command, cx);
+                }
+            }
+        }
+        if let Some(engine) = &mut self.engine {
+            let state = engine.state();
+            for action in controllers.tick(&state) {
+                self.controller_action(action, cx);
+            }
+        }
+        self.controllers = Some(controllers);
+    }
+
+    fn controller_action(&mut self, action: Action, cx: &mut Context<Self>) {
+        match action {
+            Action::Deck { deck, action } if usize::from(deck) < self.deck_paths.len() => {
+                match action {
+                    DeckAction::Load { path } => self.request_load(usize::from(deck), path, cx),
+                    DeckAction::SetHotCues { cues } => {
+                        self.controller_store_cues(usize::from(deck), cues)
+                    }
+                    action => self.send(usize::from(deck), action),
+                }
+            }
+            action => {
+                if let Some(engine) = &mut self.engine {
+                    if let Err(reason) = engine.apply(Role::Host, action) {
+                        eprintln!("Controller action rejected: {reason:?}");
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn controller_command(
+        &mut self,
+        command: djcraft_controllers::HostCommand,
+        cx: &mut Context<Self>,
+    ) {
+        use djcraft_controllers::HostCommand;
+        let deck = usize::from(command.deck());
+        if deck >= self.deck_paths.len() {
+            return;
+        }
+        match command {
+            HostCommand::LoopPad { pad, alternate, .. } => {
+                self.controller_loop_pad(deck, pad, alternate, cx);
+            }
+            HostCommand::SamplePad { slot, stop, .. } => {
+                self.controller_sample_pad(deck, slot, stop);
+            }
+            HostCommand::Sync { .. } => self.sync_deck(deck, cx),
+            HostCommand::Cue { pressed: true, .. } => self.begin_cue_preview(deck, cx),
+            HostCommand::Cue { pressed: false, .. } => {
+                if self
+                    .cue_preview
+                    .as_ref()
+                    .is_some_and(|(active, _, _)| *active == deck)
+                {
+                    self.end_cue_preview(cx);
+                }
+            }
+            HostCommand::SelectDeck { .. } => {
+                self.active_deck = deck;
+                self.cue_active_deck();
+            }
+            HostCommand::Stutter { .. } => {
+                if let Some(state) = self.engine.as_mut().map(|e| e.state().decks[deck].clone())
+                    && state.track.is_some()
+                {
+                    let anchor = self.cue_anchor[deck]
+                        .as_ref()
+                        .filter(|(_, path)| *path == state.path)
+                        .map_or(0., |(time, _)| *time);
+                    self.send(deck, DeckAction::Seek { seconds: anchor });
+                    self.send(deck, DeckAction::Play);
+                    self.cue_anchor[deck] = Some((anchor, state.path));
+                }
+            }
+        }
+        cx.notify();
     }
 
     fn cue_active_deck(&mut self) {

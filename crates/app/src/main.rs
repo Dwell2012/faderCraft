@@ -1,4 +1,5 @@
 mod analysis;
+mod controllers;
 mod flow_view;
 mod library_view;
 mod lookup_view;

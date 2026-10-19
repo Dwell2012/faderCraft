@@ -388,6 +388,41 @@ impl Shell {
             }
         }
     }
+
+    pub(super) fn controller_store_cues(
+        &mut self,
+        deck: usize,
+        mut cues: [Option<HotCue>; HOT_CUES],
+    ) {
+        if self.pads[deck].locked {
+            self.pads[deck].notice = "Unlock cue editing in Options first.".into();
+            return;
+        }
+        if let Some(state) = self.pad_state(deck) {
+            for (slot, cue) in cues.iter_mut().enumerate() {
+                if state.hot_cues[slot].is_none()
+                    && let Some(cue) = cue
+                {
+                    // Match the UI's near-beat snap, but retain saved loop bounds.
+                    if cue.loop_end.is_none() {
+                        let snapped = hot_cue_position(
+                            cue.seconds,
+                            self.grids[deck],
+                            self.pads[deck].quantize,
+                        );
+                        if state
+                            .track
+                            .as_ref()
+                            .is_some_and(|t| snapped < t.loaded_seconds)
+                        {
+                            cue.seconds = snapped;
+                        }
+                    }
+                }
+            }
+        }
+        self.save_pad_cues(deck, cues);
+    }
     fn save_cue_appearance(
         &mut self,
         deck: usize,
@@ -554,6 +589,21 @@ impl Shell {
                 )
         });
     }
+    pub(super) fn controller_sample_pad(&mut self, deck: usize, slot: u8, stop: bool) {
+        if slot < 16 {
+            self.pad_send(
+                deck,
+                DeckAction::Sample {
+                    slot,
+                    play: !stop,
+                    restart: !stop,
+                    repeat: !stop && self.pads[deck].sample_repeat,
+                    level: self.pads[deck].sample_level,
+                },
+            );
+        }
+    }
+
     fn press_pad(
         &mut self,
         deck: usize,
