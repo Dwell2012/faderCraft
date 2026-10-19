@@ -1130,6 +1130,65 @@ fn batch_tag_changes_are_reviewed_applied_and_undone() {
 }
 
 #[test]
+fn unrelated_tag_edits_preserve_detected_bpm_and_key() {
+    for tagged in [false, true] {
+        let dir = TempDir::new("metadata-analysis");
+        write_tagged(
+            &dir.0.join("track.wav"),
+            "Original",
+            "Artist",
+            "",
+            if tagged { "120" } else { "" },
+            if tagged { "2A" } else { "" },
+        );
+        let mut library = Library::open_in_memory().unwrap();
+        let source = library.add_folder(&dir.0).unwrap();
+        library.scan(source.id, |_| {}).unwrap();
+        let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+        library
+            .store_tempo(
+                id,
+                6,
+                Some(TempoResult {
+                    bpm: 125.,
+                    first_beat_seconds: 0.,
+                    downbeat: 0,
+                    confidence: 0.9,
+                }),
+            )
+            .unwrap();
+        library
+            .store_key(
+                id,
+                Some(KeyResult {
+                    key: Camelot::parse("8A").unwrap(),
+                    confidence: 0.9,
+                }),
+            )
+            .unwrap();
+        let original = library.tracks(&TrackQuery::default()).unwrap()[0].clone();
+        let (_, mut edit) = library.file_tags(id).unwrap();
+        edit.title = "Renamed".into();
+        let planned = library.plan_edit(id, &edit).unwrap();
+        let result = library.apply_changes("Rename title", &[planned]).unwrap();
+        let renamed = library.tracks(&TrackQuery::default()).unwrap()[0].clone();
+        assert_eq!(renamed.bpm, original.bpm);
+        assert_eq!(renamed.key, original.key);
+        assert!(library.pending_tempo_analysis(6).unwrap().is_empty());
+        library.undo_batch(result.batch.unwrap()).unwrap();
+        let restored = library.tracks(&TrackQuery::default()).unwrap()[0].clone();
+        assert_eq!(restored.bpm, original.bpm);
+        assert_eq!(restored.key, original.key);
+        edit.bpm = Some(130.);
+        edit.key = Some("9A".into());
+        library.edit_track(id, &edit).unwrap();
+        let manual = library.tracks(&TrackQuery::default()).unwrap()[0].clone();
+        assert_eq!(manual.bpm, Some(130.));
+        assert_eq!(manual.key.as_deref(), Some("9A"));
+    }
+}
+
+#[test]
 fn tags_are_written_and_read_back_in_every_format() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let dir = TempDir::new("formats");
@@ -1309,6 +1368,26 @@ fn playlists_have_folders_and_order() {
         .map(|t| t.title)
         .collect();
     assert_eq!(order, ["Three", "One", "Two"]);
+    // Dropping onto a later row places the track at that row's old position.
+    library.move_in_playlist(set.id, id("Three"), 2).unwrap();
+    let order = library
+        .tracks(&in_set)
+        .unwrap()
+        .into_iter()
+        .map(|track| track.title)
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["One", "Two", "Three"]);
+    // Moving upward uses the target's position without an off-by-one shift.
+    library.move_in_playlist(set.id, id("Two"), 0).unwrap();
+    assert_eq!(
+        library
+            .tracks(&in_set)
+            .unwrap()
+            .iter()
+            .map(|track| track.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Two", "One", "Three"]
+    );
 }
 
 #[test]

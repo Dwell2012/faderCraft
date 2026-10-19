@@ -618,7 +618,9 @@ impl Library {
             (None, None) => true,
             _ => false,
         };
-        if !same_bpm {
+        // Changing an unrelated field must not turn a missing BPM tag into
+        // an explicit blank override of the detected tempo.
+        if edit.bpm != change.before.bpm && !same_bpm {
             self.conn.execute(
                 "UPDATE tracks SET bpm_manual = 1 WHERE id = ?1",
                 [change.track_id],
@@ -629,7 +631,7 @@ impl Library {
             .as_deref()
             .map(str::trim)
             .filter(|key| !key.is_empty());
-        if typed_key != shown_key.as_deref() {
+        if edit.key != change.before.key && typed_key != shown_key.as_deref() {
             self.conn.execute(
                 "UPDATE tracks SET key_manual = 1 WHERE id = ?1",
                 [change.track_id],

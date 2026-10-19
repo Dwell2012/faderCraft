@@ -364,11 +364,19 @@ impl SettingsView {
                 let buffer = self.dropdown("audio-buffer", self.settings.audio_buffer, &[0, 64, 128, 256, 512, 1024],
                     |n| match n { 64 => "64 frames", 128 => "128 frames", 256 => "256 frames", 512 => "512 frames", 1024 => "1024 frames", _ => "Driver default" },
                     |s, n| s.audio_buffer = n, cx);
+                let master = self.dropdown("master-pair", self.settings.audio_master_pair, &[0, 2, 4, 6],
+                    |n| match n { 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "1 / 2" },
+                    |s, n| s.audio_master_pair = n, cx);
+                let cue = self.dropdown("cue-pair", self.settings.audio_cue_pair.unwrap_or(u16::MAX), &[u16::MAX, 0, 2, 4, 6],
+                    |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
+                    |s, n| s.audio_cue_pair = if n == u16::MAX { None } else { Some(n) }, cx);
                 vec![self.section("Output", vec![
                     self.row("Currently running", "New audio selections take effect after restarting DJCraft.", self.info(self.audio.clone(), cx), cx),
                     self.row("Audio backend", "WASAPI exclusive uses the device directly and prevents other apps sharing that output. ASIO uses an installed driver.", backend, cx),
                     self.row("Output device", "Connect your audio interface before opening this menu.", device, cx),
                     self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
+                    self.row("Master output pair", "Stereo software channels on the selected device. Changes require restart.", master, cx),
+                    self.row("Headphone cue pair", "Follows the active deck before channel faders. Use a distinct pair on the same multichannel device; ASIO recommended. Exclusive WASAPI is stereo only.", cue, cx),
                 ], cx)]
             }
             Page::Library => {

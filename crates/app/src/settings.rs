@@ -95,6 +95,8 @@ pub struct Settings {
     pub audio_exclusive: bool,
     pub audio_device: String,
     pub audio_buffer: u32,
+    pub audio_master_pair: u16,
+    pub audio_cue_pair: Option<u16>,
     pub theme: ThemeChoice,
     pub start_tab: StartTab,
     /// Check the library's folders for changes when the app opens.
@@ -177,6 +179,8 @@ impl Default for Settings {
             audio_exclusive: false,
             audio_device: String::new(),
             audio_buffer: 0,
+            audio_master_pair: 0,
+            audio_cue_pair: None,
             theme: ThemeChoice::default(),
             start_tab: StartTab::default(),
             scan_on_startup: true,
@@ -263,6 +267,8 @@ mod tests {
             audio_exclusive: false,
             audio_device: "Example ASIO".into(),
             audio_buffer: 256,
+            audio_master_pair: 0,
+            audio_cue_pair: Some(2),
             theme: ThemeChoice::Light,
             start_tab: StartTab::Library,
             scan_on_startup: false,
@@ -342,6 +348,11 @@ pub fn open_audio(
                 "--asio-probe",
                 &settings.audio_device,
                 &settings.audio_buffer.to_string(),
+                &settings.audio_master_pair.to_string(),
+                &settings
+                    .audio_cue_pair
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "off".into()),
             ]);
             command
                 .stdin(std::process::Stdio::null())
@@ -375,11 +386,18 @@ pub fn open_audio(
         probe().map_err(EngineError::Device)?;
     }
     if settings.audio_exclusive && !settings.audio_asio {
+        if settings.audio_cue_pair.is_some() || settings.audio_master_pair != 0 {
+            return Err(EngineError::Device("Separate output pairs require ASIO or shared multichannel audio. Select ASIO for CONNECT 6.".into()));
+        }
         return Engine::with_wasapi_exclusive(Some(&settings.audio_device), settings.audio_buffer);
     }
-    Engine::with_output(
+    Engine::with_routing(
         settings.audio_asio,
         Some(&settings.audio_device),
         settings.audio_buffer,
+        djcraft_engine::OutputRouting {
+            master: settings.audio_master_pair,
+            cue: settings.audio_cue_pair,
+        },
     )
 }

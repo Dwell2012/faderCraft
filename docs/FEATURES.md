@@ -44,6 +44,9 @@ the committed scope of the custom build.
 
 ### Sources
 
+- [x] Manual Refresh in the Library and performance browser rescans all added
+      music folders in the background, with scan progress and analysis of new files.
+
 - [x] Local files and folders, with watch-for-changes (watching has only
       been tried on macOS)
 - [ ] Network shares
@@ -147,7 +150,7 @@ Feature set modelled on Mixed In Key 10.
 
 - [x] Track browser with virtualised table, sorting, column chooser, search
 - [~] Playlists and folders (folders inside folders, rename, move, reorder
-      from a track's menu; no drag and drop yet)
+      tracks by menu or drag and drop in playlist order; sidebar reordering pending)
 - [x] Smart playlists (rule-based) (title, artist, album, genre, BPM,
       energy, year, key or keys that mix, and date added; every rule or any)
 - [x] Auto-classification by genre, energy and era (automatic groups in the
@@ -218,10 +221,16 @@ Feature set modelled on Mixed In Key 10.
 - [x] Three-band complementary EQ (250 Hz / 2.5 kHz crossovers, neutral
       centre, band kill to +6 dB); drag knobs vertically, double-click to reset
 - [ ] Channel filter
-- [ ] Headphone cue with cue/master mix
+- [~] Headphone cue follows the active deck, post-EQ/effects and before channel,
+      crossfader and master faders. Settings select a separate stereo pair on the
+      same ASIO/shared multichannel device. Cue/master blend exists in the protocol;
+      right-side mixer knobs provide headphone volume and cue/master blend
+      (both sources at full gain at the midpoint)
+      (hardware listening verification remains pending).
 - [~] Mirrored channel meters and separate L/R master peak meters with clip indicators (output still
       hard-clips; a transparent master limiter is not implemented)
-- [ ] Audio device and output routing settings
+- [~] Audio device, buffer and separate master/headphone stereo output pairs
+      (restart required; exclusive WASAPI remains stereo; no separate-device cue).
 
 ### Core effects
 
@@ -270,6 +279,9 @@ Feature set modelled on Mixed In Key 10.
 - [ ] Key shift
 
 ### Stems and sampler
+
+- [x] Sampler bus volume on the left of the mixer; affects all pads together
+      while preserving their individual levels, with smoothed gain changes.
 
 - [x] Local cached four-source separation (vocals, instruments, bass, drums);
       optional CPU Demucs runtime/model installed with `tools/setup-stems.ps1`
@@ -448,6 +460,13 @@ waveforms, and options tucked into popovers.
 
 ## Known constraints
 
+
+- Auto-Trim targets the complete decoded track's peak (including cubic interpolation) at -0.1 dBFS,
+      with up to +12 dB boost. EQ/effects, stem changes and summed sources can
+      still add gain; this is not a master limiter or true-peak measurement.
+
+- The desktop window opens at 1920 × 1080 logical pixels and remains resizable.
+
 - **Remote latency:** guests feel roughly 50–200 ms between an action and the
   sound. Mixing and effects work; scratching remotely does not.
 - **GPUI:** pre-1.0 with frequent breaking changes; pin exact versions.
@@ -492,7 +511,7 @@ waveforms, and options tucked into popovers.
 - [x] Per-deck eight-pad layout, page dropdown/favourites, options and two parameter lanes
 - [x] Split pages and FX-area Pads 16 (split disabled in 16-pad mode)
 - [x] Hot Cues, Loop, Loop Roll, Slicer, Beat Jump, CueLoop, Saved Loops, Manual Loop, Stems and Pad FX
-- [x] Sixteen persistent hot cues per track, loop cues, shift-delete, edit lock and quantize-on-set
+- [x] Sixteen persistent hot cues per track, loop cues, shift-delete, edit lock and quantize-on-set (new Hot Cues snap only within 5% of a beat; mid-beat placements are preserved)
 - [x] Momentary roll/slicer with background transport, stutter cues, temporary FX slot restoration
 - [x] Saved-loop arm versus Shift-jump, 16-slot storage with backwards-compatible four-slot loading
 - [x] Stem mute/isolate pads work with Classic EQ and prepared stems
@@ -526,7 +545,7 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 - [~] Phrase understanding: energy-based suggestions implemented; automatic phrase-to-phrase selection implemented in automix; stem-based vocal activity implemented; semantic recognition remains pending. See [PREPARATION.md](PREPARATION.md).
 
 - [x] Suggested hot cues from phrase/vocal/grid data: ghost markers, individual acceptance, fill empty slots, existing cue/loop preservation and normal cue persistence.
-- [x] Gated stereo RMS auto trim with sample-peak headroom, per-load manual override, paused/explicit application, background measurement and automix preload integration.
+- [x] Full-track peak-normalized Auto-Trim to -0.1 dBFS, including cubic interpolation extrema, +12 dB boost cap and sufficient attenuation for over-range sources; per-load manual override, paused/explicit application, background measurement and automix preload integration. RMS is informational.
 - [ ] Standards-based integrated LUFS and oversampled true-peak measurement.
 
 - [x] Compact performance workspace: aligned decks, pinned transport controls, independent Loops / Effects / Pads / Prepare tabs, bounded mixer and scrollable tool panels above the library.
@@ -544,7 +563,7 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 
 - [x] Suggested cue labels use compact minutes:seconds; saved cue positions retain full sub-second precision.
 
-- [x] Hot cue names and colours: right-click editor, deck-themed default slot colours, accepted suggestion names, persistent per-track metadata and numbered/named flags on rhythm waveforms and compact colour-only flags on deck overviews.
+- [x] Hot cue names and colours: right-click editor (Enter/Return or Save commits; Escape cancels), deck-themed default slot colours, accepted suggestion names, persistent per-track metadata and numbered/named flags on rhythm waveforms and compact colour-only flags on deck overviews.
 
 - [x] Polyphonic sampler: immediate overlapping one-shot triggers with 16 fixed voices per slot, loop toggle and whole-slot stop.
 
@@ -564,7 +583,7 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 
 - [x] Settings gear receives clicks independently of the Windows title-bar drag region; Ctrl+, opens Settings on Windows.
 
-- [x] Direct Windows WASAPI exclusive stereo output, event-driven rendering with MMCSS priority, native format negotiation, buffer alignment and actual buffer duration display. Select in Audio settings and restart; shared WASAPI and ASIO remain available. Separate headphone routing and live device switching remain pending.
+- [x] Direct Windows WASAPI exclusive stereo output, event-driven rendering with MMCSS priority, native format negotiation, buffer alignment and actual buffer duration display. Select in Audio settings and restart; shared WASAPI and ASIO remain available. Separate headphone pairs require ASIO/shared multichannel output; live device switching remains pending.
 
 - [x] Crossfader curve selectors show deck-coloured gain diagrams using the actual mixer curves, with names on hover.
 
@@ -579,3 +598,23 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 - [x] Sync compensates for entering/leaving Key Lock processing and tempo-dependent stretcher latency so forward and backward corrections reach the requested beat phase.
 
 - [x] Timed effects default to beat sync and follow live effective deck tempo; inline effect controls distribute across the available row width.
+
+Key-locked tempo changes (including Sync) now trigger a debounced background pass
+through the full-track time stretcher. Auto-Trim applies the resulting peak while
+playing; manual trim overrides remain respected, and stale tempo results are
+ignored. A stereo-linked 64-frame lookahead peak guard protects each stretched
+deck after EQ/effects while analysis is pending and during transport changes.
+This does not limit the summed master or guarantee DAC true-peak headroom.
+
+- [x] Artist/title and other unrelated tag edits preserve detected BPM/key selection, including undo; only edits to BPM/key can create their manual overrides.
+
+- [x] Playback starts at full transport speed immediately (32-frame anti-click gain
+attack). Pause retains the existing vinyl-style speed brake. Key-locked starts
+pre-roll the stretcher at the cue position using preallocated buffers, discarding
+its startup latency; paused decks prepare this ahead of Play. Starts immediately
+after a seek/load prepare on the first callback. The 64-frame peak-protection
+lookahead and device/output buffering still apply. No device latency is removed.
+
+- [x] Sampler deck capture starts at the exact audible playhead (selected loops keep their bounds), with beat-based length and end-of-track clamping. Pad firing uses a 32-frame anti-click attack instead of the longer gain ramp. Captures are original-source audio and save asynchronously.
+
+- [x] Refreshing/scanning folders from the deck browser notifies the full Library to run pending BPM/key/energy analysis, even when the Library tab is hidden.

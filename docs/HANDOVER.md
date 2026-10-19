@@ -1,6 +1,6 @@
 # Codex handover
 
-Updated 16 October 2026. Read this and `AGENTS.md` before changing code.
+Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
 
 ## Repository
 
@@ -9,7 +9,9 @@ Personal private repository: https://github.com/Dwell2012/djcraft. Shared branch
 retain its MIT licence and attribution. Custom implementation checkpoint:
 `bd5ed92888faab1f800943dd1692681ce33ace6f`.
 
-The active original-machine checkout is `C:\Users\Ian Llewellyn\repos\DJ\djcraft`.
+The current-machine checkout is `C:\Users\ianll\source\repos\DJCraft`, on `main`
+tracking `origin/main`. The earlier original-machine checkout is
+`C:\Users\Ian Llewellyn\repos\DJ\djcraft`.
 The old OneDrive DJ directory is stale; some sessions still start there. Verify the
 working directory before editing. The original-machine working branch is
 `codex/windows-controller-foundation`, tracking `origin/main`; its local `main`
@@ -56,7 +58,29 @@ another machine. Resolve LOCALAPPDATA from the environment, not a hardcoded path
 Windows locks running executables: close DJCraft before replacing its build.
 Coordinate closing with the user if it is playing. Always isolate development data.
 
+For subsequent PowerShell sessions, the repository helper configures these paths,
+finds libclang in the standard LLVM installation, and loads the installed x64
+Visual Studio C++ development environment:
+
+```powershell
+. ./tools/dev-shell.ps1
+cargo build --workspace --locked
+cargo run --locked
+```
+
+Install the prerequisites above first. If LLVM is installed elsewhere, set
+`LIBCLANG_PATH` before loading the helper. The helper changes only the current
+shell environment; it keeps development data separate from the normal library.
+If ASIO's automatic extraction fails, extract the downloaded SDK into
+`$env:LOCALAPPDATA\DJCraft\build-tools\asio` so that `ASIOSDK\common\asio.h`
+exists beneath it. The helper detects this copy, or respects an existing
+`CPAL_ASIO_DIR` for another SDK location. Keep the SDK outside Git.
+
 ## Checks
+
+19 October checkpoint: **213 tests passed, 0 failed, 1 ignored** with
+`cargo test --workspace --locked`; formatting, licence/source and whitespace
+checks passed. The development build completed and the app launched successfully.
 
 ```powershell
 cargo fmt --all -- --check
@@ -155,19 +179,64 @@ Clean buttons with hover explanations; mousewheel controls wherever useful.
 
 ## Recent fixes and limitations
 
+The 19 October development build includes the following changes:
+
+- Settings exposes the headphone output pair; cue follows the active deck.
+  The current setup uses a LEWITT CONNECT 6, with speakers for master and the
+  6.35 mm headphones for cue. Output channel assignments remain user configured.
+  Cue volume/mix sit to the right of the deck EQ controls; sampler volume is on
+  the left. Cue mix at centre gives both cue and master unity gain.
+- New windows default to 1920 x 1080. Enter saves the hot-cue editor.
+- Hot-cue additions snap only within 5% of a beat, allowing mid-beat cues.
+- Auto-Trim measures the full source, including interpolated peaks, targeting
+  -0.1 dBFS with a maximum boost of 12 dB. Key-lock processing and playback
+  startup details appear below. Summed master clipping is still possible.
+- Sampler capture begins at the playhead unless a loop supplies its bounds.
+  Playback uses a short 32-frame attack; old captures must be recaptured if
+  they contain the former beat-aligned lead-in.
+- Refresh rescans library folders. Changes in the compact browser now trigger
+  pending analysis in the main Library view, so new imports get BPM/key analysis.
+  Low-confidence BPM remains blank rather than being guessed.
+- Ordinary playlist tracks can be reordered by dragging onto another row in
+  either library table. Clear column sorting first. Search-filtered views resolve
+  positions against the full playlist; smart playlists keep their rule-based order.
+
+The current machine has Visual Studio 2026 with the C++ workload, LLVM and the
+external ASIO SDK configured by `tools/dev-shell.ps1`. The local Python 3.12
+Demucs CPU runtime/model were installed and passed an eight-second four-stem
+functional check. They are outside Git; see STEMS.md to recreate them.
+
+Diagnostic examples: `cargo run -p djcraft --example analyse_library` processes
+pending library analysis using `DJCRAFT_DATA_DIR`; `check_levels` inspects levels
+and `check_stems` checks the stem worker (read their arguments before running).
+Library examples `audit_tags` and `apply_reviewed_tags` support the reviewed tag
+workflow; never run the latter without an approved manifest. Metadata cleanup and
+analysis were performed on the local DJ Mixing Practice and 70's 80's 90's Extended
+Mixes folders. Review manifests, undo database, reports and music remain local,
+outside Git, under the development data directory and
+`$env:LOCALAPPDATA\DJCraft\tag-reviews`. Preserve them separately.
+
+Do not interrupt a playing app just to verify a build. Windows can keep the
+running executable locked; rename it before linking a replacement if needed,
+then restart only when requested. The latest playlist-order build was restarted
+successfully on 19 October.
+
 Sync now compensates for key-lock latency changes across unity/non-unity speed.
 Headless tests cover forward/backward corrections. More real-track listening tests
 remain useful; do not claim universally perfect sync. An attempted always-stretch
 at unity change broke scratch resume and was reverted.
 
-Settings gear clicks were swallowed by the titlebar drag hitbox. Its wrapper now
-occludes that hitbox and stops mouse-down propagation. Ctrl+, also opens settings.
+Settings gear and Library/Perform navigation clicks were swallowed by the titlebar
+drag hitbox. Both toolbar control groups now occlude that hitbox and stop mouse-down
+propagation. Ctrl+, also opens settings.
 Preserve this behavior when rearranging the toolbar.
 
 Realtek WASAPI exclusive tests at 48 kHz: requested 256 frames gave 256 (5.33 ms);
 64 aligned to 144 (3 ms); default gave 480 (10 ms). These are buffer durations,
 not round-trip latency. Audio configuration changes require restart. Independent
-headphone routing and live device switching are not implemented. ASIO probing uses
+headphone pairs are now selectable for ASIO/shared multichannel output, following
+the active deck; exclusive WASAPI remains stereo. Live device switching is not
+implemented. CONNECT 6 hardware listening verification is pending. ASIO probing uses
 a child process because the local Realtek ASIO driver crashed natively.
 
 Numark Mixtrack Pro (generation needs confirmation; a Pro II mapping was supplied)
@@ -187,3 +256,17 @@ Commit and push before switching machines, then fetch/pull on the destination be
 editing. On clean main use `git pull --ff-only`. Do not reset or force-push to resolve
 local work. Keep origin pointed at Dwell2012 and upstream at the original project.
 Update this handover when important setup or product decisions change.
+
+Key-locked tempo changes (including Sync) now trigger a debounced background pass
+through the full-track time stretcher. Auto-Trim applies the resulting peak while
+playing; manual trim overrides remain respected, and stale tempo results are
+ignored. A stereo-linked 64-frame lookahead peak guard protects each stretched
+deck after EQ/effects while analysis is pending and during transport changes.
+This does not limit the summed master or guarantee DAC true-peak headroom.
+
+Playback starts at full transport speed immediately (32-frame anti-click gain
+attack). Pause retains the existing vinyl-style speed brake. Key-locked starts
+pre-roll the stretcher at the cue position using preallocated buffers, discarding
+its startup latency; paused decks prepare this ahead of Play. Starts immediately
+after a seek/load prepare on the first callback. The 64-frame peak-protection
+lookahead and device/output buffering still apply. No device latency is removed.

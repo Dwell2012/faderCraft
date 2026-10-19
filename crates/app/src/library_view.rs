@@ -551,7 +551,26 @@ impl TableDelegate for TrackTable {
         _: &mut Window,
         _: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let row = div().id(("row", row_ix));
+        let mut row = div().id(("row", row_ix));
+        if let Some(target) = self
+            .tracks
+            .get(row_ix)
+            .filter(|_| self.playlist.is_some() && !self.smart && !self.sorted_by_user())
+        {
+            let target = target.id;
+            let playlist = self.playlist;
+            let view = self.view.clone();
+            row = row
+                .drag_over::<DraggedTrack>(|style, _, _, _| style.bg(rgb(0x183849)))
+                .on_drop(move |dragged: &DraggedTrack, _, cx| {
+                    view.update(cx, |view, cx| {
+                        if view.playlist == playlist && dragged.id != target {
+                            view.drop_playlist_track(dragged.id, target, cx);
+                        }
+                    })
+                    .ok();
+                });
+        }
         // Rows can be dragged out, onto a Flow lane for one.
         match self.tracks.get(row_ix) {
             Some(track) => row.on_drag(
@@ -1810,6 +1829,37 @@ impl LibraryView {
         self.reload(cx);
     }
 
+    /// The full Library owns analysis, including changes scanned by the browser.
+    pub fn refresh_and_analyse(&mut self, cx: &mut Context<Self>) {
+        self.reload(cx);
+        self.analyse(cx);
+    }
+
+    /// Explicitly discover additions/changes on disk, rather than only reloading SQLite.
+    fn refresh_folders(&mut self, cx: &mut Context<Self>) {
+        if self.running_scans > 0 {
+            return;
+        }
+        self.reload(cx);
+        let folders: Vec<_> = self
+            .sources
+            .iter()
+            .filter(|source| source.kind == SourceKind::Folder)
+            .map(|source| source.id)
+            .collect();
+        self.error = None;
+        self.scan_counters.done.store(0, AtomicOrdering::Relaxed);
+        self.scan_counters.total.store(0, AtomicOrdering::Relaxed);
+        if folders.is_empty() {
+            self.notice = Some("Add a music folder to refresh its contents.".into());
+        } else {
+            for id in folders {
+                self.scan(id, cx);
+            }
+        }
+        cx.notify();
+    }
+
     fn select(&mut self, source: Option<i64>, cx: &mut Context<Self>) {
         self.section = Section::Library;
         self.selected = source;
@@ -2190,6 +2240,29 @@ impl LibraryView {
         };
         self.change_library(
             |library| library.move_in_playlist(playlist, track, to.max(0) as usize),
+            cx,
+        );
+    }
+
+    /// Resolve the destination against the complete playlist, even when search
+    /// hides some rows. Moving downward lands after the target; upward before it.
+    fn drop_playlist_track(&mut self, track: i64, target: i64, cx: &mut Context<Self>) {
+        let Some(playlist) = self.playlist else {
+            return;
+        };
+        self.change_library(
+            |library| {
+                let tracks = library.tracks(&TrackQuery {
+                    playlist: Some(playlist),
+                    ..Default::default()
+                })?;
+                if tracks.iter().any(|row| row.id == track)
+                    && let Some(to) = tracks.iter().position(|row| row.id == target)
+                {
+                    library.move_in_playlist(playlist, track, to)?;
+                }
+                Ok(())
+            },
             cx,
         );
     }
@@ -3338,6 +3411,11 @@ impl LibraryView {
                             .child(Input::new(&self.search).cleanable(true)),
                     )
                     .child(Button::new("queue-view").small().outline().label("Queue all").tooltip("Append the displayed tracks to Automix in this order").on_click(cx.listener(|this,_,_,cx|this.queue_view(cx))))
+                    .child(Button::new("refresh-library").small().outline()
+                        .label(if self.running_scans > 0 { "Refreshing…" } else { "Refresh" })
+                        .tooltip("Rescan all added music folders for new and changed tracks.")
+                        .disabled(self.running_scans > 0 || self.library.is_none())
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_folders(cx))))
                     .child(div().flex_1())
                     .child(
                         div()

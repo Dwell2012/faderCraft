@@ -142,6 +142,38 @@ fn snapped(seconds: f64, grid: Option<TempoResult>, enabled: bool) -> f64 {
     }
     seconds
 }
+
+fn hot_cue_position(seconds: f64, grid: Option<TempoResult>, quantize: bool) -> f64 {
+    let Some(grid) = grid.filter(|_| quantize) else {
+        return seconds;
+    };
+    let target = snapped(seconds, Some(grid), true);
+    let beat = grid.beat_seconds();
+    // Include the boundary despite floating-point rounding of grid positions.
+    if (target - seconds).abs() <= beat * 0.05 + beat * 1e-10 {
+        target
+    } else {
+        seconds
+    }
+}
+
+fn sample_capture_region(
+    position: f64,
+    selected_loop: Option<[f64; 2]>,
+    grid: Option<TempoResult>,
+    beats: f64,
+    loaded_seconds: f64,
+) -> Option<[f64; 2]> {
+    selected_loop.or_else(|| {
+        grid.map(|g| {
+            let start = position.clamp(0., loaded_seconds);
+            [
+                start,
+                (start + beats * g.beat_seconds()).min(loaded_seconds),
+            ]
+        })
+    })
+}
 const PAD_FX: [EffectKind; 16] = [
     EffectKind::Echo,
     EffectKind::Reverb,
@@ -411,9 +443,41 @@ impl Shell {
             let save_colour = colour.clone();
             let view = view.clone();
             let original_path = original_path.clone();
+            let save = Rc::new(move |cx: &mut App| {
+                let label: String = save_input
+                    .read(cx)
+                    .value()
+                    .trim()
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(48)
+                    .collect();
+                let _ = view.update(cx, |this, cx| {
+                    if !this.pads[deck].locked
+                        && this.pad_state(deck).is_some_and(|s| {
+                            s.path == original_path && s.hot_cues[slot] == original_cue
+                        })
+                    {
+                        this.save_cue_appearance(
+                            deck,
+                            slot,
+                            djcraft_protocol::CueAppearance {
+                                label,
+                                colour: save_colour.get(),
+                            },
+                        );
+                    }
+                    cx.notify();
+                });
+            });
+            let confirm_save = save.clone();
             dialog
                 .title(format!("Hot cue {}", slot + 1))
                 .w(px(420.))
+                .on_ok(move |_, _, cx| {
+                    confirm_save(cx);
+                    true
+                })
                 .child(
                     div()
                         .flex()
@@ -483,32 +547,7 @@ impl Shell {
                                 .primary()
                                 .label("Save")
                                 .on_click(move |_, w, cx| {
-                                    let label: String = save_input
-                                        .read(cx)
-                                        .value()
-                                        .trim()
-                                        .chars()
-                                        .filter(|c| !c.is_control())
-                                        .take(48)
-                                        .collect();
-                                    let _ = view.update(cx, |this, cx| {
-                                        if !this.pads[deck].locked
-                                            && this.pad_state(deck).is_some_and(|s| {
-                                                s.path == original_path
-                                                    && s.hot_cues[slot] == original_cue
-                                            })
-                                        {
-                                            this.save_cue_appearance(
-                                                deck,
-                                                slot,
-                                                djcraft_protocol::CueAppearance {
-                                                    label,
-                                                    colour: save_colour.get(),
-                                                },
-                                            );
-                                        }
-                                        cx.notify();
-                                    });
+                                    save(cx);
                                     w.close_dialog(cx);
                                 }),
                         ),
@@ -561,15 +600,14 @@ impl Shell {
                 }
             } else if state.samples[index] == 0 || edit == 3 {
                 if !self.pads[deck].locked {
-                    let start = snapped(
-                        state.position_seconds,
-                        self.grids[deck],
-                        self.pads[deck].quantize,
-                    );
                     let beats = 4. * 2f64.powi(self.pads[deck].size[page as usize]);
-                    let region = state.loop_region.or_else(|| {
-                        self.grids[deck].map(|g| [start, start + beats * g.beat_seconds()])
-                    });
+                    let region = sample_capture_region(
+                        state.position_seconds,
+                        state.loop_region,
+                        self.grids[deck],
+                        beats,
+                        state.track.as_ref().map_or(0., |t| t.loaded_seconds),
+                    );
                     if let Some([start, end]) = region {
                         if self.pad_send(
                             deck,
@@ -652,6 +690,12 @@ impl Shell {
                         if self.pads[deck].locked {
                             return;
                         }
+                        let start = if page == Page::HotCues {
+                            hot_cue_position(state.position_seconds, grid, quantize)
+                                .min(track.loaded_seconds)
+                        } else {
+                            start
+                        };
                         cues[index] = Some(HotCue {
                             seconds: state.loop_region.map_or(start, |r| r[0]),
                             loop_end: state.loop_region.map(|r| r[1]),
@@ -1229,7 +1273,7 @@ impl Shell {
             .dropdown_menu(move |mut menu, _, _| {
                 for (i, label, checked) in [
                     (0, "Lock cue/loop editing", locked),
-                    (1, "Quantize on set", quantize),
+                    (1, if page == Page::HotCues { "Quantize on set (within 5% of beat)" } else { "Quantize on set" }, quantize),
                     (2, "Cue stutter / hold", stutter),
                     (3, "Delete saved loop: next pad", false),
                     (4, "Release held slicer bank", false),
@@ -1454,7 +1498,12 @@ impl Shell {
                         if parameter == 0 {
                             "Cue".into()
                         } else {
-                            "1 beat".into()
+                            if self.pads[deck].quantize {
+                                "±5% beat"
+                            } else {
+                                "Free"
+                            }
+                            .into()
                         }
                     }
                     Page::Loop if parameter == 1 => {
@@ -1729,7 +1778,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{Page, pad_beats, snapped};
+    use super::{Page, hot_cue_position, pad_beats, sample_capture_region, snapped};
     use djcraft_library::TempoResult;
     #[core::prelude::v1::test]
     fn pad_banks_jump_pairs_and_quantization() {
@@ -1749,5 +1798,59 @@ mod tests {
         };
         assert!((snapped(1.42, Some(grid), true) - 1.6).abs() < 1e-8);
         assert_eq!(snapped(1.42, Some(grid), false), 1.42);
+    }
+
+    #[core::prelude::v1::test]
+    fn sample_capture_uses_exact_playhead_or_selected_loop() {
+        let grid = TempoResult {
+            bpm: 120.,
+            first_beat_seconds: 0.1,
+            downbeat: 0,
+            confidence: 1.,
+        };
+        assert_eq!(
+            sample_capture_region(1.42, None, Some(grid), 4., 10.),
+            Some([1.42, 3.42])
+        );
+        assert_eq!(
+            sample_capture_region(1.42, Some([0.6, 2.6]), Some(grid), 4., 10.),
+            Some([0.6, 2.6])
+        );
+        assert_eq!(
+            sample_capture_region(9.8, None, Some(grid), 4., 10.),
+            Some([9.8, 10.])
+        );
+        assert_eq!(
+            sample_capture_region(1.42, Some([0.6, 2.6]), None, 4., 10.),
+            Some([0.6, 2.6])
+        );
+        assert_eq!(sample_capture_region(1.42, None, None, 4., 10.), None);
+    }
+
+    #[core::prelude::v1::test]
+    fn hot_cue_snap_preserves_offbeat_placements() {
+        for bpm in [90., 120., 150.] {
+            let grid = TempoResult {
+                bpm,
+                first_beat_seconds: 0.1,
+                downbeat: 0,
+                confidence: 1.,
+            };
+            let beat = grid.beat_seconds();
+            let target = grid.first_beat_seconds + 3. * beat;
+            for offset in [-0.05, -0.02, 0., 0.02, 0.05] {
+                assert!(
+                    (hot_cue_position(target + offset * beat, Some(grid), true) - target).abs()
+                        < 1e-9
+                );
+            }
+            for offset in [-0.5, -0.051, 0.051, 0.5] {
+                let position = target + offset * beat;
+                assert_eq!(hot_cue_position(position, Some(grid), true), position);
+            }
+            let close = target + 0.01 * beat;
+            assert_eq!(hot_cue_position(close, Some(grid), false), close);
+            assert_eq!(hot_cue_position(close, None, true), close);
+        }
     }
 }

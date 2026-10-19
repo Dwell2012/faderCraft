@@ -53,6 +53,11 @@ another runtime directory. Per-track `prepare.log` files contain diagnostics.
 Runtime/model files and caches remain local and can be removed when the app is
 closed to reclaim space.
 
+For an end-to-end check without opening a window, load the development shell and
+run `cargo run -p djcraft --example check_stems -- <audio file>`. It prepares an
+eight-second excerpt through the same worker as the UI, validates all four stems,
+and caches the check under `DJCRAFT_DATA_DIR/stem-check`. The source file is read only.
+
 ## Dependency licences
 
 Demucs code and pretrained weights are MIT (upstream

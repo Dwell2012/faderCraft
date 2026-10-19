@@ -282,7 +282,8 @@ fn loops_wrap_audio_and_exit_without_stopping() {
         .unwrap();
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
     let audio = render(&mut mixer, 0.9);
-    assert!(audio.iter().all(|v| *v >= 0.099 && *v <= 0.201));
+    // The first 32 frames have a sub-millisecond anti-click gain envelope.
+    assert!(audio[32..].iter().all(|v| *v >= 0.099 && *v <= 0.201));
     let state = engine.state().decks[0].clone();
     assert!(state.playing && (0.2..0.4).contains(&state.position_seconds));
     engine
@@ -363,11 +364,16 @@ fn render(mixer: &mut Mixer, seconds: f32) -> Vec<f32> {
 }
 
 fn frequency(samples: &[f32]) -> f32 {
-    let crossings = samples
+    let crossings: Vec<f32> = samples
         .windows(2)
-        .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
-        .count();
-    crossings as f32 * RATE as f32 / samples.len() as f32
+        .enumerate()
+        .filter(|(_, pair)| pair[0] <= 0.0 && pair[1] > 0.0)
+        .map(|(i, pair)| i as f32 - pair[0] / (pair[1] - pair[0]))
+        .collect();
+    if crossings.len() < 2 {
+        return 0.;
+    }
+    (crossings.len() - 1) as f32 * RATE as f32 / (crossings.last().unwrap() - crossings[0])
 }
 
 fn position(engine: &mut Engine) -> f64 {
@@ -608,7 +614,8 @@ fn loads_a_file_and_resamples_it() {
 
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
     let out = render(&mut mixer, 0.5);
-    assert!((frequency(&out[RATE as usize / 4..]) - 440.0).abs() < 4.0);
+    let pitch = frequency(&out[RATE as usize / 4..]);
+    assert!((pitch - 440.0).abs() < 4.0, "resampled pitch {pitch}");
 }
 
 #[test]
@@ -2394,7 +2401,7 @@ fn loudness_trim_is_peak_limited_and_manual_override_survives_polling() {
         rms_db: -30.,
         peak_db: -2.,
     };
-    assert_eq!(info.recommended_trim(), -4.); // Headroom beats the loudness target.
+    assert!((info.recommended_trim() - 1.9).abs() < 1e-5);
     assert_eq!(
         LoudnessInfo {
             rms_db: -60.,
@@ -2407,7 +2414,7 @@ fn loudness_trim_is_peak_limited_and_manual_override_survives_polling() {
     let track = engine.track(0).unwrap().clone();
     track.set_loudness(Some(info)).unwrap();
     let state = engine.state();
-    assert_eq!(state.decks[0].trim_db, -4.);
+    assert!((state.decks[0].trim_db - 1.9).abs() < 1e-5);
     assert!(state.decks[0].loudness_applied);
     engine
         .apply(Role::Host, deck(DeckAction::SetTrim { db: 2. }))
@@ -2419,7 +2426,72 @@ fn loudness_trim_is_peak_limited_and_manual_override_survives_polling() {
     engine
         .apply(Role::Host, deck(DeckAction::SetAutoTrim { enabled: true }))
         .unwrap();
-    assert_eq!(engine.state().decks[0].trim_db, -4.);
+    assert!((engine.state().decks[0].trim_db - 1.9).abs() < 1e-5);
+}
+#[test]
+fn auto_trim_normalizes_the_whole_track_peak_without_startup_clipping() {
+    for peak in [0.5f32, 2., 8.] {
+        let samples = (0..RATE).flat_map(|_| [peak, -peak]).collect();
+        let track = Arc::new(Track::from_samples("peaks", RATE, samples));
+        track
+            .set_loudness(Some(djcraft_protocol::LoudnessInfo {
+                rms_db: -30.,
+                peak_db: 20. * (peak * 29. / 27.).log10(),
+            }))
+            .unwrap();
+        let (mut engine, mut mixer) = Engine::headless(RATE);
+        engine.load_track(0, track).unwrap();
+        let trim = engine.state().decks[0].trim_db;
+        assert!((trim - (-0.1 - 20. * (peak * 29. / 27.).log10())).abs() < 1e-5);
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        let out = render(&mut mixer, 1.1);
+        let maximum = out.iter().map(|s| s.abs()).fold(0., f32::max);
+        let expected = peak * 10f32.powf(trim / 20.);
+        assert!(
+            maximum < 1. && (maximum - expected).abs() < 1e-5,
+            "peak {peak}, output {maximum}, expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn key_lock_peak_protection_bounds_processed_audio_at_changed_tempos() {
+    let samples: Vec<f32> = (0..RATE * 3)
+        .flat_map(|i| {
+            let phase = (TAU * 123. * i as f32 / RATE as f32).sin();
+            let sample = if phase >= 0. { 0.95 } else { -0.95 };
+            [sample, -sample * 0.5]
+        })
+        .collect();
+    let mut detected = false;
+    for ratio in [0.92, 1.04, 1.25] {
+        let (mut engine, mut mixer) = engine_with(samples.clone());
+        engine
+            .track(0)
+            .unwrap()
+            .set_loudness(Some(djcraft_protocol::LoudnessInfo {
+                rms_db: -3.,
+                peak_db: 20. * (0.95f32 * 1.125).log10(),
+            }))
+            .unwrap();
+        engine.state();
+        for action in [
+            DeckAction::SetTempo { ratio },
+            DeckAction::SetKeyLock { on: true },
+            DeckAction::Play,
+        ] {
+            engine.apply(Role::Host, deck(action)).unwrap();
+        }
+        for _ in 0..300 {
+            let mut block = [0.; CALLBACK * 2];
+            mixer.render(&mut block);
+            let state = engine.state();
+            detected |= state.decks[0].key_lock_protection_db < -0.05;
+            assert!(block.iter().all(|s| s.abs() < 1.));
+            assert!(state.decks[0].peak < 1. && state.master_peak < 1.);
+        }
+    }
+    assert!(detected, "Fixture must actually exercise gain reduction");
 }
 #[test]
 fn late_loudness_waits_for_pause_and_old_track_report_cannot_change_new_track() {
@@ -2438,7 +2510,7 @@ fn late_loudness_waits_for_pause_and_old_track_report_cannot_change_new_track() 
     assert!(!state.decks[0].loudness_applied);
     engine.apply(Role::Host, deck(DeckAction::Pause)).unwrap();
     render(&mut mixer, 0.01);
-    assert_eq!(engine.state().decks[0].trim_db, -10.);
+    assert!((engine.state().decks[0].trim_db + 0.1).abs() < 1e-5);
     let new = Arc::new(Track::from_samples(
         "new",
         RATE,
@@ -2470,13 +2542,13 @@ fn automix_keeps_preloaded_loudness_trim_during_transition() {
             peak_db: -1.,
         }))
         .unwrap();
-    assert_eq!(engine.state().decks[1].trim_db, -8.);
+    assert!((engine.state().decks[1].trim_db - 0.9).abs() < 1e-5);
     auto_action(&mut engine, MixerAction::AutomixNext);
     drive_auto_until(&mut engine, &mut mixer, |s| s.automix.transitioning);
     render(&mut mixer, 0.2);
     let state = engine.state();
     assert!(state.decks[1].playing);
-    assert_eq!(state.decks[1].trim_db, -8.);
+    assert!((state.decks[1].trim_db - 0.9).abs() < 1e-5);
     assert!(state.automix.enabled);
     for p in paths {
         std::fs::remove_file(p).unwrap();
@@ -2776,4 +2848,256 @@ fn sync_reaches_absolute_target_when_key_lock_changes_processing_mode() {
             );
         }
     }
+}
+
+#[test]
+fn processed_trim_updates_playing_deck_and_preserves_manual_override() {
+    use djcraft_protocol::LoudnessInfo;
+    let track = Arc::new(Track::from_samples("processed", RATE, sine(440., 4., RATE)));
+    track
+        .set_loudness(Some(LoudnessInfo {
+            rms_db: -10.,
+            peak_db: -1.,
+        }))
+        .unwrap();
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    engine.load_track(0, track).unwrap();
+    for action in [
+        DeckAction::SetKeyLock { on: true },
+        DeckAction::SetTempo { ratio: 1.04 },
+        DeckAction::Play,
+    ] {
+        engine.apply(Role::Host, deck(action)).unwrap();
+    }
+    render(&mut mixer, 0.1);
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetProcessedPeak {
+                ratio: 1.04,
+                peak_db: 5.,
+            }),
+        )
+        .unwrap();
+    assert!((engine.state().decks[0].trim_db + 5.1).abs() < 0.001);
+    engine
+        .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.08 }))
+        .unwrap();
+    assert!(
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::SetProcessedPeak {
+                    ratio: 1.04,
+                    peak_db: 8.
+                })
+            )
+            .is_err()
+    );
+    engine
+        .apply(Role::Host, deck(DeckAction::SetTrim { db: -3. }))
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetProcessedPeak {
+                ratio: 1.08,
+                peak_db: 8.,
+            }),
+        )
+        .unwrap();
+    assert_eq!(engine.state().decks[0].trim_db, -3.);
+    engine
+        .apply(Role::Host, deck(DeckAction::SetAutoTrim { enabled: true }))
+        .unwrap();
+    assert!((engine.state().decks[0].trim_db + 8.1).abs() < 0.001);
+    engine
+        .apply(Role::Host, deck(DeckAction::SetKeyLock { on: false }))
+        .unwrap();
+    assert!((engine.state().decks[0].trim_db - 0.9).abs() < 0.001);
+}
+
+#[test]
+fn play_starts_at_full_speed_and_key_lock_has_no_empty_startup_buffers() {
+    for ratio in [0.8, 1., 1.25] {
+        for lock in [false, true] {
+            for paused_preparation in [false, true] {
+                let (mut engine, mut mixer) = engine_with(sine(440., 5., RATE));
+                for action in [
+                    DeckAction::SetTempo { ratio },
+                    DeckAction::SetKeyLock { on: lock },
+                    DeckAction::Seek { seconds: 1. },
+                ] {
+                    engine.apply(Role::Host, deck(action)).unwrap();
+                }
+                if paused_preparation {
+                    render(&mut mixer, 0.1);
+                }
+                assert!(
+                    (position(&mut engine) - if paused_preparation { 1. } else { 0. }).abs() < 1e-8
+                );
+                engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+                let mut block = [0.; 256];
+                let started = Instant::now();
+                mixer.render(&mut block);
+                println!(
+                    "128-frame start: lock={lock}, tempo={ratio}, prepared={paused_preparation}: {:?}",
+                    started.elapsed()
+                );
+                let peak = block.iter().map(|s| s.abs()).fold(0., f32::max);
+                assert!(
+                    peak > 0.1,
+                    "delayed start: ratio {ratio}, lock {lock}, prepared {paused_preparation}, peak {peak}"
+                );
+                let expected = 1. + 128. * ratio / RATE as f64;
+                let tolerance = if lock && ratio != 1. { 0.002 } else { 0.00001 };
+                assert!(
+                    (position(&mut engine) - expected).abs() < tolerance,
+                    "transport start drift: ratio {ratio}, lock {lock}, actual {} expected {expected}",
+                    position(&mut engine)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pause_keeps_brake_ramp_but_resume_reaches_full_speed_immediately() {
+    for lock in [false, true] {
+        let (mut engine, mut mixer) = engine_with(sine(440., 5., RATE));
+        engine
+            .apply(Role::Host, deck(DeckAction::SetKeyLock { on: lock }))
+            .unwrap();
+        engine
+            .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.25 }))
+            .unwrap();
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        render(&mut mixer, 0.5);
+        engine.apply(Role::Host, deck(DeckAction::Pause)).unwrap();
+        let brake = render(&mut mixer, 0.1);
+        assert!(brake[..480].iter().any(|s| s.abs() > 0.1));
+        assert!(brake[2400..].iter().all(|s| s.abs() < 1e-6));
+        let stopped = position(&mut engine);
+        render(&mut mixer, 0.1);
+        assert_eq!(position(&mut engine), stopped);
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        let mut out = [0.; 256];
+        mixer.render(&mut out);
+        assert!(out.iter().any(|s| s.abs() > 0.1));
+        assert!((position(&mut engine) - stopped - 128. * 1.25 / RATE as f64).abs() < 0.002);
+    }
+}
+
+#[test]
+fn key_lock_preroll_keeps_audio_at_the_cue_instead_of_skipping_ahead() {
+    let mut samples = sine(440., 0.08, RATE);
+    samples.extend(sine(1760., 3., RATE));
+    let (mut engine, mut mixer) = engine_with(samples);
+    engine
+        .apply(Role::Host, deck(DeckAction::SetKeyLock { on: true }))
+        .unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.25 }))
+        .unwrap();
+    render(&mut mixer, 0.1);
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    let onset = render(&mut mixer, 0.04);
+    let pitch = frequency(&onset[128..]);
+    assert!(
+        (pitch - 440.).abs() < 25.,
+        "cue audio was skipped: pitch {pitch}"
+    );
+}
+
+#[test]
+fn key_lock_preroll_does_not_cut_audio_from_the_track_end() {
+    let mut samples = vec![0.; (RATE as f32 * 0.9) as usize * 2];
+    samples.extend(sine(880., 0.1, RATE));
+    let (mut engine, mut mixer) = engine_with(samples);
+    engine
+        .apply(Role::Host, deck(DeckAction::SetKeyLock { on: true }))
+        .unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.25 }))
+        .unwrap();
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    let audio = render(&mut mixer, 1.);
+    let late = &audio[(0.75 * RATE as f32) as usize..(0.79 * RATE as f32) as usize];
+    assert!(late.iter().any(|s| s.abs() > 0.1), "stretcher tail was cut");
+    assert!(!engine.state().decks[0].playing);
+}
+
+#[test]
+fn leaving_key_lock_reads_from_the_audible_head() {
+    for action in [
+        DeckAction::SetKeyLock { on: false },
+        DeckAction::SetTempo { ratio: 1. },
+    ] {
+        let unity = matches!(action, DeckAction::SetTempo { .. });
+        let (mut engine, mut mixer) = engine_with(sine(440., 5., RATE));
+        engine
+            .apply(Role::Host, deck(DeckAction::SetKeyLock { on: true }))
+            .unwrap();
+        engine
+            .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.25 }))
+            .unwrap();
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        render(&mut mixer, 1.);
+        let before = position(&mut engine);
+        engine.apply(Role::Host, deck(action)).unwrap();
+        render(&mut mixer, 0.1);
+        let advance = if unity { 0.1 } else { 0.125 };
+        assert!((position(&mut engine) - before - advance).abs() < 0.002);
+    }
+}
+
+#[test]
+fn sampler_from_deck_two_starts_at_exact_capture_frame_with_short_attack() {
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    let mut samples = vec![0.; RATE as usize * 2];
+    let first = (0.1375 * RATE as f64) as usize;
+    samples[first * 2..].fill(0.4);
+    engine
+        .load_track(1, Arc::new(Track::from_samples("deck two", RATE, samples)))
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            Action::Deck {
+                deck: 1,
+                action: DeckAction::CaptureSample {
+                    slot: 0,
+                    start: 0.1375,
+                    end: 0.6375,
+                },
+            },
+        )
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            Action::Deck {
+                deck: 1,
+                action: DeckAction::Sample {
+                    slot: 0,
+                    play: true,
+                    restart: true,
+                    repeat: false,
+                    level: 1.,
+                },
+            },
+        )
+        .unwrap();
+    let mut out = [0.; 256];
+    mixer.render(&mut out);
+    assert!(
+        (out[0] - 0.4 / 32.).abs() < 1e-6,
+        "sample did not fire at the captured playhead: {}",
+        out[0]
+    );
+    assert!(
+        (out[62] - 0.4).abs() < 1e-6,
+        "attack took longer than 32 frames"
+    );
+    assert!((out[254] - 0.4).abs() < 1e-6);
 }

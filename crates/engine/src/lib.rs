@@ -7,6 +7,9 @@ mod effects;
 mod eq;
 mod mixer;
 mod output;
+mod peak_guard;
+mod processed_peak;
+pub use processed_peak::measure_key_lock_peak;
 mod sampler;
 mod spectrum;
 mod track;
@@ -27,7 +30,9 @@ use djcraft_protocol::{
 use mixer::{Command, Shared};
 
 pub use mixer::crossfader_gains;
+pub use mixer::cue_mix_gains;
 pub use mixer::{DECKS, MAX_SCRATCH_SPEED, MAX_TEMPO, MIN_TEMPO, Mixer};
+pub use output::OutputRouting;
 pub use output::output_devices;
 pub use track::{CHANNELS, DecodeError, Track};
 
@@ -54,6 +59,8 @@ impl std::error::Error for EngineError {}
 struct DeckControl {
     auto_trim: bool,
     loudness_applied: bool,
+    processed_peak: Option<(f64, f32)>,
+    trim_refresh_live: bool,
     grid: Option<djcraft_protocol::BeatGrid>,
     last_load: Option<u64>,
     path: Option<String>,
@@ -74,6 +81,20 @@ struct DeckControl {
     eq: [f32; 3],
     eq_mode: EqMode,
     stem_gains: [f32; 4],
+}
+
+impl DeckControl {
+    fn loudness(&self) -> Option<djcraft_protocol::LoudnessInfo> {
+        let mut report = self.track.as_ref()?.loudness()??;
+        if self.key_lock && (self.tempo - 1.).abs() > 1e-3 {
+            if let Some((ratio, peak)) = self.processed_peak {
+                if ratio == self.tempo {
+                    report.peak_db = peak;
+                }
+            }
+        }
+        Some(report)
+    }
 }
 
 struct Loaded {
@@ -99,6 +120,8 @@ pub struct Engine {
     shared: Arc<Shared>,
     decks: [DeckControl; DECKS],
     master_gain: f32,
+    sampler_gain: f32,
+    monitor: djcraft_protocol::MonitorState,
     crossfader: f32,
     crossfader_curve: CrossfaderCurve,
     next_load_id: u64,
@@ -122,8 +145,17 @@ impl Engine {
         name: Option<&str>,
         buffer_frames: u32,
     ) -> Result<Self, EngineError> {
+        Self::with_routing(asio, name, buffer_frames, OutputRouting::default())
+    }
+
+    pub fn with_routing(
+        asio: bool,
+        name: Option<&str>,
+        buffer_frames: u32,
+        routing: OutputRouting,
+    ) -> Result<Self, EngineError> {
         use cpal::traits::DeviceTrait;
-        let (device, config) = output::device(asio, name)?;
+        let (device, config) = output::device(asio, name, routing)?;
         let description = device
             .description()
             .map(|d| d.name().to_owned())
@@ -140,7 +172,22 @@ impl Engine {
                 format!("{buffer_frames} frames (requested)")
             }
         );
-        engine._stream = Some(output::start(&device, config, mixer, buffer_frames)?);
+        engine.output_description.push_str(&format!(
+            " · master {}/{} · cue {}",
+            routing.master + 1,
+            routing.master + 2,
+            routing
+                .cue
+                .map(|c| format!("{}/{}", c + 1, c + 2))
+                .unwrap_or_else(|| "off".into())
+        ));
+        engine._stream = Some(output::start(
+            &device,
+            config,
+            mixer,
+            buffer_frames,
+            routing,
+        )?);
         Ok(engine)
     }
     pub fn with_wasapi_exclusive(
@@ -189,6 +236,8 @@ impl Engine {
             decks: std::array::from_fn(|_| DeckControl {
                 auto_trim: true,
                 loudness_applied: false,
+                processed_peak: None,
+                trim_refresh_live: false,
                 grid: None,
                 last_load: None,
                 path: None,
@@ -210,6 +259,8 @@ impl Engine {
                 stem_gains: [1.; 4],
             }),
             master_gain: 1.0,
+            sampler_gain: 1.,
+            monitor: Default::default(),
             crossfader: 0.5,
             crossfader_curve: CrossfaderCurve::default(),
             next_load_id: 0,
@@ -314,6 +365,8 @@ impl Engine {
         let control = &mut self.decks[deck];
         control.auto_trim = true;
         control.loudness_applied = false;
+        control.processed_peak = None;
+        control.trim_refresh_live = false;
         control.trim_db = 0.;
         control.grid = None;
         control.track = Some(track);
@@ -409,6 +462,26 @@ impl Engine {
                 let level = unit_level(level)?;
                 self.send(Command::MasterGain { level })?;
                 self.master_gain = level;
+                Ok(())
+            }
+            Action::Mixer {
+                action: MixerAction::SetSamplerGain { level },
+            } => {
+                let level = unit_level(level)?;
+                self.send(Command::SamplerGain { level })?;
+                self.sampler_gain = level;
+                Ok(())
+            }
+            Action::Mixer {
+                action: MixerAction::SetMonitor { monitor },
+            } => {
+                if monitor.deck as usize >= DECKS {
+                    return Err(Rejection::UnknownDeck);
+                }
+                unit_level(monitor.mix)?;
+                unit_level(monitor.gain)?;
+                self.send(Command::Monitor { monitor })?;
+                self.monitor = monitor;
                 Ok(())
             }
         }
@@ -763,6 +836,11 @@ impl Engine {
                     return Err(Rejection::InvalidValue);
                 }
                 self.send(Command::Tempo { deck, ratio })?;
+                if self.decks[deck].tempo != ratio {
+                    self.decks[deck].processed_peak = None;
+                    self.decks[deck].trim_refresh_live = true;
+                    self.decks[deck].loudness_applied = false;
+                }
                 self.decks[deck].tempo = ratio;
                 Ok(())
             }
@@ -789,11 +867,21 @@ impl Engine {
                     ratio,
                     frames: offset_seconds * self.sample_rate as f64,
                 })?;
+                if self.decks[deck].tempo != ratio {
+                    self.decks[deck].processed_peak = None;
+                    self.decks[deck].trim_refresh_live = true;
+                    self.decks[deck].loudness_applied = false;
+                }
                 self.decks[deck].tempo = ratio;
                 Ok(())
             }
             DeckAction::SetKeyLock { on } => {
                 self.send(Command::KeyLock { deck, on })?;
+                if self.decks[deck].key_lock != on {
+                    self.decks[deck].processed_peak = None;
+                    self.decks[deck].trim_refresh_live = true;
+                    self.decks[deck].loudness_applied = false;
+                }
                 self.decks[deck].key_lock = on;
                 Ok(())
             }
@@ -828,14 +916,31 @@ impl Engine {
                 self.decks[deck].stem_gains = gains;
                 Ok(())
             }
+            DeckAction::SetProcessedPeak { ratio, peak_db } => {
+                if !self.decks[deck].key_lock
+                    || ratio != self.decks[deck].tempo
+                    || !peak_db.is_finite()
+                    || !(-100.0..=40.0).contains(&peak_db)
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.decks[deck].processed_peak = Some((ratio, peak_db));
+                if self.decks[deck].auto_trim {
+                    if let Some(report) = self.decks[deck].loudness() {
+                        let db = report.recommended_trim();
+                        self.send(Command::Trim {
+                            deck,
+                            gain: 10f32.powf(db / 20.),
+                        })?;
+                        self.decks[deck].trim_db = db;
+                        self.decks[deck].loudness_applied = true;
+                    }
+                }
+                Ok(())
+            }
             DeckAction::SetAutoTrim { enabled } => {
                 if enabled {
-                    if let Some(report) = self.decks[deck]
-                        .track
-                        .as_ref()
-                        .and_then(|t| t.loudness())
-                        .flatten()
-                    {
+                    if let Some(report) = self.decks[deck].loudness() {
                         let db = report.recommended_trim();
                         self.send(Command::Trim {
                             deck,
@@ -970,14 +1075,12 @@ impl Engine {
         for deck in 0..DECKS {
             if self.decks[deck].auto_trim
                 && !self.decks[deck].loudness_applied
-                && !self.shared.decks[deck].playing()
+                && (!self.shared.decks[deck].playing()
+                    || (self.decks[deck].trim_refresh_live
+                        && (!self.decks[deck].key_lock
+                            || (self.decks[deck].tempo - 1.).abs() <= 1e-3)))
             {
-                if let Some(report) = self.decks[deck]
-                    .track
-                    .as_ref()
-                    .and_then(|t| t.loudness())
-                    .flatten()
-                {
+                if let Some(report) = self.decks[deck].loudness() {
                     let db = report.recommended_trim();
                     if self
                         .send(Command::Trim {
@@ -1001,7 +1104,8 @@ impl Engine {
                 .iter()
                 .zip(&self.shared.decks)
                 .map(|(control, shared)| DeckState {
-                    loudness: control.track.as_ref().and_then(|t| t.loudness()).flatten(),
+                    key_lock_protection_db: shared.protection_db(),
+                    loudness: control.loudness(),
                     auto_trim: control.auto_trim,
                     loudness_applied: control.loudness_applied,
                     path: control.path.clone(),
@@ -1046,6 +1150,8 @@ impl Engine {
                 })
                 .collect(),
             master_gain: self.master_gain,
+            sampler_gain: self.sampler_gain,
+            monitor: self.monitor,
             crossfader: self.crossfader,
             crossfader_curve: self.crossfader_curve,
             master_peak: self.shared.master_peak(),

@@ -212,6 +212,11 @@ pub struct HotCue {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum DeckAction {
+    /// Background analysis result for the current key-locked tempo.
+    SetProcessedPeak {
+        ratio: f64,
+        peak_db: f32,
+    },
     SetAutoTrim {
         enabled: bool,
     },
@@ -353,6 +358,12 @@ pub enum DeckAction {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MixerAction {
+    SetSamplerGain {
+        level: f32,
+    },
+    SetMonitor {
+        monitor: MonitorState,
+    },
     SetTrackPreparation {
         path: String,
         preparation: TrackPreparation,
@@ -551,6 +562,10 @@ impl Default for AutomixState {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(default = "unity_gain")]
+    pub sampler_gain: f32,
+    #[serde(default)]
+    pub monitor: MonitorState,
     #[serde(default)]
     pub automix: AutomixState,
     pub decks: Vec<DeckState>,
@@ -561,8 +576,31 @@ pub struct SessionState {
     pub master_stereo_peak: [f32; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MonitorState {
+    pub deck: u8,
+    /// 0 = selected deck, 1 = master.
+    pub mix: f32,
+    pub gain: f32,
+}
+fn unity_gain() -> f32 {
+    1.
+}
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self {
+            deck: 0,
+            mix: 0.,
+            gain: 0.5,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeckState {
+    /// Negative dB applied by the key-lock peak protector; zero when inactive.
+    #[serde(default)]
+    pub key_lock_protection_db: f32,
     #[serde(default)]
     pub loudness: Option<LoudnessInfo>,
     #[serde(default)]
@@ -617,9 +655,10 @@ pub struct LoudnessInfo {
 }
 impl LoudnessInfo {
     pub fn recommended_trim(self) -> f32 {
-        (-20. - self.rms_db)
-            .min(-6. - self.peak_db)
-            .clamp(-12., 12.)
+        // Normalize the loudest decoded sample, independent of average loudness.
+        // Leave a small numerical margin below full scale. Do not limit attenuation:
+        // an over-range source may need more than the manual trim's -12 dB.
+        (-0.1 - self.peak_db).min(12.)
     }
     pub fn valid(self) -> bool {
         self.rms_db.is_finite()

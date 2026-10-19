@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::tooltip::Tooltip;
 
 fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
     canvas(
@@ -64,6 +65,17 @@ fn control_action(index: usize, value: f32) -> Action {
     }
 }
 fn value_label(index: usize, value: f32) -> String {
+    if index == 22 {
+        let [cue, master] = djcraft_engine::cue_mix_gains(value);
+        return format!("{:.0}/{:.0}", cue * 100., master * 100.);
+    }
+    if index == 20 || index == 21 {
+        return if value <= 0.001 {
+            "−∞".into()
+        } else {
+            format!("{:+.1}", 20. * (value * value).log10())
+        };
+    }
     if index == 11 {
         return format!("L  {:3.0}%  R", value * 100.);
     }
@@ -88,7 +100,28 @@ fn value_label(index: usize, value: f32) -> String {
 impl Shell {
     fn set_mixer_control(&mut self, index: usize, value: f32, cx: &mut Context<Self>) {
         let value = value.clamp(0., 1.);
-        let action = if index >= 12 {
+        let action = if index == 20 {
+            Action::Mixer {
+                action: MixerAction::SetSamplerGain {
+                    level: value * value,
+                },
+            }
+        } else if index == 21 || index == 22 {
+            let mut monitor = self
+                .engine
+                .as_mut()
+                .map(|e| e.state().monitor)
+                .unwrap_or_default();
+            monitor.deck = self.active_deck as u8;
+            if index == 21 {
+                monitor.gain = value * value;
+            } else {
+                monitor.mix = value;
+            }
+            Action::Mixer {
+                action: MixerAction::SetMonitor { monitor },
+            }
+        } else if index >= 12 {
             let deck = (index - 12) / 4;
             let current = self
                 .engine
@@ -138,13 +171,16 @@ impl Shell {
         let area = self.mixer_areas[index].clone();
         let knob = is_knob(index);
         let enabled = index < 12
+            || index >= 20
             || self
                 .engine
                 .as_ref()
                 .and_then(|e| e.track((index - 12) / 4))
                 .is_some_and(|t| t.stems_ready());
         let horizontal = index == 11;
-        let accent = if index < 5 || (12..16).contains(&index) {
+        let accent = if index >= 20 {
+            rgb(0x79d9aa)
+        } else if index < 5 || (12..16).contains(&index) {
             rgb(0xc8ff38)
         } else if index < 10 || index >= 16 {
             rgb(0x3864e8)
@@ -178,7 +214,7 @@ impl Shell {
                             rgb(0x646b75),
                         );
                     }
-                    let angle = (value - 0.5) * std::f32::consts::PI * 1.5;
+                    let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
                     for distance in 2..10 {
                         rect(
                             w / 2. + angle.sin() * distance as f32 - 1.,
@@ -220,6 +256,13 @@ impl Shell {
         .when(!knob && !horizontal, |this| this.flex_1().min_h(px(80.)));
         div()
             .id(("mixer-control", index))
+            .when(index >= 20, |control| control.tooltip(move |window, cx| {
+                Tooltip::new(match index {
+                    20 => "Sampler bus volume; individual pad levels remain relative. Double-click resets to unity.",
+                    21 => "Headphone volume only. Double-click resets to 50% gain.",
+                    _ => "Cue / master blend: centre is both at full volume; either end fades out the opposite source. Double-click resets to cue only.",
+                }).build(window, cx)
+            }))
             .when(!enabled, |this| this.opacity(0.35))
             .when(!knob && !horizontal, |this| this.h_full().min_h_0())
             .flex()
@@ -249,7 +292,13 @@ impl Shell {
                     if event.click_count == 2 {
                         this.set_mixer_control(
                             index,
-                            if is_knob(index) || index == 11 {
+                            if index == 20 {
+                                1.
+                            } else if index == 21 {
+                                std::f32::consts::FRAC_1_SQRT_2
+                            } else if index == 22 {
+                                0.
+                            } else if is_knob(index) || index == 11 {
                                 0.5
                             } else {
                                 1.
@@ -358,7 +407,7 @@ impl Shell {
         div()
             .flex()
             .flex_col()
-            .w(px(254.))
+            .w(px(398.))
             .flex_shrink_0()
             .p_2()
             .gap_2()
@@ -375,6 +424,16 @@ impl Shell {
                         210.
                     }))
                     .flex_shrink_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .w(px(64.))
+                            .gap_1()
+                            .child(div().text_size(px(10.)).child("SAMPLER"))
+                            .child(self.mixer_control(20, "VOL", cx)),
+                    )
                     .child(knobs(0, cx))
                     .child(
                         div()
@@ -411,13 +470,31 @@ impl Shell {
                                     ),
                             ),
                     )
-                    .child(knobs(1, cx)),
+                    .child(knobs(1, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .w(px(64.))
+                            .gap_1()
+                            .child(div().text_size(px(10.)).child("CUE"))
+                            .child(self.mixer_control(21, "VOL", cx))
+                            .child(self.mixer_control(22, "MIX", cx))
+                            .child(
+                                div()
+                                    .text_size(px(8.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("CUE / MASTER"),
+                            ),
+                    ),
             )
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h(px(100.))
+                    .px(px(72.))
                     .justify_between()
                     .child(
                         div()

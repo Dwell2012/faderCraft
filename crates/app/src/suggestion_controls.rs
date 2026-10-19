@@ -11,27 +11,69 @@ impl Shell {
             else {
                 continue;
             };
-            if track.loudness().is_some()
-                || self.loudness_tracks[deck]
-                    .as_ref()
-                    .is_some_and(|t| Arc::ptr_eq(t, &track))
+            let state = self.engine.as_mut().unwrap().state();
+            let ratio = state.decks[deck].tempo;
+            let key_lock = state.decks[deck].key_lock;
+            if self.loudness_tracks[deck]
+                .as_ref()
+                .is_some_and(|(t, r, k)| Arc::ptr_eq(t, &track) && *r == ratio && *k == key_lock)
             {
                 continue;
             }
-            self.loudness_tracks[deck] = Some(track.clone());
-            let worker = track.clone();
-            let task = cx.background_executor().spawn(async move {
-                let measured =
-                    djcraft_analysis::measure_loudness(&worker.export_stereo(), worker.sample_rate)
-                        .map(|(rms_db, peak_db)| djcraft_protocol::LoudnessInfo {
-                            rms_db,
-                            peak_db,
-                        });
-                let _ = worker.set_loudness(measured);
-            });
+            self.loudness_tracks[deck] = Some((track.clone(), ratio, key_lock));
             cx.spawn(async move |this, cx| {
-                task.await;
-                let _ = this.update(cx, |_, cx| cx.notify());
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(350))
+                    .await;
+                let current = this
+                    .update(cx, |this, _| {
+                        this.loudness_tracks[deck]
+                            .as_ref()
+                            .is_some_and(|(t, r, k)| {
+                                Arc::ptr_eq(t, &track) && *r == ratio && *k == key_lock
+                            })
+                    })
+                    .unwrap_or(false);
+                if !current {
+                    return;
+                }
+                let worker = track.clone();
+                let peak = cx
+                    .background_executor()
+                    .spawn(async move {
+                        if worker.loudness().is_none() {
+                            let measured = djcraft_analysis::measure_loudness(
+                                &worker.export_stereo(),
+                                worker.sample_rate,
+                            )
+                            .map(|(rms_db, peak_db)| {
+                                djcraft_protocol::LoudnessInfo { rms_db, peak_db }
+                            });
+                            let _ = worker.set_loudness(measured);
+                        }
+                        if key_lock && (ratio - 1.).abs() > 1e-3 {
+                            djcraft_engine::measure_key_lock_peak(&worker, ratio)
+                        } else {
+                            None
+                        }
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    let current = this
+                        .engine
+                        .as_ref()
+                        .and_then(|e| e.track(deck))
+                        .is_some_and(|t| Arc::ptr_eq(t, &track))
+                        && this.loudness_tracks[deck]
+                            .as_ref()
+                            .is_some_and(|(_, r, k)| *r == ratio && *k == key_lock);
+                    if current {
+                        if let Some(peak_db) = peak {
+                            this.send(deck, DeckAction::SetProcessedPeak { ratio, peak_db });
+                        }
+                    }
+                    cx.notify();
+                });
             })
             .detach();
         }
@@ -125,18 +167,18 @@ impl Shell {
         );
         let text = if let Some(level) = state.loudness {
             format!(
-                "RMS {:.1} dBFS · suggested trim {:+.1} dB · {}{}",
-                level.rms_db,
+                "Peak {:.1} dBFS · suggested trim {:+.1} dB · {}{}",
+                level.peak_db,
                 level.recommended_trim(),
                 if !state.auto_trim {
                     "manual"
                 } else if state.loudness_applied {
-                    "matched"
+                    "peak normalized"
                 } else {
-                    "pending pause / Match trim"
+                    "pending pause / Apply trim"
                 },
-                if (level.recommended_trim() - (-20. - level.rms_db)).abs() > 0.1 {
-                    " · headroom/range limited"
+                if level.recommended_trim() >= 12. {
+                    " · boost limited to +12 dB"
                 } else {
                     ""
                 }
@@ -150,6 +192,14 @@ impl Shell {
             "Silent track · trim unchanged".into()
         } else {
             "Measuring loudness…".into()
+        };
+        let text = if state.key_lock_protection_db < -0.05 {
+            format!(
+                "{text} · Key-lock peak protection {:+.1} dB",
+                state.key_lock_protection_db
+            )
+        } else {
+            text
         };
         let auto = state.auto_trim;
         div()
@@ -167,10 +217,10 @@ impl Shell {
                     .child(div().text_size(px(10.)).child(text))
                     .child(
                         Button::new(("match-trim", deck))
-.tooltip("Apply the measured loudness correction to this deck trim.")
+.tooltip("Normalize the full track's peak, including cubic playback interpolation, to -0.1 dBFS, up to +12 dB boost. EQ, effects and mixing can add gain.")
                             .xsmall()
                             .outline()
-                            .label("Match trim")
+                            .label("Apply trim")
                             .disabled(state.loudness.is_none())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.send(deck, DeckAction::SetAutoTrim { enabled: true });
@@ -179,7 +229,7 @@ impl Shell {
                     )
                     .child(
                         Button::new(("auto-trim", deck))
-.tooltip("Toggle automatic loudness matching. Manual trim adjustments disable it.")
+.tooltip("Automatically normalize the full track's playback peak to -0.1 dBFS. Manual trim adjustments disable it.")
                             .xsmall()
                             .outline()
                             .label(if auto {

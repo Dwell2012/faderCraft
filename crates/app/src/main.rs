@@ -29,7 +29,17 @@ fn main() {
             .nth(3)
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        match djcraft_engine::Engine::with_output(true, Some(&device), buffer) {
+        let master = std::env::args()
+            .nth(4)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let cue = std::env::args().nth(5).and_then(|v| v.parse().ok());
+        match djcraft_engine::Engine::with_routing(
+            true,
+            Some(&device),
+            buffer,
+            djcraft_engine::OutputRouting { master, cue },
+        ) {
             Ok(_engine) => {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
@@ -60,7 +70,7 @@ fn main() {
             ),
         ]);
 
-        let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
+        let bounds = Bounds::centered(None, size(px(1920.), px(1080.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(960.), px(600.))),

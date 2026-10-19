@@ -126,7 +126,7 @@ pub struct Shell {
     last_frame: Instant,
     overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; 2],
     pending_seeks: [Option<(f64, Instant)>; 2],
-    mixer_values: [f32; 20],
+    mixer_values: [f32; 23],
     mixer_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     mixer_drag: Option<(usize, f32, f32)>,
     mixer_peaks: [f32; 4],
@@ -154,7 +154,7 @@ pub struct Shell {
     loop_options: [loop_controls::LoopOptions; 2],
     loop_view: [usize; 2],
     loop_last: [Option<[f64; 2]>; 2],
-    loudness_tracks: [Option<Arc<Track>>; 2],
+    loudness_tracks: [Option<(Arc<Track>, f64, bool)>; 2],
     preparations: crate::preparation::Preparations,
     preparation_pending: std::collections::BTreeSet<String>,
     preparation_selected: [Option<usize>; 2],
@@ -224,7 +224,13 @@ impl Shell {
                 cx.notify();
             }
             LibraryEvent::Columns(hidden) => this.set_hidden_columns(hidden.clone(), cx),
-            LibraryEvent::Selected { .. } | LibraryEvent::Changed => {}
+            LibraryEvent::Changed => {
+                this.library
+                    .update(cx, |view, cx| view.refresh_and_analyse(cx));
+                this.refresh_grids(cx);
+                cx.notify();
+            }
+            LibraryEvent::Selected { .. } => {}
         })
         .detach();
         for view in [&library, &browser] {
@@ -267,10 +273,31 @@ impl Shell {
             overview_cache: std::array::from_fn(|_| Rc::default()),
             pending_seeks: [None; 2],
             mixer_values: [
-                0.5, 0.5, 0.5, 0.5, 1., 0.5, 0.5, 0.5, 0.5, 1., 1., 0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-                0.5, 0.5, 0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                1.,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                1.,
+                1.,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                0.5,
+                1.,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.,
             ],
-            mixer_areas: (0..20).map(|_| Rc::default()).collect(),
+            mixer_areas: (0..23).map(|_| Rc::default()).collect(),
             mixer_drag: None,
             mixer_peaks: [0.; 4],
             mixer_curve: CrossfaderCurve::default(),
@@ -773,10 +800,24 @@ impl Shell {
         match engine.apply(Role::Host, action) {
             Ok(()) if loading => {
                 self.active_deck = deck;
+                self.cue_active_deck();
                 self.focus_loaded_deck = true;
             }
             Err(reason) => eprintln!("action rejected: {reason:?}"),
             _ => {}
+        }
+    }
+
+    fn cue_active_deck(&mut self) {
+        if let Some(engine) = &mut self.engine {
+            let mut monitor = engine.state().monitor;
+            monitor.deck = self.active_deck as u8;
+            let _ = engine.apply(
+                Role::Host,
+                Action::Mixer {
+                    action: MixerAction::SetMonitor { monitor },
+                },
+            );
         }
     }
 
@@ -803,6 +844,9 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap_3()
+                        // Toolbar controls must take priority over the native drag hitbox.
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             div()
                                 .text_lg()
@@ -829,6 +873,8 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap_2()
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .when(self.tab == Tab::Live, |this| {
                             this.child(
                                 self.tool(
@@ -1018,6 +1064,7 @@ impl Shell {
             .tooltip("Select this deck for Space: play / pause.")
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.active_deck = index;
+                this.cue_active_deck();
                 window.focus(&this.deck_focus, cx);
                 cx.notify();
             }));
@@ -1432,6 +1479,9 @@ impl Render for Shell {
                 }
                 self.mixer_values[10] = state.master_gain.sqrt();
                 self.mixer_values[11] = state.crossfader;
+                self.mixer_values[20] = state.sampler_gain.sqrt();
+                self.mixer_values[21] = state.monitor.gain.sqrt();
+                self.mixer_values[22] = state.monitor.mix;
                 self.mixer_curve = state.crossfader_curve;
                 self.mixer_peaks[2..4].copy_from_slice(&state.master_stereo_peak);
                 for (i, deck) in state.decks.iter().enumerate() {

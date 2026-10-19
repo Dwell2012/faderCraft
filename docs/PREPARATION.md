@@ -70,22 +70,32 @@ stereo RMS**, not LUFS: 400 ms blocks with 75% overlap, an absolute -70 dBFS gat
 and a relative gate 10 dB below the initial mean. Channels are measured separately
 before averaging power so opposite-phase stereo does not cancel.
 
-Automatic trim targets -20 dBFS gated RMS and limits the suggested gain to keep
-source sample peaks at or below -6 dBFS where the ±12 dB trim range permits. This
-leaves mix headroom; it is not a true-peak meter, limiter or guarantee against
-clipping after EQ, effects, multiple sources or master boosts. Some tracks cannot
-reach the target within these limits; the panel reports headroom/range limiting.
+Automatic trim normalizes the full decoded track's highest absolute stereo peak,
+including exact extrema of playback's cubic interpolation and zero-extended track
+boundaries, to -0.1 dBFS. This leaves a small numerical margin below clipping. Boost is capped
+at +12 dB; attenuation can exceed the manual knob's -12 dB minimum for over-range
+source audio. RMS is informational and no longer determines Auto-Trim. This is
+playback-peak normalization, not DAC true-peak limiting: summed sources and master boosts can still raise the output. Key-locked decks
+also use processed-peak analysis and playback peak protection as described below.
 Silence is not boosted. Measurements are recalculated on load, not written into
 music files.
 
 A new load starts with neutral trim and auto matching enabled. Once measured,
 a paused deck receives the suggested trim, including preloaded automix decks.
-If it is already playing, matching waits for pause; click Match trim to apply it
-explicitly during playback. The regular mixer gain smoothing applies. Changing
+If it is already playing, normalization waits for pause; click Apply trim to apply it
+explicitly during playback. Silent decks receive trim immediately before playback;
+audible changes use the regular gain smoothing. Changing
 trim manually turns auto matching off for that load, and polling cannot overwrite
-it. Auto trim off leaves the current gain in place. Match trim / Auto trim on
+it. Auto trim off leaves the current gain in place. Apply trim / Auto trim on
 re-enables matching. Master and channel faders are unchanged.
 
 Tests cover cue de-duplication and existing-loop preservation, silence/stereo
 measurement, gain headroom, late analysis, manual overrides, source replacement
 and maintaining matched trim through an automix transition.
+
+Key-locked tempo changes (including Sync) now trigger a debounced background pass
+through the full-track time stretcher. Auto-Trim applies the resulting peak while
+playing; manual trim overrides remain respected, and stale tempo results are
+ignored. A stereo-linked 64-frame lookahead peak guard protects each stretched
+deck after EQ/effects while analysis is pending and during transport changes.
+This does not limit the summed master or guarantee DAC true-peak headroom.

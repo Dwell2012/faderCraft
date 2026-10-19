@@ -27,6 +27,12 @@ impl Eq {
         self.low = [0.; 2];
         self.upper = [0.; 2];
     }
+    pub fn set_trim(&mut self, gain: f32, silent: bool) {
+        self.trim = gain;
+        if silent {
+            self.current_trim = gain;
+        }
+    }
     pub fn process(&mut self, input: &[f32]) -> [f32; 2] {
         self.current_trim += (self.trim - self.current_trim) * self.smoothing;
         for i in 0..3 {

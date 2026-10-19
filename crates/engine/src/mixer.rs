@@ -14,6 +14,12 @@ use signalsmith_stretch::Stretch;
 use crate::track::{CHANNELS, Track};
 
 pub const DECKS: usize = 2;
+
+/// Cue stays at unity through the left half; master stays at unity through the right.
+pub fn cue_mix_gains(position: f32) -> [f32; 2] {
+    let position = position.clamp(0., 1.);
+    [(2. * (1. - position)).min(1.), (2. * position).min(1.)]
+}
 pub const MIN_TEMPO: f64 = 0.5;
 pub const MAX_TEMPO: f64 = 2.0;
 pub const MAX_SCRATCH_SPEED: f64 = 4.0;
@@ -24,6 +30,12 @@ const BLOCK: usize = 512;
 const SPEED_SMOOTHING_SECONDS: f64 = 0.004;
 
 pub(crate) enum Command {
+    SamplerGain {
+        level: f32,
+    },
+    Monitor {
+        monitor: djcraft_protocol::MonitorState,
+    },
     AutomixFade {
         from: usize,
         to: usize,
@@ -174,6 +186,7 @@ pub(crate) enum Command {
 
 #[derive(Default)]
 pub(crate) struct DeckShared {
+    protection_db: AtomicU32,
     eq_gains: [AtomicU32; 3],
     auto_scratch: AtomicBool,
     effect_tail: AtomicBool,
@@ -185,6 +198,9 @@ pub(crate) struct DeckShared {
 }
 
 impl DeckShared {
+    pub(crate) fn protection_db(&self) -> f32 {
+        f32::from_bits(self.protection_db.load(Ordering::Relaxed))
+    }
     pub(crate) fn eq_gains(&self) -> [f32; 3] {
         std::array::from_fn(|i| f32::from_bits(self.eq_gains[i].load(Ordering::Relaxed)))
     }
@@ -278,8 +294,13 @@ struct Deck {
     speed: f64,
     speed_smoothing: f64,
     gain: f32,
+    start_attack: usize,
     stretch: Stretch,
     stretch_input: Box<[f32]>,
+    stretch_preroll: Box<[f32]>,
+    stretch_discard: Box<[f32]>,
+    prepared_at: Option<(f64, f64)>,
+    prepared_read_position: f64,
     /// Latency of the stretcher, in input frames per unit of tempo.
     stretch_input_latency: f64,
     stretch_output_latency: f64,
@@ -290,7 +311,16 @@ struct Deck {
 
 impl Deck {
     fn new(sample_rate: u32) -> Self {
-        let stretch = Stretch::preset_default(CHANNELS as u32, sample_rate);
+        let mut stretch = Stretch::preset_default(CHANNELS as u32, sample_rate);
+        let preroll_frames = stretch
+            .input_latency()
+            .max((stretch.output_latency() as f64 * MAX_TEMPO).ceil() as usize + 1);
+        let stretch_preroll = vec![0.; preroll_frames * CHANNELS].into_boxed_slice();
+        let mut stretch_discard = vec![0.; stretch.output_latency() * CHANNELS].into_boxed_slice();
+        // Warm the seek/process scratch storage on the control thread.
+        stretch.seek(&*stretch_preroll, 1.);
+        stretch.process(&*stretch_preroll, &mut *stretch_discard);
+        stretch.reset();
         let max_input = (BLOCK as f64 * (MAX_TEMPO + 0.08)) as usize + 1;
         Self {
             auto: None,
@@ -317,18 +347,85 @@ impl Deck {
             speed: 0.0,
             speed_smoothing: 1.0 - (-1.0 / (SPEED_SMOOTHING_SECONDS * sample_rate as f64)).exp(),
             gain: 1.0,
+            start_attack: 0,
             stretch_input_latency: stretch.input_latency() as f64,
-            stretch_output_latency: stretch.output_latency() as f64,
+            stretch_output_latency: (stretch.output_latency() + crate::peak_guard::DELAY) as f64,
             stretch,
+            stretch_preroll,
+            stretch_discard,
+            prepared_at: None,
+            prepared_read_position: 0.,
             stretch_input: vec![0.0; max_input * CHANNELS].into_boxed_slice(),
             stretching: false,
             input_carry: 0.0,
         }
     }
 
+    /// Bounded pre-roll using storage allocated at construction. While paused,
+    /// this prepares the DSP without advancing the public transport position.
+    fn prepare_stretch(&mut self) {
+        if self.prepared_at == Some((self.position, self.tempo)) {
+            return;
+        }
+        let Some(track) = self.track.as_deref() else {
+            return;
+        };
+        self.stretch.reset();
+        let available = track.decoded_frames();
+        let needed = self.position
+            + self.stretch_input_latency
+            + self.stretch.output_latency() as f64 * self.tempo;
+        if !self.playing && !track.is_complete() && (available as f64) < needed {
+            self.prepared_at = None;
+            return;
+        }
+        let region = self.loop_region.filter(|_| self.scratch.is_none());
+        let mut position = self.position;
+        let mut armed = self.loop_armed;
+        let first = self.stretch_input_latency as usize;
+        let wanted = self.stretch.output_latency() as f64 * self.tempo;
+        let second = wanted as usize;
+        for (pass, count) in [first, second].into_iter().enumerate() {
+            for frame in self.stretch_preroll[..count * CHANNELS].chunks_exact_mut(CHANNELS) {
+                if armed && region.is_some_and(|r| position >= r[0]) {
+                    armed = false;
+                }
+                position = armed_position(position, region, armed);
+                frame.copy_from_slice(&interpolate(track, available, position, self.current_stems));
+                position = armed_position(position + 1., region, armed);
+            }
+            if pass == 0 {
+                self.stretch
+                    .seek(&self.stretch_preroll[..count * CHANNELS], self.tempo);
+            } else {
+                self.stretch.process(
+                    &self.stretch_preroll[..count * CHANNELS],
+                    &mut *self.stretch_discard,
+                );
+            }
+        }
+        self.input_carry = wanted - second as f64;
+        self.prepared_read_position = position;
+        self.prepared_at = Some((self.position, self.tempo));
+    }
+
     /// Fills `out` with the deck's signal before gain. Returns false, leaving
     /// `out` untouched, when the deck is silent.
     fn render(&mut self, out: &mut [f32]) -> bool {
+        let use_stretch = self.key_lock
+            && self.scratch.is_none()
+            && self.auto.is_none()
+            && (self.tempo - 1.).abs() > 1e-3;
+        if use_stretch && !self.stretching && (self.playing || self.speed == 0.) {
+            self.prepare_stretch();
+            if self.playing && self.prepared_at.is_some() {
+                self.position = self.prepared_read_position;
+                self.prepared_at = None;
+                self.stretching = true;
+            } else if !self.playing {
+                return false;
+            }
+        }
         let Some(track) = self.track.as_deref() else {
             return false;
         };
@@ -450,8 +547,10 @@ impl Deck {
                     self.position,
                     self.current_stems,
                 ));
-                self.position = armed_position(self.position + 1., region, self.loop_armed)
-                    .min(available as f64);
+                self.position = armed_position(self.position + 1., region, self.loop_armed);
+                if !complete {
+                    self.position = self.position.min(available as f64);
+                }
             }
             self.stretch.process(&*input, &mut *out);
             self.speed = effective_tempo;
@@ -500,7 +599,14 @@ impl Deck {
             self.position = self.position.clamp(0.0, available as f64);
         }
 
-        if complete && self.playing && self.scratch.is_none() && self.position >= available as f64 {
+        // The read head is ahead after pre-roll: drain the stretcher and guard
+        // until the audible head reaches the end, rather than cutting the tail.
+        let ended = if self.stretching {
+            self.audible_position() >= available as f64
+        } else {
+            self.position >= available as f64
+        };
+        if complete && self.playing && self.scratch.is_none() && ended {
             self.playing = false;
         }
         true
@@ -638,6 +744,7 @@ struct SampleVoice {
     repeat: bool,
     level: f32,
     gain: f32,
+    attack_remaining: usize,
 }
 impl SampleVoice {
     fn render(&mut self, out: &mut [f32]) {
@@ -660,7 +767,12 @@ impl SampleVoice {
                     *tail = None;
                 }
             }
-            self.gain += ((if self.playing { self.level } else { 0. }) - self.gain) * 0.02;
+            if self.playing && self.attack_remaining > 0 {
+                self.gain = self.level * (33 - self.attack_remaining) as f32 / 32.;
+                self.attack_remaining -= 1;
+            } else {
+                self.gain += ((if self.playing { self.level } else { 0. }) - self.gain) * 0.02;
+            }
             if self.gain < 0.00001 && !self.playing {
                 continue;
             }
@@ -674,6 +786,7 @@ impl SampleVoice {
                 if self.repeat && self.playing {
                     self.position = self.start;
                     self.gain = 0.;
+                    self.attack_remaining = 32;
                 } else {
                     self.playing = false;
                     self.gain = 0.;
@@ -728,6 +841,15 @@ struct PendingMix {
     matching: Option<(djcraft_protocol::BeatGrid, djcraft_protocol::BeatGrid, f64)>,
 }
 pub struct Mixer {
+    deck_guards: [crate::peak_guard::PeakGuard; DECKS],
+    sampler_gain: f32,
+    current_sampler_gain: f32,
+    sampler_buffer: Box<[f32]>,
+    monitor_gain: f32,
+    monitor_mix: f32,
+    monitor: djcraft_protocol::MonitorState,
+    cue_gain: f32,
+    monitor_buffer: Box<[f32]>,
     pending_mix: Option<PendingMix>,
     fade: Option<MixFade>,
     samples: [SampleVoice; 16],
@@ -751,6 +873,15 @@ impl Mixer {
         shared: Arc<Shared>,
     ) -> Self {
         Self {
+            monitor: Default::default(),
+            deck_guards: std::array::from_fn(|_| crate::peak_guard::PeakGuard::new(sample_rate)),
+            sampler_gain: 1.,
+            current_sampler_gain: 1.,
+            sampler_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
+            monitor_gain: 0.5,
+            monitor_mix: 0.,
+            cue_gain: 1.,
+            monitor_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
             fade: None,
             pending_mix: None,
             samples: std::array::from_fn(|_| SampleVoice::default()),
@@ -780,7 +911,24 @@ impl Mixer {
             _ => None,
         };
         if let Some(deck) = cancel {
+            self.deck_guards[deck].reset();
             self.decks[deck].auto = None;
+        }
+        let invalidate_preparation = match &command {
+            Command::Cue { deck, .. }
+            | Command::Seek { deck, .. }
+            | Command::Jump { deck, .. }
+            | Command::Scratch { deck, .. }
+            | Command::ScratchTo { deck, .. }
+            | Command::StemGains { deck, .. }
+            | Command::ArmLoop { deck, .. }
+            | Command::PadLoop { deck, .. }
+            | Command::Loop { deck, .. }
+            | Command::LoopRoll { deck, .. } => Some(*deck),
+            _ => None,
+        };
+        if let Some(deck) = invalidate_preparation {
+            self.decks[deck].prepared_at = None;
         }
         match command {
             Command::CancelFade => {
@@ -927,6 +1075,9 @@ impl Mixer {
                     sample.position = sample.start;
                     sample.gain = 0.;
                 }
+                if play && (restart || !sample.playing) {
+                    sample.attack_remaining = 32;
+                }
                 sample.playing = play && sample.track.is_some();
                 sample.repeat = repeat;
                 sample.level = level;
@@ -995,6 +1146,7 @@ impl Mixer {
                 deck.scratch = None;
                 deck.scratch_position = None;
                 deck.playing = play;
+                deck.start_attack = if play { 32 } else { 0 };
                 deck.speed = if play { deck.tempo } else { 0. };
             }
             Command::Jump { deck, frames } => {
@@ -1070,6 +1222,7 @@ impl Mixer {
             }
             Command::StemGains { deck, gains } => self.decks[deck].stem_gains = gains,
             Command::Load { deck, track } => {
+                self.deck_guards[deck].reset();
                 let deck = &mut self.decks[deck];
                 if let Some(old) = deck.track.replace(track) {
                     // Freeing memory is the control side's job. If its queue
@@ -1092,6 +1245,7 @@ impl Mixer {
                 deck.scratch_position = None;
                 deck.speed = 0.0;
                 deck.stretching = false;
+                deck.prepared_at = None;
             }
             Command::Play { deck } => {
                 let deck = &mut self.decks[deck];
@@ -1099,10 +1253,20 @@ impl Mixer {
                     if track.is_complete() && deck.position >= track.frames() as f64 {
                         deck.position = 0.0;
                     }
+                    if !deck.playing {
+                        deck.start_attack = 32;
+                    }
                     deck.playing = true;
+                    if deck.scratch.is_none() && deck.auto.is_none() {
+                        deck.speed = deck.tempo;
+                    }
                 }
             }
             Command::Pause { deck } => {
+                let position = self.decks[deck].audible_position();
+                self.decks[deck].position = position;
+                self.decks[deck].stretching = false;
+                self.decks[deck].prepared_at = None;
                 self.decks[deck].playing = false;
                 self.decks[deck].nudge_frames = 0.;
             }
@@ -1120,6 +1284,10 @@ impl Mixer {
                 }
             }
             Command::Tempo { deck, ratio } => {
+                if self.decks[deck].stretching && (ratio - 1.).abs() <= 1e-3 {
+                    self.decks[deck].position = self.decks[deck].audible_position();
+                    self.decks[deck].stretching = false;
+                }
                 self.decks[deck].tempo = ratio;
                 self.decks[deck].nudge_frames = 0.;
             }
@@ -1152,11 +1320,31 @@ impl Mixer {
                 } else {
                     0.
                 };
-                let latency_change = new_latency - old_latency;
+                let latency_change = if old_latency > 0. && new_latency > 0. {
+                    new_latency - old_latency
+                } else {
+                    // Entering stretch now pre-rolls to the audible position;
+                    // leaving it reads from that audible position directly.
+                    if old_latency > 0. {
+                        deck.position = deck.audible_position();
+                        deck.stretching = false;
+                    }
+                    0.
+                };
                 deck.tempo = ratio;
                 deck.nudge_frames = frames + latency_change;
             }
-            Command::KeyLock { deck, on } => self.decks[deck].key_lock = on,
+            Command::KeyLock { deck, on } => {
+                let deck = &mut self.decks[deck];
+                if deck.stretching && !on {
+                    deck.position = deck.audible_position();
+                    deck.stretching = false;
+                }
+                if deck.key_lock != on {
+                    deck.prepared_at = None;
+                }
+                deck.key_lock = on;
+            }
             Command::Volume { deck, level } => self.decks[deck].volume = level,
             Command::Scratch { deck, speed } => {
                 self.decks[deck].nudge_frames = 0.;
@@ -1180,16 +1368,33 @@ impl Mixer {
                     deck.scratch_position = Some(frame.clamp(0., track.decoded_frames() as f64));
                 }
             }
-            Command::Trim { deck, gain } => self.decks[deck].eq.trim = gain,
+            Command::Trim { deck, gain } => {
+                let deck = &mut self.decks[deck];
+                let silent = !deck.playing
+                    && deck.scratch.is_none()
+                    && deck.auto.is_none()
+                    && deck.speed.abs() < 0.0001;
+                deck.eq.set_trim(gain, silent);
+            }
             Command::Eq { deck, band, gain } => self.decks[deck].eq.gains[band] = gain,
             Command::Crossfader { position } => self.crossfader = position,
             Command::CrossfaderCurve { curve } => self.curve = curve,
             Command::MasterGain { level } => self.master_gain = level,
+            Command::SamplerGain { level } => self.sampler_gain = level,
+            Command::Monitor { monitor } => self.monitor = monitor,
         }
     }
 
     /// Renders the next `out.len() / 2` frames of interleaved stereo.
     pub fn render(&mut self, out: &mut [f32]) {
+        self.render_with_monitor(out, None);
+    }
+
+    /// Both buses share one transport/effects pass; cue is pre-fader and pre-crossfader.
+    pub fn render_with_monitor(&mut self, out: &mut [f32], mut headphones: Option<&mut [f32]>) {
+        if let Some(cue) = &headphones {
+            assert_eq!(cue.len(), out.len());
+        }
         while self.garbage.slots() > 0 {
             let Ok(command) = self.commands.pop() else {
                 break;
@@ -1200,7 +1405,8 @@ impl Mixer {
         let mut peaks = [0f32; DECKS];
         let mut master_peak = [0f32; 2];
         let decay = (-(out.len() as f32) / CHANNELS as f32 / self.sample_rate as f32 / 0.4).exp();
-        for block in out.chunks_mut(BLOCK * CHANNELS) {
+        for (block_index, block) in out.chunks_mut(BLOCK * CHANNELS).enumerate() {
+            self.monitor_buffer[..block.len()].fill(0.);
             if let Some(p) = self.pending_mix {
                 if self.decks[p.from].audible_position() / self.sample_rate as f64 >= p.schedule.0 {
                     self.apply(Command::AutomixFade {
@@ -1237,6 +1443,9 @@ impl Mixer {
                 let buffer = &mut self.deck_buffer[..block.len()];
                 let target = deck.volume;
                 let source_running = deck.render(buffer);
+                if !deck.stretching {
+                    self.deck_guards[index].reset();
+                }
                 if !source_running {
                     buffer.fill(0.);
                 }
@@ -1245,32 +1454,71 @@ impl Mixer {
                     effect.clock(bpm, source_running);
                 }
                 let step = (target - deck.gain) / frames as f32;
+                let cue_target = if self.monitor.deck as usize == index {
+                    1.
+                } else {
+                    0.
+                };
+                let mut cue_gain = if index == 0 {
+                    self.cue_gain
+                } else {
+                    1. - self.cue_gain
+                };
+                let cue_step = (cue_target - cue_gain) / frames as f32;
                 let cross_step = (cross[index] - deck.cross_gain) / frames as f32;
-                for (out, input) in block
+                for ((out, input), cue) in block
                     .chunks_exact_mut(CHANNELS)
                     .zip(buffer.chunks_exact(CHANNELS))
+                    .zip(self.monitor_buffer.chunks_exact_mut(CHANNELS))
                 {
+                    cue_gain += cue_step;
                     deck.gain += step;
                     deck.cross_gain += cross_step;
                     let mut signal = deck.eq.process(input);
                     for effect in &mut deck.effects {
                         signal = effect.process(signal);
                     }
+                    if deck.start_attack > 0 {
+                        let gain = (33 - deck.start_attack) as f32 / 32.;
+                        signal = signal.map(|sample| sample * gain);
+                        deck.start_attack -= 1;
+                    }
+                    if deck.stretching {
+                        signal = self.deck_guards[index].process(signal);
+                    }
                     for c in 0..CHANNELS {
                         let channel = signal[c] * deck.gain;
+                        cue[c] += signal[c] * cue_gain;
                         peaks[index] = peaks[index].max(channel.abs());
                         out[c] += channel * deck.cross_gain;
                     }
                 }
                 deck.gain = target;
+                self.shared.decks[index].protection_db.store(
+                    self.deck_guards[index].reduction_db().to_bits(),
+                    Ordering::Relaxed,
+                );
                 self.shared.decks[index].effect_tail.store(
                     deck.effects.iter().any(|fx| fx.tail_active()),
                     Ordering::Relaxed,
                 );
             }
+            let sampler = &mut self.sampler_buffer[..block.len()];
+            sampler.fill(0.);
             for sample in &mut self.samples {
-                sample.render(block);
+                sample.render(sampler);
             }
+            let sampler_step = (self.sampler_gain - self.current_sampler_gain) / frames as f32;
+            for (out, input) in block
+                .chunks_exact_mut(CHANNELS)
+                .zip(sampler.chunks_exact(CHANNELS))
+            {
+                self.current_sampler_gain += sampler_step;
+                for c in 0..CHANNELS {
+                    out[c] += input[c] * self.current_sampler_gain;
+                }
+            }
+            self.current_sampler_gain = self.sampler_gain;
             let master_step = (self.master_gain - self.current_master) / frames as f32;
             for frame in block.chunks_exact_mut(CHANNELS) {
                 self.current_master += master_step;
@@ -1281,6 +1529,28 @@ impl Mixer {
                 }
             }
             self.current_master = self.master_gain;
+            self.cue_gain = if self.monitor.deck == 0 { 1. } else { 0. };
+            if let Some(cue_out) = headphones.as_deref_mut() {
+                let start = block_index * BLOCK * CHANNELS;
+                let gain_step = (self.monitor.gain - self.monitor_gain) / frames as f32;
+                let mix_step = (self.monitor.mix - self.monitor_mix) / frames as f32;
+                for ((output, cue), master) in cue_out[start..start + block.len()]
+                    .chunks_exact_mut(CHANNELS)
+                    .zip(self.monitor_buffer.chunks_exact(CHANNELS))
+                    .zip(block.chunks_exact(CHANNELS))
+                {
+                    self.monitor_gain += gain_step;
+                    self.monitor_mix += mix_step;
+                    let [cue_gain, master_gain] = cue_mix_gains(self.monitor_mix);
+                    for c in 0..CHANNELS {
+                        output[c] = ((cue[c] * cue_gain + master[c] * master_gain)
+                            * self.monitor_gain)
+                            .clamp(-1., 1.);
+                    }
+                }
+            }
+            self.monitor_gain = self.monitor.gain;
+            self.monitor_mix = self.monitor.mix;
             if let Some(mut fade) = self.fade {
                 fade.elapsed += frames as u64;
                 if fade.elapsed >= fade.total {
