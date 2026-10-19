@@ -321,7 +321,11 @@ impl Shell {
                         ),
                     )
                     .child(div().text_size(px(10.)).text_color(muted).child(if loaded {
-                        format!("ELAPSED  {}", clock(position / state.tempo))
+                        if position < 0. {
+                            format!("PRE-ROLL  −{}", clock(-position / state.tempo))
+                        } else {
+                            format!("ELAPSED  {}", clock(position / state.tempo))
+                        }
                     } else {
                         "Load or drop a track".into()
                     })),

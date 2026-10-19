@@ -623,7 +623,8 @@ impl Engine {
                     .track
                     .as_ref()
                     .map_or(0., |t| t.decoded_seconds());
-                if !seconds.is_finite() || seconds < 0. || seconds > available {
+                let minimum = self.decks[deck].grid.map_or(0., |g| -16. * 60. / g.bpm);
+                if !seconds.is_finite() || seconds < minimum || seconds > available {
                     return Err(Rejection::InvalidValue);
                 }
                 self.send(Command::Cue {
@@ -825,6 +826,8 @@ impl Engine {
                 if !seconds.is_finite() {
                     return Err(Rejection::InvalidValue);
                 }
+                let minimum = self.decks[deck].grid.map_or(0., |g| -16. * 60. / g.bpm);
+                let seconds = seconds.max(minimum);
                 let frame = seconds * self.sample_rate as f64;
                 self.send(Command::Seek { deck, frame })?;
                 self.decks[deck].loop_region =
@@ -984,6 +987,8 @@ impl Engine {
                 if !seconds.is_finite() {
                     return Err(Rejection::InvalidValue);
                 }
+                let minimum = self.decks[deck].grid.map_or(0., |g| -16. * 60. / g.bpm);
+                let seconds = seconds.max(minimum);
                 self.send(Command::ScratchTo {
                     deck,
                     frame: seconds * self.sample_rate as f64,

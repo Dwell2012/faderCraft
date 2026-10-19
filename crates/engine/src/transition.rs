@@ -27,6 +27,11 @@ pub(crate) fn plan_vocals(
     if a.phrases.is_empty() || b.phrases.is_empty() {
         return None;
     }
+    if a.mix_out.is_none() && b.mix_in.is_none() && a.transition_bars.is_none() {
+        if let Some(plan) = intro_plan(&out, &incoming, position, tempo, out_vocals, in_vocals) {
+            return Some(plan);
+        }
+    }
     let ratio = out.grid.bpm * tempo / incoming.grid.bpm;
     let bar = 240. / (out.grid.bpm * tempo);
     let safe = |label| {
@@ -123,6 +128,7 @@ pub(crate) fn plan_vocals(
                     duration_seconds: seconds,
                     bars: Some(bars),
                     bass_swap,
+                    eq_start: 0.,
                     phrase_aligned: true,
                     description: if manual_exit.is_some() || b.mix_in.is_some() {
                         "Phrase transition · saved mix points".into()
@@ -146,6 +152,155 @@ pub(crate) fn plan_vocals(
         }
     }
     best
+}
+
+/// Measure the incoming intro, then back-time it from an outgoing section end.
+/// All calculations stay in source time until constructing the playback plan.
+fn intro_plan(
+    out: &TrackContext<'_>,
+    incoming: &TrackContext<'_>,
+    position: f64,
+    tempo: f64,
+    out_vocals: Option<&[[f64; 2]]>,
+    in_vocals: Option<&[[f64; 2]]>,
+) -> Option<AutomixPlan> {
+    if !tempo.is_finite() || tempo <= 0. || out.grid.bpm <= 0. || incoming.grid.bpm <= 0. {
+        return None;
+    }
+    let in_bar = 240. / incoming.grid.bpm;
+    let out_bar = 240. / out.grid.bpm;
+    let anchor = |g: BeatGrid| g.first_beat + g.downbeat as f64 * 60. / g.bpm;
+    let in_anchor = anchor(incoming.grid);
+    let out_anchor = anchor(out.grid);
+    let intro = incoming
+        .preparation
+        .phrases
+        .iter()
+        .filter(|p| p.label == PhraseLabel::Intro && p.seconds < incoming.duration * 0.35)
+        .min_by(|a, b| a.seconds.total_cmp(&b.seconds))?;
+    let entry = in_anchor + ((intro.seconds - in_anchor) / in_bar).ceil() * in_bar;
+    // A new musical section or vocal entrance bounds the usable intro. Do not
+    // assume that the first 32 bars of every record are safe to mix over.
+    let section_end = incoming
+        .preparation
+        .phrases
+        .iter()
+        .filter(|p| p.seconds > entry + 0.02 && p.label != PhraseLabel::Intro)
+        .map(|p| p.seconds)
+        .min_by(f64::total_cmp)?;
+    let vocal_start = in_vocals
+        .into_iter()
+        .flatten()
+        .filter(|v| v[1] > entry)
+        .map(|v| v[0].max(entry))
+        .min_by(f64::total_cmp)
+        .unwrap_or(section_end);
+    let end = section_end.min(vocal_start).min(incoming.duration);
+    let bars = ((end - entry) / in_bar + 0.01).floor().min(64.) as u8;
+    if bars < 4 || entry < 0. {
+        return None;
+    }
+    let ratio = out.grid.bpm * tempo / incoming.grid.bpm;
+    let mut best: Option<(f64, AutomixPlan)> = None;
+    // Finish before a breakdown/build, or at the end of the final section.
+    // The latest complete bar avoids carrying a mix past the end of the file.
+    let ends = out
+        .preparation
+        .phrases
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.label,
+                PhraseLabel::Breakdown | PhraseLabel::Build | PhraseLabel::Outro
+            )
+        })
+        .map(|p| p.seconds)
+        .chain(std::iter::once(out.duration));
+    for boundary in ends {
+        let finish = out_anchor + ((boundary - out_anchor) / out_bar).floor() * out_bar;
+        let available = ((finish - position.max(out.duration * 0.5)) / out_bar + 0.00001)
+            .floor()
+            .max(0.) as u8;
+        let bars = bars.min(available);
+        if bars < 4 {
+            continue;
+        }
+        let seconds = bars as f64 * out_bar / tempo;
+        let start = finish - bars as f64 * out_bar;
+        if start < position || start < out.duration * 0.5 || finish > out.duration {
+            continue;
+        }
+        // Run the intro silently across earlier sections. Only expose it during
+        // the final safe section, at most eight bars before the handover ends.
+        let last_break = out
+            .preparation
+            .phrases
+            .iter()
+            .filter(|p| {
+                p.seconds < finish - 0.02
+                    && matches!(p.label, PhraseLabel::Build | PhraseLabel::Breakdown)
+            })
+            .map(|p| p.seconds)
+            .max_by(f64::total_cmp);
+        let safe_start = last_break
+            .and_then(|at| {
+                out.preparation
+                    .phrases
+                    .iter()
+                    .filter(|p| {
+                        p.seconds > at
+                            && p.seconds < finish
+                            && !matches!(p.label, PhraseLabel::Build | PhraseLabel::Breakdown)
+                    })
+                    .map(|p| p.seconds)
+                    .min_by(f64::total_cmp)
+            })
+            .unwrap_or(start);
+        if last_break.is_some_and(|at| at >= safe_start) {
+            continue;
+        }
+        // An outro can lose its kick well before EOF. Complete the bass
+        // exchange by that boundary, rather than centring it near file end.
+        let rhythm_end = out
+            .preparation
+            .phrases
+            .iter()
+            .filter(|p| p.label == PhraseLabel::Outro && p.seconds > start && p.seconds <= finish)
+            .map(|p| p.seconds)
+            .min_by(f64::total_cmp)
+            .unwrap_or(finish);
+        let blend_start = safe_start.max(start).max(rhythm_end - 8. * out_bar);
+        if finish - blend_start < out_bar {
+            continue;
+        }
+        let eq_start = ((blend_start - start) / (finish - start)) as f32;
+        let bass_end = ((rhythm_end - start) / (finish - start)) as f32;
+        // mix_eq_held has an eight-percent half-width in its active span.
+        let swap = (bass_end - (1. - eq_start) * 0.08).min(eq_start + (1. - eq_start) * 0.75);
+        let mut plan = AutomixPlan {
+            outgoing_seconds: start,
+            incoming_seconds: entry,
+            duration_seconds: seconds,
+            bars: Some(bars),
+            bass_swap: out
+                .preparation
+                .bass_swap
+                .unwrap_or(swap)
+                .max(eq_start + (1. - eq_start) * 0.1),
+            eq_start,
+            phrase_aligned: true,
+            description: format!("Intro-aware · {bars} usable bars · section-end EQ handover"),
+            vocal_overlap_seconds: None,
+            vocal_note: String::new(),
+        };
+        annotate_vocals(&mut plan, out_vocals, in_vocals, tempo, ratio);
+        // Prefer low vocal collision, then the latest safe musical exit.
+        let score = plan.vocal_overlap_seconds.unwrap_or(0.) * 1000. - finish / out.duration;
+        if best.as_ref().is_none_or(|(old, _)| score < *old) {
+            best = Some((score, plan));
+        }
+    }
+    best.map(|(_, plan)| plan)
 }
 /// Intersection of two sorted source-time vocal maps in transition wall-clock time.
 pub(crate) fn overlap(
@@ -224,6 +379,90 @@ mod tests {
         }
     }
     #[test]
+    fn lizard_motorcycle_sections_produce_intro_plan() {
+        let a = prep(&[
+            (0.30168, PhraseLabel::Intro),
+            (291.78167, PhraseLabel::Breakdown),
+            (306.00020, PhraseLabel::Drop),
+            (355.76508, PhraseLabel::Outro),
+        ]);
+        let b = prep(&[
+            (15.68686827, PhraseLabel::Intro),
+            (87.17341614, PhraseLabel::Section),
+        ]);
+        let p = plan(
+            TrackContext {
+                preparation: &a,
+                grid: BeatGrid {
+                    bpm: 135.035,
+                    first_beat: 0.3016818265,
+                    confidence: 0.29602849,
+                    ..grid()
+                },
+                duration: 371.,
+            },
+            TrackContext {
+                preparation: &b,
+                grid: BeatGrid {
+                    bpm: 134.291,
+                    first_beat: 15.2400773458,
+                    confidence: 0.28559553,
+                    ..grid()
+                },
+                duration: 689.,
+            },
+            261.,
+            1.,
+        )
+        .unwrap();
+        assert!(p.description.contains("Intro-aware"));
+        assert_eq!(p.bars, Some(39));
+        let eq_at = p.outgoing_seconds + p.duration_seconds * p.eq_start as f64;
+        let bass_done = p.outgoing_seconds
+            + p.duration_seconds * (p.bass_swap + (1. - p.eq_start) * 0.08) as f64;
+        assert!(eq_at < 342.);
+        assert!(bass_done <= 355.76508 + 0.001);
+        assert!(p.duration_seconds > 60.);
+        assert!(p.outgoing_seconds >= 261.);
+    }
+    #[test]
+    fn intro_length_back_times_exit_and_vocals_bound_available_space() {
+        let a = prep(&[
+            (0., PhraseLabel::Intro),
+            (64., PhraseLabel::Drop),
+            (240., PhraseLabel::Outro),
+        ]);
+        for (intro, vocals, expected) in [
+            (24., None, 12),
+            (48., None, 24),
+            (48., Some([[16., 40.]]), 8),
+        ] {
+            let b = prep(&[(0., PhraseLabel::Intro), (intro, PhraseLabel::Drop)]);
+            let p = plan_vocals(
+                TrackContext {
+                    preparation: &a,
+                    grid: grid(),
+                    duration: 300.,
+                },
+                TrackContext {
+                    preparation: &b,
+                    grid: grid(),
+                    duration: 200.,
+                },
+                100.,
+                1.05,
+                Some(&[]),
+                vocals.as_ref().map(|v| v.as_slice()),
+            )
+            .unwrap();
+            assert_eq!(p.bars, Some(expected));
+            assert!((p.outgoing_seconds - (300. - expected as f64 * 2.)).abs() < 1e-6);
+            assert!((p.duration_seconds * 1.05 - expected as f64 * 2.).abs() < 1e-6);
+            assert!(p.description.contains("Intro-aware"));
+            assert!(p.bass_swap > 0.5);
+        }
+    }
+    #[test]
     fn prefers_outro_and_intro_and_fits_whole_phrases() {
         let a = prep(&[
             (0., PhraseLabel::Intro),
@@ -247,11 +486,11 @@ mod tests {
             1.,
         )
         .unwrap();
-        assert_eq!(p.outgoing_seconds, 160.);
+        assert_eq!(p.outgoing_seconds, 168.);
         assert_eq!(p.incoming_seconds, 0.);
         assert_eq!(p.bars, Some(16));
-        assert_eq!(p.bass_swap, 0.5);
-        assert!(
+        assert_eq!(p.bass_swap, 0.875);
+        assert_eq!(
             plan(
                 TrackContext {
                     preparation: &a,
@@ -266,7 +505,9 @@ mod tests {
                 155.,
                 1.
             )
-            .is_none()
+            .unwrap()
+            .bars,
+            Some(4)
         );
     }
     #[test]

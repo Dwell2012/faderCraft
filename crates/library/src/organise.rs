@@ -640,6 +640,20 @@ impl Library {
         Ok(groups)
     }
 
+    /// Removes a library entry and its playlist/Flow references, leaving the
+    /// audio file untouched. Folder scans will not add the file back.
+    pub fn remove_track(&mut self, track: i64) -> Result<()> {
+        let transaction = self.conn.transaction()?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO ignored_files (source_id, locator)
+             SELECT source_id, locator FROM tracks WHERE id = ?1",
+            [track],
+        )?;
+        transaction.execute("DELETE FROM tracks WHERE id = ?1", [track])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Keeps one copy of a track and takes the others out of the library.
     /// Their places in playlists and Flow pass to the kept copy, and their
     /// files are left on disk but no longer added by scans.

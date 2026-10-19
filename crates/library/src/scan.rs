@@ -48,6 +48,9 @@ struct Tags {
 /// The details djcraft reads from and writes to a file's tags.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TrackEdit {
+    /// Recording date/year. None preserves it; an empty string removes it.
+    #[serde(default)]
+    pub date: Option<String>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -85,6 +88,7 @@ pub(crate) fn read_file_tags(path: &Path) -> Result<TrackEdit> {
     let file = lofty::read_from_path(path).map_err(|e| Error::Tags(e.to_string()))?;
     let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) else {
         return Ok(TrackEdit {
+            date: Some(String::new()),
             comment: Some(String::new()),
             grouping: Some(String::new()),
             ..TrackEdit::default()
@@ -95,6 +99,7 @@ pub(crate) fn read_file_tags(path: &Path) -> Result<TrackEdit> {
     };
     let item = |key: ItemKey| tag.get_string(key).map(|v| v.trim().to_string());
     Ok(TrackEdit {
+        date: Some(item(ItemKey::RecordingDate).unwrap_or_default()),
         title: text(tag.title()),
         artist: text(tag.artist()),
         album: text(tag.album()),
@@ -124,6 +129,12 @@ pub(crate) fn write_tags(path: &Path, edit: &TrackEdit) -> Result<()> {
             .filter(|v| !v.is_empty())
             .map(str::to_string)
     };
+    if let Some(date) = &edit.date {
+        tag.remove_key(ItemKey::RecordingDate);
+        if let Some(date) = text(date) {
+            tag.insert_text(ItemKey::RecordingDate, date);
+        }
+    }
     match text(&edit.title) {
         Some(title) => tag.set_title(title),
         None => tag.remove_title(),

@@ -179,6 +179,7 @@ const COLUMNS: [(Field, &str, f32); 10] = [
 
 /// What the library asks the rest of the app to do.
 pub enum LibraryEvent {
+    NewSet,
     Queue(Vec<djcraft_protocol::QueueTrack>),
     /// A track was chosen (double-clicked, or sent to a deck from its menu).
     /// On the decks that loads it onto `deck`, or onto whichever is free.
@@ -340,6 +341,7 @@ pub fn key_colour(key: Camelot, strength: f32) -> Hsla {
 }
 
 struct TrackTable {
+    played: HashSet<PathBuf>,
     view: WeakEntity<LibraryView>,
     tracks: Vec<Track>,
     sort: Option<(usize, ColumnSort)>,
@@ -360,6 +362,7 @@ impl TrackTable {
         Self {
             view,
             tracks: Vec::new(),
+            played: HashSet::new(),
             sort: None,
             playlists: Vec::new(),
             playlist: None,
@@ -542,7 +545,11 @@ impl TableDelegate for TrackTable {
                 ));
             }
         }
-        menu
+        menu.separator().item(item(
+            "Remove from library (keep file)".into(),
+            LibraryView::remove_from_library,
+            0,
+        ))
     }
 
     fn render_tr(
@@ -595,7 +602,13 @@ impl TableDelegate for TrackTable {
         let track = &self.tracks[row_ix];
         let decimals = bpm_decimals(cx);
         let text: SharedString = match self.field(col_ix) {
-            Field::Title => track.title.clone().into(),
+            Field::Title => {
+                if self.played.contains(&track.path) {
+                    format!("[Played] {}", track.title).into()
+                } else {
+                    track.title.clone().into()
+                }
+            }
             Field::Artist => track.artist.clone().into(),
             Field::Album => track.album.clone().into(),
             Field::Genre => track.genre.clone().into(),
@@ -649,6 +662,7 @@ struct ScanCounters {
 
 /// The Library tab: sources on the left, every track from them on the right.
 pub struct LibraryView {
+    history_set: Option<i64>,
     db_path: PathBuf,
     /// `None` if the database could not be opened; `error` says why.
     library: Option<Library>,
@@ -789,6 +803,7 @@ impl LibraryView {
             wheel_in_browser: false,
             wheel_open: false,
             wheel_dismissed: None,
+            history_set: None,
             section: Section::Library,
             origin: Origin::All,
             sources: Vec::new(),
@@ -992,6 +1007,56 @@ impl LibraryView {
         .detach();
     }
 
+    pub fn record_play(&mut self, path: &Path, title: &str, cx: &mut Context<Self>) -> bool {
+        let Some(library) = &self.library else {
+            return false;
+        };
+        match library.record_play(path, title) {
+            Ok(()) => {
+                self.reload(cx);
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string().into());
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    fn history_panel(&self, cx: &mut Context<Self>) -> Div {
+        let result = self.library.as_ref().map(|library| {
+            let current = library.current_set()?;
+            let selected = self.history_set.unwrap_or(current).min(current);
+            Ok::<_, djcraft_library::Error>((current, selected, library.play_history(selected)?))
+        });
+        let Some(Ok((current, selected, entries))) = result else {
+            return self.placeholder("Play history is unavailable.", cx);
+        };
+        div().flex().flex_col().flex_1().min_w_0().min_h_0().gap_3()
+            .child(div().flex().items_center().gap_3()
+                .child(format!("Set {selected}{} - {} tracks", if selected == current { " (current)" } else { "" }, entries.len()))
+                .child(Button::new("previous-set").label("Previous").disabled(selected <= 1)
+                    .on_click(cx.listener(move |this, _, _, cx| { this.history_set = Some(selected - 1); cx.notify(); })))
+                .child(Button::new("next-set").label("Next").disabled(selected >= current)
+                    .on_click(cx.listener(move |this, _, _, cx| { this.history_set = Some(selected + 1); cx.notify(); })))
+                .child(Button::new("new-set").label("New set").tooltip("Clear played flags and start a new set; earlier history is kept")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(library) = &this.library {
+                            match library.new_set() {
+                                Ok(_) => { this.history_set = None; this.reload(cx); cx.emit(LibraryEvent::NewSet); }
+                                Err(error) => { this.error = Some(error.to_string().into()); cx.notify(); }
+                            }
+                        }
+                    }))))
+            .child("[Played] marks tracks heard in the current set. Tracks qualify after 10 seconds of audible master playback; headphone previews do not count.")
+            .child(div().id("history-entries").flex().flex_col().flex_1().min_h_0().overflow_y_scroll()
+                .children(entries.into_iter().enumerate().map(|(index, entry)| {
+                    div().p_2().child(format!("{}. {}", index + 1, entry.title))
+                        .child(div().text_xs().child(entry.path.to_string_lossy().into_owned()))
+                })))
+    }
+
     /// Re-reads the sources and the visible tracks from the database.
     fn reload(&mut self, cx: &mut Context<Self>) {
         let Some(library) = &self.library else {
@@ -1037,10 +1102,20 @@ impl LibraryView {
                 self.groups = library.groups()?;
                 self.folders = library.folders()?;
             }
-            Ok::<_, djcraft_library::Error>((library.sources()?, library.playlists()?, tracks))
+            let played = library
+                .play_history(library.current_set()?)?
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect();
+            Ok::<_, djcraft_library::Error>((
+                library.sources()?,
+                library.playlists()?,
+                tracks,
+                played,
+            ))
         })();
         match loaded {
-            Ok((sources, playlists, tracks)) => {
+            Ok((sources, playlists, tracks, played)) => {
                 self.sources = sources;
                 self.playlists = playlists.clone();
                 let smart = query
@@ -1049,6 +1124,7 @@ impl LibraryView {
                     .is_some_and(|playlist| playlist.rules.is_some());
                 self.table.update(cx, |table, cx| {
                     let table = table.delegate_mut();
+                    table.played = played;
                     table.smart = smart;
                     // Suggestions come best first; a sort would hide that.
                     table.keep_order = suggest_for.is_some();
@@ -1110,6 +1186,26 @@ impl LibraryView {
             self.error = Some(error.to_string().into());
         }
         self.reload(cx);
+    }
+
+    fn remove_from_library(&mut self, track: i64, _: i64, cx: &mut Context<Self>) {
+        let Some(library) = &mut self.library else {
+            return;
+        };
+        match library.remove_track(track) {
+            Ok(()) => {
+                self.notice = Some(
+                    "Removed from library. Audio file kept; future folder scans will skip it."
+                        .into(),
+                );
+                self.reload(cx);
+                cx.emit(LibraryEvent::Changed);
+            }
+            Err(error) => {
+                self.error = Some(error.to_string().into());
+                cx.notify();
+            }
+        }
     }
 
     fn remove_from_playlist(&mut self, track: i64, playlist: i64, cx: &mut Context<Self>) {
@@ -1270,6 +1366,7 @@ impl LibraryView {
             }
         };
         let edit = TrackEdit {
+            date: None,
             title: self.field_text(EditField::Title, cx),
             artist: self.field_text(EditField::Artist, cx),
             album: self.field_text(EditField::Album, cx),
@@ -3564,7 +3661,7 @@ impl Render for LibraryView {
                     .child(flow.clone()),
                 None => self.placeholder("Flow is not available here.", cx),
             },
-            Section::History => self.placeholder("Play history is not built yet.", cx),
+            Section::History => self.history_panel(cx),
         };
         div()
             .flex()

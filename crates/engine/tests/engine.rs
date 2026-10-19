@@ -2035,6 +2035,7 @@ fn smart_automix_matches_effective_tempo_and_bar_phase_with_eq_handover() {
     assert!(delta.abs() < 0.005, "phase difference {delta}");
     assert!(state.decks[1].eq[0] < 0.001);
     assert!(state.decks[0].eq[0] > 0.99);
+    assert_eq!(state.crossfader, 0.5);
     render(&mut mixer, 2.5);
     let state = engine.state();
     assert!(state.decks[1].eq[2] > state.decks[1].eq[1]);
@@ -2047,6 +2048,8 @@ fn smart_automix_matches_effective_tempo_and_bar_phase_with_eq_handover() {
     let state = engine.state();
     assert_eq!(state.automix.active_deck, Some(1));
     assert_eq!(state.decks[1].eq, [1.; 3]);
+    assert_eq!(state.crossfader, 0.5);
+    assert_eq!(state.decks[0].eq, [0.; 3]);
     assert!((state.decks[1].tempo - 1.0625).abs() < 1e-8);
     std::fs::remove_file(path).unwrap();
 }
@@ -3100,4 +3103,130 @@ fn sampler_from_deck_two_starts_at_exact_capture_frame_with_short_attack() {
         "attack took longer than 32 frames"
     );
     assert!((out[254] - 0.4).abs() < 1e-6);
+}
+
+#[test]
+fn silent_preroll_counts_at_tempo_pauses_and_crosses_into_audio() {
+    for lock in [false, true] {
+        let (mut engine, mut mixer) = engine_with(sine(440., 3., RATE));
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::SetBeatGrid {
+                    grid: Some(djcraft_protocol::BeatGrid {
+                        bpm: 120.,
+                        first_beat: 0.1,
+                        downbeat: 0,
+                        confidence: 1.,
+                    }),
+                }),
+            )
+            .unwrap();
+        engine
+            .apply(Role::Host, deck(DeckAction::SetKeyLock { on: lock }))
+            .unwrap();
+        engine
+            .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.25 }))
+            .unwrap();
+        engine
+            .apply(Role::Host, deck(DeckAction::Seek { seconds: -100. }))
+            .unwrap();
+        let mut block = vec![1.; CALLBACK * 2];
+        mixer.render(&mut block);
+        assert_eq!(engine.state().decks[0].position_seconds, -8.);
+        assert!(block.iter().all(|s| *s == 0.));
+        engine
+            .apply(Role::Host, deck(DeckAction::Seek { seconds: -2. }))
+            .unwrap();
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        let mut silence = vec![1.; RATE as usize * 2];
+        mixer.render(&mut silence);
+        assert!(silence.iter().all(|s| *s == 0.));
+        assert!((engine.state().decks[0].position_seconds + 0.75).abs() < 1e-6);
+        engine.apply(Role::Host, deck(DeckAction::Pause)).unwrap();
+        mixer.render(&mut block);
+        assert!((engine.state().decks[0].position_seconds + 0.75).abs() < 1e-6);
+        assert!(block.iter().all(|s| *s == 0.));
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        let mut crossing = vec![0.; RATE as usize * 2];
+        mixer.render(&mut crossing);
+        assert!(
+            crossing[..(RATE as usize * 6 / 10 - 1) * 2]
+                .iter()
+                .all(|s| *s == 0.)
+        );
+        assert!(
+            crossing[RATE as usize * 7 / 10 * 2..]
+                .iter()
+                .any(|s| s.abs() > 0.01)
+        );
+        assert!((engine.state().decks[0].position_seconds - 0.5).abs() < 0.02);
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::CuePreview {
+                    seconds: 0.,
+                    play: false,
+                }),
+            )
+            .unwrap();
+        mixer.render(&mut block);
+        assert_eq!(engine.state().decks[0].position_seconds, 0.);
+        assert!(!engine.state().decks[0].playing);
+    }
+}
+
+#[test]
+fn waveform_scrubbing_can_enter_and_leave_negative_timeline() {
+    let (mut engine, mut mixer) = engine_with(sine(440., 2., RATE));
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetBeatGrid {
+                grid: Some(djcraft_protocol::BeatGrid {
+                    bpm: 120.,
+                    first_beat: 0.2,
+                    downbeat: 0,
+                    confidence: 1.,
+                }),
+            }),
+        )
+        .unwrap();
+    let mut block = vec![0.; CALLBACK * 2];
+    for (target, expected) in [(-100., -8.), (-1., -1.), (0.5, 0.5), (-2., -2.)] {
+        engine
+            .apply(Role::Host, deck(DeckAction::ScratchTo { seconds: target }))
+            .unwrap();
+        mixer.render(&mut block);
+        assert!((engine.state().decks[0].position_seconds - expected).abs() < 0.01);
+        if target < 0. {
+            assert!(block.iter().all(|s| *s == 0.));
+        }
+    }
+    engine
+        .apply(Role::Host, deck(DeckAction::Scratch { speed: None }))
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::CuePreview {
+                seconds: -2.,
+                play: true,
+            }),
+        )
+        .unwrap();
+    mixer.render(&mut block);
+    assert!(engine.state().decks[0].position_seconds > -2.);
+    assert!(block.iter().all(|s| *s == 0.));
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::CuePreview {
+                seconds: -2.,
+                play: false,
+            }),
+        )
+        .unwrap();
+    mixer.render(&mut block);
+    assert_eq!(engine.state().decks[0].position_seconds, -2.);
 }

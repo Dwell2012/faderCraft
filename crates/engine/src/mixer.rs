@@ -44,6 +44,7 @@ pub(crate) enum Command {
         smart: bool,
         incoming_start: Option<f64>,
         bass_swap: f32,
+        eq_start: f32,
         schedule: Option<(f64, f64)>,
         preserve_entry: bool,
         matching: Option<(djcraft_protocol::BeatGrid, djcraft_protocol::BeatGrid, f64)>,
@@ -412,6 +413,27 @@ impl Deck {
     /// Fills `out` with the deck's signal before gain. Returns false, leaving
     /// `out` untouched, when the deck is silent.
     fn render(&mut self, out: &mut [f32]) -> bool {
+        // Count negative transport time in the audio callback, not UI timers.
+        // Split the crossing block so the first sample is not delayed by a buffer.
+        if self.position < 0. {
+            out.fill(0.);
+            if !self.playing || self.track.is_none() {
+                return false;
+            }
+            let frames = out.len() / CHANNELS;
+            let correction = self
+                .nudge_frames
+                .clamp(-(frames as f64) * 0.08, frames as f64 * 0.08);
+            let tempo = self.tempo + correction / frames.max(1) as f64;
+            let silent = ((-self.position / tempo).ceil() as usize).min(frames);
+            self.nudge_frames -= correction * silent as f64 / frames.max(1) as f64;
+            self.position = (self.position + silent as f64 * tempo).min(0.);
+            self.speed = self.tempo;
+            if silent * CHANNELS < out.len() {
+                return self.render(&mut out[silent * CHANNELS..]);
+            }
+            return false;
+        }
         let use_stretch = self.key_lock
             && self.scratch.is_none()
             && self.auto.is_none()
@@ -809,6 +831,7 @@ struct MixFade {
     baseline: [[f32; 3]; 2],
     start_cross: f32,
     bass_swap: f32,
+    eq_start: f32,
 }
 // Each band is handed over once; weights never boost and sum to unity.
 #[cfg(test)]
@@ -822,10 +845,15 @@ fn mix_eq_at(progress: f32, bass_swap: f32) -> [[f32; 3]; 2] {
     };
     let incoming = [
         smooth(bass_swap - 0.08, bass_swap + 0.08),
-        smooth(0.15, 0.85),
-        smooth(0., 0.65),
+        smooth(0.15, (bass_swap + 0.35).min(1.)),
+        smooth(0., (bass_swap + 0.15).min(0.9)),
     ];
     [incoming.map(|g| 1. - g), incoming]
+}
+fn mix_eq_held(progress: f32, bass_swap: f32, start: f32) -> [[f32; 3]; 2] {
+    let blend = ((progress - start) / (1. - start)).clamp(0., 1.);
+    let swap = ((bass_swap - start) / (1. - start)).clamp(0.1, 0.9);
+    mix_eq_at(blend, swap)
 }
 #[derive(Clone, Copy)]
 struct PendingMix {
@@ -836,6 +864,7 @@ struct PendingMix {
     smart: bool,
     incoming_start: Option<f64>,
     bass_swap: f32,
+    eq_start: f32,
     schedule: (f64, f64),
     preserve_entry: bool,
     matching: Option<(djcraft_protocol::BeatGrid, djcraft_protocol::BeatGrid, f64)>,
@@ -943,6 +972,7 @@ impl Mixer {
                 smart,
                 incoming_start,
                 bass_swap,
+                eq_start,
                 schedule,
                 preserve_entry,
                 matching,
@@ -957,6 +987,7 @@ impl Mixer {
                             smart,
                             incoming_start,
                             bass_swap,
+                            eq_start,
                             schedule: target,
                             preserve_entry,
                             matching,
@@ -1017,6 +1048,7 @@ impl Mixer {
                     baseline,
                     start_cross: self.crossfader,
                     bass_swap,
+                    eq_start,
                 });
             }
             Command::CaptureSample {
@@ -1131,6 +1163,14 @@ impl Mixer {
             } => {
                 let deck = &mut self.decks[deck];
                 deck.position = frame;
+                deck.prepared_at = None;
+                if frame < 0. {
+                    deck.auto = None;
+                    deck.eq.reset();
+                    for effect in &mut deck.effects {
+                        effect.clear();
+                    }
+                }
                 let retained = if keep_loop && end.is_none() {
                     loop_at(deck.loop_region, frame)
                 } else {
@@ -1279,7 +1319,15 @@ impl Mixer {
                 }
                 deck.nudge_frames = 0.;
                 if let Some(track) = &deck.track {
-                    deck.position = frame.clamp(0.0, track.decoded_frames() as f64);
+                    deck.position = frame.min(track.decoded_frames() as f64);
+                    deck.prepared_at = None;
+                    if frame < 0. {
+                        deck.auto = None;
+                        deck.eq.reset();
+                        for effect in &mut deck.effects {
+                            effect.clear();
+                        }
+                    }
                     deck.stretching = false;
                 }
             }
@@ -1365,7 +1413,21 @@ impl Mixer {
                     }
                     deck.nudge_frames = 0.;
                     deck.scratch = Some(0.);
-                    deck.scratch_position = Some(frame.clamp(0., track.decoded_frames() as f64));
+                    if frame < 0. || deck.position < 0. {
+                        // Drag through empty timeline space directly: no scrub
+                        // audio from sample zero and no stranded negative head.
+                        deck.position = frame.min(track.decoded_frames() as f64);
+                        deck.scratch_position = None;
+                        deck.speed = 0.;
+                        deck.prepared_at = None;
+                        deck.auto = None;
+                        deck.eq.reset();
+                        for effect in &mut deck.effects {
+                            effect.clear();
+                        }
+                    } else {
+                        deck.scratch_position = Some(frame.min(track.decoded_frames() as f64));
+                    }
                 }
             }
             Command::Trim { deck, gain } => {
@@ -1417,6 +1479,7 @@ impl Mixer {
                         smart: p.smart,
                         incoming_start: p.incoming_start,
                         bass_swap: p.bass_swap,
+                        eq_start: p.eq_start,
                         schedule: Some(p.schedule),
                         preserve_entry: p.preserve_entry,
                         matching: p.matching,
@@ -1428,9 +1491,13 @@ impl Mixer {
             if let Some(fade) = self.fade {
                 let fraction =
                     ((fade.elapsed + frames as u64) as f64 / fade.total as f64).min(1.) as f32;
-                self.crossfader = fade.start_cross + (fade.to as f32 - fade.start_cross) * fraction;
+                self.crossfader = if fade.smart {
+                    0.5
+                } else {
+                    fade.start_cross + (fade.to as f32 - fade.start_cross) * fraction
+                };
                 if fade.smart {
-                    let weights = mix_eq_at(fraction, fade.bass_swap);
+                    let weights = mix_eq_held(fraction, fade.bass_swap, fade.eq_start);
                     for (side, deck) in [fade.from, fade.to].into_iter().enumerate() {
                         self.decks[deck].eq.gains = std::array::from_fn(|band| {
                             fade.baseline[side][band] * weights[side][band]
@@ -1555,9 +1622,9 @@ impl Mixer {
                 fade.elapsed += frames as u64;
                 if fade.elapsed >= fade.total {
                     self.decks[fade.from].playing = false;
-                    self.crossfader = fade.to as f32;
+                    self.crossfader = if fade.smart { 0.5 } else { fade.to as f32 };
                     if fade.smart {
-                        self.decks[fade.from].eq.gains = [1.; 3];
+                        self.decks[fade.from].eq.gains = [0.; 3];
                         self.decks[fade.to].eq.gains = [1.; 3];
                     }
                     self.fade = None;
@@ -1613,6 +1680,18 @@ impl Mixer {
 #[cfg(test)]
 mod automix_eq_tests {
     use super::mix_eq;
+    #[test]
+    fn long_intro_stays_muted_until_final_section_then_hands_over() {
+        for step in 0..=75 {
+            assert_eq!(
+                super::mix_eq_held(step as f32 / 100., 0.9375, 0.75),
+                [[1.; 3], [0.; 3]]
+            );
+        }
+        let mid = super::mix_eq_held(0.85, 0.9375, 0.75);
+        assert!(mid[1][2] > mid[1][1] && mid[1][1] > mid[1][0]);
+        assert_eq!(super::mix_eq_held(1., 0.9375, 0.75), [[0.; 3], [1.; 3]]);
+    }
     #[test]
     fn staged_eq_handover_is_complementary_and_never_boosts() {
         for step in 0..=1000 {

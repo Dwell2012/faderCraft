@@ -2,6 +2,52 @@
 
 Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
 
+## Latest checkpoint and verification
+
+This checkpoint includes faderCraft branding/icon, current-set Played history,
+remove-from-library without deleting audio, reviewed year-tag edits, beat-anchor
+fixes, the 16-beat negative timeline, and the intro-aware EQ Automix changes below.
+The latest user feedback was that incoming bass arrived after the outgoing kick
+ended. Planning now finishes the bass exchange by the available Outro marker;
+it does not yet measure the actual last kick directly. Audition that boundary
+on more tracks before treating the section estimate as reliable kick detection.
+
+Verification: 226 workspace tests passed (one ignored) before the final outro
+timing adjustment; all 109 engine/unit/integration/decode tests passed (one
+ignored) after it. Windows debug build, formatting, diff whitespace checks and
+`cargo deny check licenses sources` passed. The app was rebuilt and relaunched.
+No new dependencies were added. Music files, tag-review artifacts, local app
+databases, caches and binaries remain outside this Git checkpoint.
+
+## Latest Automix behaviour
+
+Smart Automix measures 4–64 incoming intro bars through the next section or
+known vocal entrance, then back-times an outgoing section end. Overlaps can span
+outgoing builds/breakdowns: incoming EQ remains at zero until the final safe
+section, with at most eight bars of staged high/mid/bass blending. `eq_start`
+is now timed before an available outgoing Outro marker rather than EOF; the
+bass envelope finishes by that marker to avoid waiting through a kickless tail.
+This is a section-based estimate, not a separate kick-end detector. `eq_start`
+is a serde-defaulted AutomixPlan fraction passed through audio-thread scheduling.
+Smart mixes keep the crossfader at 50% during and after the handover; the outgoing
+deck stops with EQ cut, and preparation restores EQ when that deck is reused.
+Ordinary non-smart fades still move the crossfader. Takeover preserves mix state.
+Grid confidence uses the library's 0.10 threshold, with specific fallback reasons.
+The Lizard Picotto / Motorcycle saved-section regression now uses 39 intro bars.
+Saved IN/OUT and length overrides still win; use Prepare > Clear IN/OUT and
+reset the length override for adaptive planning. New automatic preparation leaves
+IN/OUT unset. Existing saved preparation is not rewritten. Structure recognition
+remains energy/marker-based; unavailable structure retains the previous fallback.
+
+Original-machine metadata maintenance: `TrackEdit.date` now supports reviewed
+recording-date/year writes and undo. `None` preserves an existing date, while
+an empty string clears it. The library tests cover full-date restoration and
+date round trips across supported formats. Music review artifacts, original-file
+backups, and the separate `tag-undo.db` are under
+`C:\Users\Ian Llewellyn\repos\DJ\tag-reviews`, outside Git. Consult
+`approved-review.json` and `applied-results.json` for the actual batch; do not
+rerun the original proposal builder or apply manifest against already edited files.
+
 ## Repository
 
 Personal private repository: https://github.com/Dwell2012/djcraft. Shared branch:
@@ -9,9 +55,9 @@ Personal private repository: https://github.com/Dwell2012/djcraft. Shared branch
 retain its MIT licence and attribution. Custom implementation checkpoint:
 `bd5ed92888faab1f800943dd1692681ce33ace6f`.
 
-The current-machine checkout is `C:\Users\ianll\source\repos\DJCraft`, on `main`
-tracking `origin/main`. The earlier original-machine checkout is
-`C:\Users\Ian Llewellyn\repos\DJ\djcraft`.
+The original-machine checkout used for this checkpoint is
+`C:\Users\Ian Llewellyn\repos\DJ\djcraft`. The other-machine checkout is
+`C:\Users\ianll\source\repos\DJCraft`, on `main` tracking `origin/main`.
 The old OneDrive DJ directory is stale; some sessions still start there. Verify the
 working directory before editing. The original-machine working branch is
 `codex/windows-controller-foundation`, tracking `origin/main`; its local `main`
@@ -270,3 +316,29 @@ pre-roll the stretcher at the cue position using preallocated buffers, discardin
 its startup latency; paused decks prepare this ahead of Play. Starts immediately
 after a seek/load prepare on the first callback. The 64-frame peak-protection
 lookahead and device/output buffering still apply. No device latency is removed.
+
+Current-set history: schema 17 adds play_sets/play_history; no music tags are changed. Shell HistoryTracker accumulates 10 seconds of audible playback per loaded deck track, excluding Cue and scrubbing. Library > History starts fresh sets and browses retained sets. Both track browsers display [Played] beside the title. Flags persist across restarts; explicitly start New set to clear them.
+
+## faderCraft branding (19 October 2026)
+The user-facing name is now faderCraft. Windows MSVC builds embed the lime/sapphire fader icon as resource ID 1 (GPUI loads this for the taskbar), plus product metadata. Build requires Windows SDK rc.exe, provided by tools/dev-shell.ps1. Cargo package/executable and existing data paths remain djcraft/DJCraft for compatibility with libraries, caches and launch scripts.
+
+## Beat grid and silent pre-roll (19 October 2026)
+Analysis version 7 repairs the half-beat fallback found on Sunburst Eyeball and
+Delerium Silence (Airscape): low log-bass confidence must not discard reliable
+uncompressed bass timing in favour of offbeat broadband percussion. Opening
+attack refinement now inspects 128 beats, reaching Gouryella's kick entrance.
+The usual background pass refreshes old library analysis on launch; saved manual
+hot cues are not moved. Regenerate suggested cues if an old First Beat cue remains.
+The user clarified this is timeline space, not a count-in menu. The main waveform
+now extends 16 beats before file start, including grid lines at nonnegative
+playhead positions. Drag and paused wheel scrubbing can reach that negative time;
+the small overview remains a whole-file navigator. Seek/ScratchTo clamp to the
+16-beat bound from the grid, cue preview supports that range, and playback is
+silent until zero. The separate Pre-roll action/menu was removed. Unknown-tempo
+tracks retain zero as the lower bound. Negative positions display signed time.
+
+Analysis version 8: once a strict opening-attack consensus establishes phase,
+walk back through immediately adjacent strong attacks within 25 ms of that phase.
+This preserves an opening kick with a different envelope instead of shifting the
+bar origin by one beat (Motorcycle, As the Rush Comes). The phase consensus still
+uses the strict 12 ms threshold, and recovery cannot cross a missing attack.

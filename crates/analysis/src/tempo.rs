@@ -129,7 +129,7 @@ fn opening_attack(samples: &[f32], sample_rate: u32, phase: f64, period: f64) ->
     let dt = hop as f64 / sample_rate as f64;
     let energy: Vec<f64> = samples
         .chunks(hop)
-        .take((32. * period / dt) as usize)
+        .take((128. * period / dt) as usize)
         .map(|c| (c.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt())
         .collect();
     if energy.len() < 20 {
@@ -144,7 +144,7 @@ fn opening_attack(samples: &[f32], sample_rate: u32, phase: f64, period: f64) ->
     }
     let reach = (0.08 / dt) as usize;
     let mut attacks = Vec::new();
-    for beat in 0..32 {
+    for beat in 0..128 {
         let expected = phase + beat as f64 * period;
         let centre = (expected / dt) as usize;
         let from = centre.saturating_sub(reach);
@@ -181,9 +181,23 @@ fn opening_attack(samples: &[f32], sample_rate: u32, phase: f64, period: f64) ->
     if consistent.len() * 4 < attacks.len() * 3 {
         return None;
     }
-    let first = consistent.first()?;
+    let mut first = consistent.first()?.0;
+    // A first kick can have a different attack shape (fade-in, crash or
+    // pickup) from the steady run. Keep the strict consensus for phase,
+    // but recover adjacent strong opening attacks within 25 ms of it.
+    // Do not jump across a missing beat into unrelated intro material.
+    while first > 0 {
+        if attacks
+            .iter()
+            .any(|a| a.0 + 1 == first && (a.2 - median).abs() < 0.025)
+        {
+            first -= 1;
+        } else {
+            break;
+        }
+    }
     // Keep the absolute first supported beat; do not wrap it back into silence.
-    Some((phase + first.0 as f64 * period + median).max(0.))
+    Some((phase + first as f64 * period + median).max(0.))
 }
 
 /// Finds the tempo and beat positions of mono audio, assuming the tempo does
@@ -220,11 +234,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     } else {
         self::fold(&bass, rate, bpm)
     };
-    let phase = if bass_fold.confidence >= BASS_CONFIDENCE {
-        bass_fold.phase
-    } else {
-        fold.phase
-    };
+    let phase = beat_phase(&bass_fold, &strength_fold, &fold);
 
     let period = 60.0 / bpm;
     let window_centre = FRAME as f64 / 2.0 / sample_rate as f64;
@@ -460,6 +470,18 @@ struct Fold {
     confidence: f32,
 }
 
+// Prefer trusted kick evidence over broadband offbeat percussion, even when
+// log compression spreads the bass envelope enough to lower its confidence.
+fn beat_phase(bass: &Fold, strength: &Fold, broadband: &Fold) -> f64 {
+    if bass.confidence >= BASS_CONFIDENCE {
+        bass.phase
+    } else if strength.confidence >= BASS_CONFIDENCE {
+        strength.phase
+    } else {
+        broadband.phase
+    }
+}
+
 /// Lays the envelope over itself one beat at a time. At the right tempo,
 /// onsets pile up in the same place every beat; slightly off, they smear.
 fn fold(envelope: &[f32], rate: f64, bpm: f64) -> Fold {
@@ -635,8 +657,34 @@ mod tests {
     }
 
     #[test]
+    fn reliable_kick_survives_weak_log_flux_and_offbeat_hats() {
+        // Measured regression cases: both tracks used to fall back to the
+        // broadband phase, half a beat from the reliable bass-strength peak.
+        for (kick, log_phase, log_confidence, hat) in [
+            (0.3664, 0.3345, 0.1256, 0.8346),
+            (0.0071, 0.9462, 0.1030, 0.4450),
+        ] {
+            let make = |phase, confidence| super::Fold {
+                phase,
+                confidence,
+                sharpness: 1.,
+            };
+            let bass = make(log_phase, log_confidence);
+            let strength = make(kick, 0.23);
+            let broadband = make(hat, 0.29);
+            assert_eq!(super::beat_phase(&bass, &strength, &broadband), kick);
+            assert_eq!(super::beat_phase(&bass, &make(kick, 0.01), &broadband), hat);
+        }
+    }
+
+    #[test]
     fn first_beat_is_an_actual_attack_after_leading_silence() {
-        for (bpm, first) in [(140., 60. / 140.), (136., 0.292), (128., 1.42)] {
+        for (bpm, first) in [
+            (140., 60. / 140.),
+            (136., 0.292),
+            (128., 1.42),
+            (138., 16.31),
+        ] {
             let tempo =
                 detect_tempo(&pattern(bpm, first, 60.), RATE, TempoRange::default()).unwrap();
             assert!(
@@ -644,6 +692,19 @@ mod tests {
                 "{tempo:?}; expected {first}"
             );
         }
+    }
+
+    #[test]
+    fn opening_kick_with_a_slower_attack_does_not_shift_bar_one_beat() {
+        let mut samples = pattern(120., 0.25, 60.);
+        let start = (0.25 * RATE as f64) as usize;
+        let end = (0.45 * RATE as f64) as usize;
+        let delay = (0.018 * RATE as f64) as usize;
+        let hit = samples[start..end].to_vec();
+        samples[start..end].fill(0.);
+        samples[start + delay..end + delay].copy_from_slice(&hit);
+        let first = super::opening_attack(&samples, RATE, 0.25, 0.5).unwrap();
+        assert!((first - 0.25).abs() < 0.012, "first {first}");
     }
 
     #[test]

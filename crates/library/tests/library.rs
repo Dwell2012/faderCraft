@@ -399,7 +399,9 @@ fn an_existing_library_gains_playlists_on_upgrade() {
     // Put the file back to how the first schema left it.
     let raw = rusqlite::Connection::open(&db).unwrap();
     raw.execute_batch(
-        "DROP TABLE ignored_files;
+        "DROP TABLE play_history;
+         DROP TABLE play_sets;
+         DROP TABLE ignored_files;
          ALTER TABLE playlists DROP COLUMN folder_id;
          DROP TABLE playlist_folders;
          ALTER TABLE playlists DROP COLUMN rules;
@@ -648,6 +650,7 @@ fn editing_a_track_writes_its_tags() {
 
     let edit = TrackEdit {
         title: "New Title".into(),
+        date: None,
         artist: "  New Artist ".into(),
         album: "The Album".into(),
         genre: String::new(),
@@ -757,6 +760,7 @@ fn measured_tempo_is_stored_and_shown() {
     // Editing other details keeps the measurement and needs no re-analysis.
     let mut edit = TrackEdit {
         title: "Renamed".into(),
+        date: None,
         artist: "A".into(),
         album: String::new(),
         genre: String::new(),
@@ -783,6 +787,40 @@ fn measured_tempo_is_stored_and_shown() {
     assert_eq!(
         pending.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
         [bare]
+    );
+}
+
+#[test]
+fn reviewed_date_changes_preserve_and_undo_full_dates() {
+    let dir = TempDir::new("date-undo");
+    write_tagged(&dir.0.join("a.wav"), "One", "A", "", "120", "8A");
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    let (_, mut edit) = library.file_tags(id).unwrap();
+    edit.date = Some("2014-06-12".into());
+    library.edit_track(id, &edit).unwrap();
+    edit.date = None;
+    edit.title = "Renamed".into();
+    let preserved = library.plan_edit(id, &edit).unwrap();
+    assert_eq!(preserved.after.date.as_deref(), Some("2014-06-12"));
+    edit.date = Some("1999".into());
+    let change = library.plan_edit(id, &edit).unwrap();
+    assert!(change.differences().iter().any(|d| d.0 == "Date/year"));
+    let batch = library
+        .apply_changes("Date", &[change])
+        .unwrap()
+        .batch
+        .unwrap();
+    assert_eq!(
+        library.file_tags(id).unwrap().1.date.as_deref(),
+        Some("1999")
+    );
+    library.undo_batch(batch).unwrap();
+    assert_eq!(
+        library.file_tags(id).unwrap().1.date.as_deref(),
+        Some("2014-06-12")
     );
 }
 
@@ -955,6 +993,7 @@ fn tagged_tempo_and_key_can_be_kept_over_measured_ones() {
     // A key typed in stands, even over a detected one.
     let edit = TrackEdit {
         title: "Tagged".into(),
+        date: None,
         artist: "A".into(),
         album: String::new(),
         genre: String::new(),
@@ -1209,6 +1248,7 @@ fn tags_are_written_and_read_back_in_every_format() {
     for track in &tracks {
         let edit = TrackEdit {
             title: format!("Title {}", track.title),
+            date: Some("1999".into()),
             artist: "Artist Ü".into(),
             album: "Album".into(),
             genre: "Tech House".into(),
@@ -1803,4 +1843,34 @@ fn exported_playlists_can_be_read_back() {
             .export_playlist(playlist.id, &dir.0.join("set.txt"))
             .is_err()
     );
+}
+
+#[test]
+fn removing_tracks_keeps_files_and_prevents_rescan_reappearance() {
+    let dir = TempDir::new("remove-track");
+    let path = dir.0.join("track.wav");
+    write_wav(&path);
+    let original = std::fs::read(&path).unwrap();
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let track = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    let playlist = library.create_playlist("Set").unwrap();
+    library.add_to_playlist(playlist.id, &[track]).unwrap();
+    library.remove_track(track).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(library.tracks(&TrackQuery::default()).unwrap().is_empty());
+    assert_eq!(library.playlists().unwrap()[0].track_count, 0);
+    library.scan(source.id, |_| {}).unwrap();
+    assert!(library.tracks(&TrackQuery::default()).unwrap().is_empty());
+
+    let missing = dir.0.join("missing.wav");
+    write_wav(&missing);
+    library.scan(source.id, |_| {}).unwrap();
+    let track = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    std::fs::remove_file(&missing).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    assert!(library.tracks(&TrackQuery::default()).unwrap()[0].missing);
+    library.remove_track(track).unwrap();
+    assert!(library.tracks(&TrackQuery::default()).unwrap().is_empty());
 }

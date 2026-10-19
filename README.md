@@ -1,4 +1,4 @@
-# djcraft
+# faderCraft
 
 This is Dwell2012’s custom development version, based on
 [danielchim/djcraft](https://github.com/danielchim/djcraft). The original MIT licence

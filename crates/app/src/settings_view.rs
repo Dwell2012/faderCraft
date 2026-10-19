@@ -371,7 +371,7 @@ impl SettingsView {
                     |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
                     |s, n| s.audio_cue_pair = if n == u16::MAX { None } else { Some(n) }, cx);
                 vec![self.section("Output", vec![
-                    self.row("Currently running", "New audio selections take effect after restarting DJCraft.", self.info(self.audio.clone(), cx), cx),
+                    self.row("Currently running", "New audio selections take effect after restarting faderCraft.", self.info(self.audio.clone(), cx), cx),
                     self.row("Audio backend", "WASAPI exclusive uses the device directly and prevents other apps sharing that output. ASIO uses an installed driver.", backend, cx),
                     self.row("Output device", "Connect your audio interface before opening this menu.", device, cx),
                     self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
@@ -591,7 +591,7 @@ impl SettingsView {
                 cx,
             )],
             Page::About => vec![self.section(
-                "djcraft",
+                "faderCraft",
                 vec![
                     self.row(
                         "Version",

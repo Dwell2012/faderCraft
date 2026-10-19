@@ -311,7 +311,7 @@ fn grid_lines(
             let seconds = grid.first_beat_seconds + index as f64 * beat;
             let bar_line = (index - grid.downbeat as i64).rem_euclid(4) == 0;
             let x = playhead_x + ((seconds - position_seconds) * pixels_per_second) as f32;
-            (index >= 0 && seconds >= 0.).then_some((x, bar_line))
+            (seconds >= -16. * beat).then_some((x, bar_line))
         })
         .collect()
 }
@@ -497,24 +497,18 @@ mod tests {
     }
 
     #[test]
-    fn no_lines_before_the_track_or_without_a_grid() {
+    fn grid_extends_sixteen_beats_before_file_start() {
         let grid = TempoResult {
             bpm: 120.,
-            first_beat_seconds: 0.25,
+            first_beat_seconds: 1.25,
             downbeat: 0,
             confidence: 1.,
         };
-        // At the start, half the view is before the track.
+        assert!(grid_lines(None, 0., 800., 400., 1.).is_empty());
         let lines = grid_lines(Some(grid), 0., 800., 400., 1.);
-        assert!(lines.iter().all(|(x, _)| *x >= 400.));
-        assert_eq!(lines.first(), Some(&(425., true)));
-        assert!(grid_lines(None, 5., 800., 400., 1.).is_empty());
-        let silent_intro = TempoResult {
-            first_beat_seconds: 1.25,
-            ..grid
-        };
-        let lines = grid_lines(Some(silent_intro), 0., 800., 400., 1.);
-        assert_eq!(lines.first(), Some(&(525., true)));
-        assert!(lines.iter().all(|(x, _)| *x >= 525.));
+        assert!(lines.iter().any(|(x, _)| *x < 400.));
+        let start = grid_lines(Some(grid), -8., 800., 400., 1.);
+        assert!(start.iter().all(|(x, _)| *x >= 400.));
+        assert!(start.iter().any(|(x, _)| *x > 400.));
     }
 }

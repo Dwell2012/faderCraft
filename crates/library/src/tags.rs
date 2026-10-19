@@ -48,6 +48,9 @@ impl PlannedChange {
         if a.comment.is_some() {
             differences.push(("Comment", opt(&b.comment), opt(&a.comment)));
         }
+        if a.date.is_some() {
+            differences.push(("Date/year", opt(&b.date), opt(&a.date)));
+        }
         if a.grouping.is_some() {
             differences.push(("Grouping", opt(&b.grouping), opt(&a.grouping)));
         }
@@ -230,6 +233,9 @@ impl Library {
     pub fn plan_edit(&self, id: i64, edit: &TrackEdit) -> Result<PlannedChange> {
         let (path, before) = self.file_tags(id)?;
         let mut after = edit.clone();
+        if after.date.is_none() {
+            after.date = before.date.clone();
+        }
         if after.comment.is_none() {
             after.comment = before.comment.clone();
         }

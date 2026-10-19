@@ -112,6 +112,7 @@ Feature set modelled on Mixed In Key 10.
       the results and prefers original releases; Discogs needs the user's own
       token and is untested against the live service)
 - [x] Review-and-diff screen before any tag is written
+- [x] Reviewed recording date/year edits with undo; omitted dates preserve existing values (programmatic tag edits).
 - [x] Batch tag alignment with undo (writes the analysed BPM, key and energy
       into the tags of every track in the list; any batch of tag changes can
       be undone)
@@ -523,6 +524,8 @@ waveforms, and options tucked into popovers.
 
 ### Playlists and Automix
 
+- [x] Intro-aware EQ enters before the outgoing outro marker, with bass exchange completed by that boundary rather than near file end (section-based estimate).
+
 - [x] Queue a displayed playlist/view, individual library tracks or dropped tracks
 - [x] Reorder/remove queued tracks and save the upcoming queue as a library playlist
 - [x] Persistent remaining queue without autoplay on restart
@@ -530,6 +533,8 @@ waveforms, and options tucked into popovers.
 - [x] Missing-file skipping, short-track handling and manual takeover
 - [x] Beat + EQ automix: effective tempo match (±8%), audio-thread grid-phase alignment and staged high/mid/bass handover
 - [x] Marker-based phrase-aware automix: 8/16/32-bar planning, preview, section-aware bass handover, manual point priority and cancellable audio-thread scheduling.
+- [x] Intro-aware smart Automix: measures complete intro bars (4–64), bounds them at section/vocal entrances, back-times an outgoing section end, and stages EQ around a later bass exchange. Saved mix points/length overrides retain priority; missing structure uses the existing fallback. New analysis no longer saves generic IN/OUT overrides.
+- [x] Long intros can span outgoing sections with incoming EQ held silent until the final safe section (up to eight bars of blending). Smart EQ mixes hold the crossfader at 50% through completion; non-smart fades retain crossfader movement. Grid confidence matches the library (0.10) with specific fallback reasons.
 - [x] Vocal-aware transition ranking from cached stems, overlap preview, purple activity strip, manual marker priority and missing-stem fallback.
 - [ ] Pitch-preserving automix, silence trim, LUFS/true-peak normalization, shuffle/repeat and named automix queues
 
@@ -618,3 +623,15 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Sampler deck capture starts at the exact audible playhead (selected loops keep their bounds), with beat-based length and end-of-track clamping. Pad firing uses a 32-frame anti-click attack instead of the longer gain ramp. Captures are original-source audio and save asynchronously.
 
 - [x] Refreshing/scanning folders from the deck browser notifies the full Library to run pending BPM/key/energy analysis, even when the Library tab is hidden.
+
+### Current-set play history
+
+- [x] Library and performance browser mark tracks `[Played]` after 10 seconds of audible master playback (not headphone/Cue previews or waveform scrubbing).
+- [x] Library > History lists each set in play order, with Previous/Next and New set controls. Sets and flags survive restarts; starting a new set clears current flags without deleting earlier history. Each file appears once per set.
+
+- [x] Track right-click menu: Remove from library (keep file), including missing tracks. Removes playlist/Flow references and excludes the file from future folder scans.
+
+- [x] faderCraft display branding and embedded Windows taskbar/executable icon (MSVC).
+- [x] Main waveform extends 16 beats before file start: continuous grid, negative-time drag/wheel seeking, silent playback to zero, pitch/key-lock and cue support. No separate pre-roll menu.
+- [x] Beat-phase fallback keeps confident uncompressed bass timing when log-flux is weak; opening refinement checks 128 beats to handle longer intros (analysis version 7).
+- [x] Opening-grid anchor tolerates modest first-kick attack variation without relaxing the timing consensus (analysis version 8).

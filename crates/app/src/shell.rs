@@ -55,7 +55,7 @@ impl DisplayPosition {
                     raw // Seek, load or another discontinuity: never animate across it.
                 } else {
                     let corrected = predicted + error * (1. - (-elapsed / 0.12).exp());
-                    corrected.clamp(raw - 0.05, raw + 0.05).max(0.)
+                    corrected.clamp(raw - 0.05, raw + 0.05)
                 }
             }
             _ => raw,
@@ -72,6 +72,7 @@ struct WaveformDrag {
     origin_seconds: f64,
     seconds_per_pixel: f64,
     duration: f64,
+    minimum: f64,
     position: f64,
     resume: bool,
     vinyl: bool,
@@ -80,7 +81,30 @@ struct WaveformDrag {
 impl WaveformDrag {
     fn at(&self, x: f32) -> f64 {
         (self.origin_seconds + (x - self.origin_x) as f64 * self.seconds_per_pixel)
-            .clamp(0., self.duration)
+            .clamp(self.minimum, self.duration)
+    }
+}
+
+/// Accumulate listening time, never seek distance or pitch-adjusted time.
+#[derive(Default)]
+struct HistoryTracker {
+    path: Option<String>,
+    seconds: f64,
+    recorded: bool,
+}
+impl HistoryTracker {
+    fn update(&mut self, path: Option<&str>, audible: bool, elapsed: f64) -> bool {
+        if self.path.as_deref() != path {
+            *self = Self {
+                path: path.map(str::to_owned),
+                ..Self::default()
+            };
+            return false;
+        }
+        if audible && path.is_some() && !self.recorded {
+            self.seconds += elapsed.clamp(0., 0.25);
+        }
+        self.seconds >= 10. && !self.recorded
     }
 }
 
@@ -92,6 +116,7 @@ pub enum Tab {
 }
 
 pub struct Shell {
+    play_history: [HistoryTracker; 2],
     deck_focus: FocusHandle,
     active_deck: usize,
     focus_loaded_deck: bool,
@@ -198,6 +223,11 @@ impl Shell {
             view.set_watching(settings.watch_folders);
         });
         cx.subscribe(&library, |this, _, event: &LibraryEvent, cx| match event {
+            LibraryEvent::NewSet => {
+                this.play_history = Default::default();
+                this.browser.update(cx, |view, cx| view.refresh(cx));
+                cx.notify();
+            }
             LibraryEvent::Queue(tracks) => this.enqueue_automix(tracks.clone(), cx),
             LibraryEvent::Load { path, deck, .. } => {
                 this.load_from_library(path, *deck, cx);
@@ -217,6 +247,10 @@ impl Shell {
         .detach();
         let browser = cx.new(|cx| LibraryView::new(true, false, window, cx));
         cx.subscribe(&browser, |this, _, event: &LibraryEvent, cx| match event {
+            LibraryEvent::NewSet => {
+                this.play_history = Default::default();
+                cx.notify();
+            }
             LibraryEvent::Queue(tracks) => this.enqueue_automix(tracks.clone(), cx),
             LibraryEvent::Load { path, deck, .. } => {
                 this.load_from_library(path, *deck, cx);
@@ -270,6 +304,7 @@ impl Shell {
             drag: None,
             display_positions: [DisplayPosition::default(); 2],
             last_frame: Instant::now(),
+            play_history: Default::default(),
             overview_cache: std::array::from_fn(|_| Rc::default()),
             pending_seeks: [None; 2],
             mixer_values: [
@@ -583,9 +618,15 @@ impl Shell {
             .map(|(_, position, _, _)| position)
             .or_else(|| self.pending_seeks[deck].map(|(position, _)| position))
             .unwrap_or(state.position_seconds);
-        let seconds = (current
-            + crate::wheel::steps(event) as f64 * if overview { 1. } else { 0.1 })
-        .clamp(0., track.loaded_seconds.min(track.duration_seconds).max(0.));
+        let seconds =
+            (current + crate::wheel::steps(event) as f64 * if overview { 1. } else { 0.1 }).clamp(
+                if overview {
+                    0.
+                } else {
+                    self.grids[deck].map_or(0., |g| -16. * g.beat_seconds())
+                },
+                track.loaded_seconds.min(track.duration_seconds).max(0.),
+            );
         if overview {
             self.send(deck, DeckAction::Seek { seconds });
         } else {
@@ -686,6 +727,11 @@ impl Shell {
                 track.duration_seconds / width as f64
             } else {
                 -VISIBLE_SECONDS * state.tempo / width as f64
+            },
+            minimum: if overview {
+                0.
+            } else {
+                self.grids[deck].map_or(0., |g| -16. * g.beat_seconds())
             },
             duration: track.loaded_seconds.min(track.duration_seconds).max(0.),
             position: state.position_seconds,
@@ -851,7 +897,7 @@ impl Shell {
                             div()
                                 .text_lg()
                                 .font_weight(FontWeight::BOLD)
-                                .child("djcraft"),
+                                .child("faderCraft"),
                         )
                         .child(self.tab_button(
                             Tab::Live,
@@ -1423,8 +1469,9 @@ fn returning_tempo(start: f64, elapsed: f64) -> f64 {
 }
 
 fn clock(seconds: f64) -> String {
-    let seconds = seconds.max(0.) as u64;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
+    let sign = if seconds < 0. { "−" } else { "" };
+    let seconds = seconds.abs() as u64;
+    format!("{sign}{}:{:02}", seconds / 60, seconds % 60)
 }
 
 impl Render for Shell {
@@ -1515,6 +1562,34 @@ impl Render for Shell {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
+        for (index, deck) in decks.iter().enumerate() {
+            let audible = deck.playing
+                && self
+                    .cue_preview
+                    .as_ref()
+                    .is_none_or(|(preview, _, _)| *preview != index)
+                && self.drag.is_none_or(|drag| drag.deck != index)
+                && self
+                    .wheel_scrub
+                    .is_none_or(|(scrub, _, _, _)| scrub != index)
+                && deck.peak > 0.00001
+                && deck.volume > 0.
+                && self.mixer_values[10] > 0.
+                && djcraft_engine::crossfader_gains(self.mixer_values[11], self.mixer_curve)[index]
+                    > 1e-6;
+            if self.play_history[index].update(deck.path.as_deref(), audible, elapsed)
+                && let (Some(path), Some(track)) = (&deck.path, &deck.track)
+            {
+                let saved = self.library.update(cx, |view, cx| {
+                    view.record_play(Path::new(path), &track.title, cx)
+                });
+                if saved {
+                    self.play_history[index].recorded = true;
+                    self.browser.update(cx, |view, cx| view.refresh(cx));
+                }
+            }
+        }
+
         for (index, deck) in decks.iter_mut().enumerate() {
             // Audio consumes seek commands on its next callback. Keep the
             // requested position visible until acknowledged, including paused seeks.
@@ -1546,7 +1621,7 @@ impl Render for Shell {
                 )
             };
             if let Some(track) = &deck.track {
-                deck.position_seconds = deck.position_seconds.clamp(0., track.duration_seconds);
+                deck.position_seconds = deck.position_seconds.min(track.duration_seconds);
             }
         }
         // Positions and finished loads come from the engine, not from UI
@@ -1651,7 +1726,7 @@ impl Render for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{DisplayPosition, WaveformDrag, nearest_beat_offset};
+    use super::{DisplayPosition, HistoryTracker, WaveformDrag, nearest_beat_offset};
     use djcraft_library::TempoResult;
     #[test]
     fn tempo_return_eases_to_unity_without_overshoot() {
@@ -1714,6 +1789,7 @@ mod tests {
     #[test]
     fn waveform_drag_directions_and_track_limits() {
         let mut drag = WaveformDrag {
+            minimum: 0.,
             deck: 0,
             origin_x: 400.,
             origin_seconds: 20.,
@@ -1733,5 +1809,25 @@ mod tests {
         assert_eq!(drag.at(500.), 50.);
         assert_eq!(drag.at(0.), 0.);
         assert_eq!(drag.at(1000.), 100.);
+    }
+    #[test]
+    fn history_counts_listening_not_previews_and_resets_for_track_changes() {
+        let mut history = HistoryTracker::default();
+        assert!(!history.update(Some("a"), true, 0.1));
+        for _ in 0..100 {
+            assert!(!history.update(Some("a"), false, 0.25));
+        }
+        for _ in 0..39 {
+            assert!(!history.update(Some("a"), true, 0.25));
+        }
+        assert!(history.update(Some("a"), true, 0.25));
+        history.recorded = true;
+        assert!(!history.update(Some("a"), true, 0.25));
+        assert!(!history.update(Some("b"), true, 0.25));
+        assert_eq!(history.seconds, 0.);
+        assert!(!history.update(Some("b"), true, 120.));
+        assert_eq!(history.seconds, 0.25);
+        assert!(!history.update(None, true, 0.25));
+        assert_eq!(history.seconds, 0.);
     }
 }

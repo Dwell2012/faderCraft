@@ -75,7 +75,7 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(960.), px(600.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("djcraft".into()),
+                title: Some("faderCraft".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(16.), px(18.))),
             }),

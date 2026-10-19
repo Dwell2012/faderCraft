@@ -523,6 +523,9 @@ pub struct AutomixPlan {
     pub duration_seconds: f64,
     pub bars: Option<u8>,
     pub bass_swap: f32,
+    /// Fraction of the overlap held silent before EQ blending starts.
+    #[serde(default)]
+    pub eq_start: f32,
     pub phrase_aligned: bool,
     pub description: String,
 }

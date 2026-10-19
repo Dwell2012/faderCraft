@@ -46,15 +46,8 @@ pub fn suggest(
             },
         })
         .collect();
-    let mix_in = phrases.first().map(|p| p.seconds);
-    let mix_out = phrases
-        .iter()
-        .find(|p| p.label == PhraseLabel::Outro)
-        .map(|p| p.seconds);
     TrackPreparation {
         phrases,
-        mix_in,
-        mix_out,
         ..Default::default()
     }
 }

@@ -219,9 +219,10 @@ impl Shell {
                         clock(plan.incoming_seconds)
                     )))
                     .child(div().child(format!(
-                        "{} · {:.1}s · bass at +{:.1}s",
+                        "{} · {:.1}s · EQ in +{:.1}s · bass +{:.1}s",
                         plan.bars.map_or("Timed".into(), |n| format!("{n} bars")),
                         plan.duration_seconds,
+                        plan.duration_seconds * plan.eq_start as f64,
                         plan.duration_seconds * plan.bass_swap as f64
                     ))),
             );

@@ -209,7 +209,7 @@ impl Engine {
             if self.shared.fade_done() != id {
                 return;
             }
-            self.crossfader = to as f32;
+            self.crossfader = self.shared.cross_position();
             self.automix.state.active_deck = Some(to);
             self.automix.state.next = None;
             self.automix.state.transitioning = false;
@@ -307,6 +307,11 @@ impl Engine {
                 } else {
                     None
                 };
+                let mut match_reason = match_failure(
+                    self.decks[from].grid,
+                    self.decks[deck].grid,
+                    self.decks[from].tempo,
+                );
                 let mut target = self
                     .automix
                     .state
@@ -330,6 +335,7 @@ impl Engine {
                         target = bars * beat * 4.;
                     } else {
                         matching = None;
+                        match_reason = Some("too little audio for a complete beatmatched bar");
                     }
                 }
                 let position = self.shared.decks[from].position() / self.sample_rate as f64;
@@ -369,11 +375,13 @@ impl Engine {
                 };
                 let mut schedule = None;
                 let bass_swap;
+                let eq_start;
                 let duration;
                 if let Some(plan) = phrase_plan {
                     incoming_start = Some(plan.incoming_seconds);
                     duration = plan.duration_seconds;
                     bass_swap = plan.bass_swap;
+                    eq_start = plan.eq_start;
                     schedule = Some((plan.outgoing_seconds, plan.incoming_seconds));
                     self.automix.state.plan = Some(plan.clone());
                     self.automix.state.status = format!(
@@ -394,6 +402,7 @@ impl Engine {
                             (track.duration_seconds() - target * self.decks[from].tempo).max(0.),
                         );
                     bass_swap = outgoing_prep.bass_swap.unwrap_or(0.5);
+                    eq_start = 0.;
                     duration = target.min(remaining.max(0.1));
                     self.automix.state.plan = Some(djcraft_protocol::AutomixPlan {
                         vocal_overlap_seconds: None,
@@ -403,13 +412,14 @@ impl Engine {
                         duration_seconds: duration,
                         bars: None,
                         bass_swap,
+                        eq_start,
                         phrase_aligned: false,
                         description: if self.automix.next_now {
                             "Next requested · immediate fade"
                         } else if !self.automix.state.smart {
                             "Timed fade"
                         } else if matching.is_none() {
-                            "Fallback · incompatible grids/tempo or too little audio"
+                            match_reason.unwrap_or("Beatmatching unavailable")
                         } else {
                             "Fallback · no compatible section boundaries / manual markers"
                         }
@@ -438,6 +448,7 @@ impl Engine {
                         smart: self.automix.state.smart,
                         incoming_start,
                         bass_swap,
+                        eq_start,
                         schedule,
                         preserve_entry: incoming_prep.mix_in.is_some(),
                         matching,
@@ -495,11 +506,72 @@ fn matching(
     tempo: f64,
 ) -> Option<(djcraft_protocol::BeatGrid, djcraft_protocol::BeatGrid, f64)> {
     let (out, incoming) = (out?, incoming?);
-    if !out.valid() || !incoming.valid() || out.confidence < 0.3 || incoming.confidence < 0.3 {
+    if match_failure(Some(out), Some(incoming), tempo).is_some() {
         return None;
     }
     let ratio = out.bpm * tempo / incoming.bpm;
     (0.92..=1.08)
         .contains(&ratio)
         .then_some((out, incoming, ratio))
+}
+
+fn match_failure(
+    out: Option<djcraft_protocol::BeatGrid>,
+    incoming: Option<djcraft_protocol::BeatGrid>,
+    tempo: f64,
+) -> Option<&'static str> {
+    let (Some(out), Some(incoming)) = (out, incoming) else {
+        return Some("Fallback · beat grid missing on one or both decks");
+    };
+    if !out.valid() || !incoming.valid() {
+        return Some("Fallback · invalid beat grid");
+    }
+    // Match the analysis/library acceptance threshold. A second, stricter
+    // gate rejected grids already displayed and used successfully by Sync.
+    if out.confidence < 0.1 || incoming.confidence < 0.1 {
+        return Some("Fallback · beat-grid confidence below 0.10");
+    }
+    if !(0.92..=1.08).contains(&(out.bpm * tempo / incoming.bpm)) {
+        return Some("Fallback · tempo match exceeds ±8% pitch range");
+    }
+    None
+}
+
+#[cfg(test)]
+mod matching_tests {
+    use super::*;
+    #[test]
+    fn accepted_lizard_motorcycle_grids_can_beatmatch() {
+        let a = djcraft_protocol::BeatGrid {
+            bpm: 135.035,
+            first_beat: 0.3016818265,
+            downbeat: 0,
+            confidence: 0.29602849,
+        };
+        let b = djcraft_protocol::BeatGrid {
+            bpm: 134.291,
+            first_beat: 15.2400773458,
+            downbeat: 0,
+            confidence: 0.28559553,
+        };
+        let (_, _, ratio) = matching(Some(a), Some(b), 1.).unwrap();
+        assert!((ratio - 1.00554).abs() < 0.00001);
+        assert!(matching(Some(a), Some(b), 1.2).is_none());
+        assert!(
+            match_failure(None, Some(b), 1.)
+                .unwrap()
+                .contains("missing")
+        );
+        assert!(
+            matching(
+                Some(a),
+                Some(djcraft_protocol::BeatGrid {
+                    confidence: 0.09,
+                    ..b
+                }),
+                1.
+            )
+            .is_none()
+        );
+    }
 }

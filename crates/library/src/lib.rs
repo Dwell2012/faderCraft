@@ -7,6 +7,7 @@
 mod camelot;
 mod export;
 mod flow;
+mod history;
 mod import;
 pub mod lookup;
 mod organise;
@@ -36,7 +37,9 @@ pub use scan::{Artwork, ScanProgress, ScanSummary, TrackEdit, read_artwork};
 pub use tags::{AlignOptions, ApplySummary, Cleanup, Placement, PlannedChange, TagBatch, TagField};
 pub use watch::FolderWatcher;
 
-const SCHEMA_VERSION: i64 = 16;
+pub use history::PlayHistoryEntry;
+
+const SCHEMA_VERSION: i64 = 17;
 
 /// A measured tempo is shown only when the analysis was at least this sure
 /// of it. Below that (mixes with several tempos, music with no clear beat)
@@ -551,6 +554,23 @@ impl Library {
                      PRIMARY KEY (source_id, locator)
                  );
                  PRAGMA user_version = 16;
+                 COMMIT;",
+            )?;
+        }
+        if version < 17 {
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE play_sets (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL DEFAULT (unixepoch()));
+                 INSERT INTO play_sets DEFAULT VALUES;
+                 CREATE TABLE play_history (
+                     id INTEGER PRIMARY KEY,
+                     set_id INTEGER NOT NULL REFERENCES play_sets(id),
+                     path TEXT NOT NULL,
+                     title TEXT NOT NULL,
+                     played_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                     UNIQUE(set_id, path)
+                 );
+                 PRAGMA user_version = 17;
                  COMMIT;",
             )?;
         }
