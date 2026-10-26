@@ -53,7 +53,7 @@ fn main() {
         }
         match tempo {
             Some(tempo) => println!(
-                "{:7.2} BPM  first beat {:.3} s  first bar {:.3} s  confidence {:.2}  (decode {:.1?}, analyse {:.1?})  {}",
+                "{:8.3} BPM  first beat {:.6} s  first bar {:.6} s  confidence {:.6}  (decode {:.1?}, analyse {:.1?})  {}",
                 tempo.bpm,
                 tempo.first_beat_seconds,
                 tempo.first_bar_seconds(),

@@ -3,8 +3,9 @@
 //! The track is reduced to an onset envelope (how much new energy arrives in
 //! each short slice of time). The envelope's autocorrelation gives a rough
 //! tempo; folding the whole envelope at nearby beat lengths then finds the
-//! one tempo and phase at which beats stay lined up from start to finish.
-//! Last, the beat that starts each bar is found from where accents and
+//! tempo at which beats stay lined up from start to finish. The first confirmed
+//! kick run anchors phase locally, projecting back through the intro; bass and
+//! broadband folding provide a fallback. Last, bar starts come from accents and
 //! changes in loudness fall.
 
 use rustfft::FftPlanner;
@@ -210,7 +211,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     }
     let hop = ((sample_rate as f64 * ENVELOPE_STEP_SECONDS).round() as usize).max(1);
     let rate = sample_rate as f64 / hop as f64;
-    let (envelope, bass, bass_strength) = onset_envelopes(samples, sample_rate, hop);
+    let (envelope, bass, bass_strength, kicks) = onset_envelopes(samples, sample_rate, hop);
     if envelope.iter().all(|value| *value <= 0.0) {
         return None;
     }
@@ -234,13 +235,28 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     } else {
         self::fold(&bass, rate, bpm)
     };
-    let phase = beat_phase(&bass_fold, &strength_fold, &fold);
-
     let period = 60.0 / bpm;
     let window_centre = FRAME as f64 / 2.0 / sample_rate as f64;
-    let phase_beat = (phase * period + window_centre + ONSET_LAG_SECONDS).rem_euclid(period);
-    let opening = opening_attack(samples, sample_rate, phase_beat, period);
-    let first_beat = opening.unwrap_or(phase_beat);
+    let anchor = kick_anchor(&kicks, rate, bpm);
+    let (first_beat, opening) = if let Some(anchor) = anchor {
+        let expected = anchor + window_centre + ONSET_LAG_SECONDS;
+        // Refine only the confirmed kick run. The melodic intro must not move
+        // this anchor back onto its own offbeat attacks afterwards.
+        let from = ((expected - 0.1).max(0.) * sample_rate as f64) as usize;
+        let to =
+            (((expected + 16. * period + 0.1) * sample_rate as f64) as usize).min(samples.len());
+        let start = from as f64 / sample_rate as f64;
+        let refined = opening_attack(&samples[from..to], sample_rate, expected - start, period)
+            .map(|attack| start + attack)
+            .unwrap_or(expected);
+        let first = project_kick_back(samples, sample_rate, refined, period);
+        (first, (refined - first < 2. * period).then_some(first))
+    } else {
+        let phase = beat_phase(&bass_fold, &strength_fold, &fold);
+        let phase_beat = (phase * period + window_centre + ONSET_LAG_SECONDS).rem_euclid(period);
+        let opening = opening_attack(samples, sample_rate, phase_beat, period);
+        (opening.unwrap_or(phase_beat), opening)
+    };
     // Where on the envelope something heard at `seconds` shows.
     let envelope_index = |seconds: f64| (seconds - window_centre - ONSET_LAG_SECONDS) * rate;
     let mut downbeat = downbeat(
@@ -347,12 +363,13 @@ fn downbeat(
 
 /// Spectral flux: for each step, the total rise in level across frequency
 /// bands since the previous step, with the slowly varying average removed.
-/// Returns full-spectrum log flux, bass log flux and uncompressed bass flux.
+/// Returns full-spectrum log flux, bass log flux, uncompressed bass flux,
+/// and transient evidence for a kick's descending low-frequency pitch.
 fn onset_envelopes(
     samples: &[f32],
     sample_rate: u32,
     hop: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
     let fft = FftPlanner::<f32>::new().plan_fft_forward(FRAME);
     let window: Vec<f32> = (0..FRAME)
         .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FRAME as f32).cos())
@@ -370,6 +387,8 @@ fn onset_envelopes(
     let mut flux = Vec::with_capacity(frames);
     let mut bass_flux = Vec::with_capacity(frames);
     let mut bass_strength = Vec::with_capacity(frames);
+    let mut kick_rise = Vec::with_capacity(frames);
+    let mut bass_centroid = Vec::with_capacity(frames);
     for frame in 0..frames {
         let start = frame * hop;
         for (slot, (sample, weight)) in buffer
@@ -380,10 +399,20 @@ fn onset_envelopes(
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);
         let (mut rise, mut bass_rise, mut strength) = (0.0, 0.0, 0.0);
+        let (mut kick, mut power, mut weighted) = (0., 0., 0.);
         for (index, (bin, last)) in buffer[..bins].iter().zip(previous.iter_mut()).enumerate() {
             // Compressing the level stops loud bass from drowning out
             // quieter but sharper sounds such as hi-hats.
             let magnitude = bin.norm();
+            let frequency = index as f32 * sample_rate as f32 / FRAME as f32;
+            if frequency < 250. {
+                let energy = magnitude * magnitude;
+                power += energy;
+                weighted += energy * frequency;
+            }
+            if index > 0 && frequency < BASS_LIMIT_HZ as f32 {
+                kick += (magnitude - previous_magnitude[index]).max(0.);
+            }
             let level = (1.0 + 100.0 * magnitude).ln();
             let change = (level - *last).max(0.0);
             rise += change;
@@ -397,12 +426,86 @@ fn onset_envelopes(
         flux.push(rise);
         bass_flux.push(bass_rise);
         bass_strength.push(strength);
+        kick_rise.push(kick);
+        bass_centroid.push(weighted / power.max(1e-9));
     }
+    // A kick's initial pitch sweep falls into the sub-bass over ~30ms.
+    // Sustained or harmonically rich bass attacks do not get this extra vote.
+    let kicks = (0..frames)
+        .map(|i| {
+            let drop = bass_centroid[i.saturating_sub(3)] - bass_centroid[(i + 6).min(frames - 1)];
+            if (90. ..170.).contains(&bass_centroid[i]) {
+                kick_rise[i] * (drop - 15.).max(0.) / 100.
+            } else {
+                0.
+            }
+        })
+        .collect();
     (
         above_local_average(flux),
         above_local_average(bass_flux),
         above_local_average(bass_strength),
+        kicks,
     )
+}
+
+/// Project a confirmed kick through an intro without extending into silence.
+fn project_kick_back(samples: &[f32], sample_rate: u32, anchor: f64, period: f64) -> f64 {
+    let hop = (sample_rate as usize / 200).max(1);
+    let energy: Vec<_> = samples
+        .chunks(hop)
+        .map(|part| {
+            (part
+                .iter()
+                .map(|&sample| (sample as f64).powi(2))
+                .sum::<f64>()
+                / part.len() as f64)
+                .sqrt()
+        })
+        .collect();
+    let peak = energy.iter().copied().fold(0., f64::max);
+    let sound = energy
+        .iter()
+        .position(|&value| value > peak * 0.05)
+        .unwrap_or(0) as f64
+        * hop as f64
+        / sample_rate as f64;
+    let phase = anchor.rem_euclid(period);
+    // Project through a musical intro, but do not invent beats in leading
+    // silence. Allow the short attack ramp after the exact beat timestamp.
+    phase + ((sound - 0.03 - phase) / period).ceil().max(0.) * period
+}
+
+/// Find the first solid kick run independently of the whole-track phase.
+fn kick_anchor(kicks: &[f32], rate: f64, bpm: f64) -> Option<f64> {
+    let period = 60. / bpm;
+    let peak = kicks.iter().copied().fold(0., f32::max);
+    if peak <= 1e-6 {
+        return None;
+    }
+    let reach = (0.015 * rate).ceil() as usize;
+    let candidates = (1..kicks.len().saturating_sub(1))
+        .filter(|&i| kicks[i] >= peak * 0.2 && kicks[i] >= kicks[i - 1] && kicks[i] > kicks[i + 1]);
+    // Earliest confirmed run wins. A louder section later in the track must
+    // not choose a different phase from the first clean kick entrance.
+    for anchor in candidates {
+        let supported = (0..9)
+            .filter(|&beat| {
+                let at = anchor as f64 + beat as f64 * period * rate;
+                if at < 0. || at >= kicks.len() as f64 {
+                    return false;
+                }
+                let at = at.round() as usize;
+                kicks[at.saturating_sub(reach)..(at + reach + 1).min(kicks.len())]
+                    .iter()
+                    .any(|&value| value > peak * 0.08)
+            })
+            .count();
+        if supported >= 8 {
+            return Some(anchor as f64 / rate);
+        }
+    }
+    None
 }
 
 /// Keeps only what stands above the average of the surrounding half second.
@@ -545,6 +648,60 @@ fn best_fold(envelope: &[f32], rate: f64, centre: f64, reach: f64, step: f64) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn later_kick_run_overrides_an_offbeat_bass_intro() {
+        let bpm = 140.;
+        let period = 60. / bpm;
+        let first = 0.12;
+        let mut samples = vec![0.; RATE as usize * 60];
+        for beat in 0..130 {
+            // The intro and every offbeat have a harmonically rich bass note.
+            let bass = ((first + (beat as f64 + 0.5) * period) * RATE as f64) as usize;
+            for i in 0..(RATE as usize / 6) {
+                let t = i as f32 / RATE as f32;
+                for harmonic in 1..=5 {
+                    samples[bass + i] += 0.15
+                        * (-t * 18.).exp()
+                        * (std::f32::consts::TAU * 65. * harmonic as f32 * t).sin();
+                }
+            }
+            if beat < 32 {
+                continue;
+            }
+            let kick = ((first + beat as f64 * period) * RATE as f64) as usize;
+            for i in 0..(RATE as usize / 5) {
+                let t = i as f32 / RATE as f32;
+                let phase = 55. * t + 120. * (1. - (-70. * t).exp()) / 70.;
+                samples[kick + i] += 0.9 * (-t * 30.).exp() * (std::f32::consts::TAU * phase).sin();
+            }
+        }
+        let tempo = detect_tempo(&samples, RATE, TempoRange::default()).unwrap();
+        assert!((tempo.bpm - bpm).abs() < 0.03, "{tempo:?}");
+        let error = (tempo.first_beat_seconds - first).rem_euclid(period);
+        assert!(error.min(period - error) < 0.025, "{tempo:?}");
+    }
+
+    #[test]
+    fn isolated_kick_cannot_anchor_a_grid() {
+        let mut kicks = vec![0.; 10_000];
+        kicks[2345] = 1.;
+        assert!(super::kick_anchor(&kicks, 200., 140.).is_none());
+        // Repeated support is required, even when a single hit folds sharply.
+        assert!(super::kick_anchor(&vec![0.; 10_000], 200., 140.).is_none());
+    }
+
+    #[test]
+    fn first_kick_run_wins_over_a_louder_later_half_beat_phase() {
+        let mut kicks = vec![0.; 24_000];
+        for beat in 0..16 {
+            kicks[6020 + beat * 100] = 1.;
+        }
+        for beat in 0..100 {
+            kicks[12070 + beat * 100] = 2.;
+        }
+        assert_eq!(super::kick_anchor(&kicks, 200., 120.), Some(30.1));
+    }
+
     use super::*;
 
     const RATE: u32 = 22_050;

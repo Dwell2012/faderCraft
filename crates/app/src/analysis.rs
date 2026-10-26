@@ -15,7 +15,9 @@ use djcraft_library::{Camelot, CuePoint, KeyResult, Library, TempoResult};
 /// actual opening attacks and opening-bar anchoring.
 // Version 7 retains reliable kick phase when log-flux confidence is weak.
 // Version 8 retains a strong first kick with modest attack-shape variation.
-const ANALYSIS_VERSION: i64 = 8;
+// Version 9 anchors phase on repeated pitch-sweeping kicks before bass fallback.
+// Version 10 uses the first confirmed run and refines it locally, not the intro.
+const ANALYSIS_VERSION: i64 = 10;
 /// Tempo and key do not need treble, and a lower rate is quicker to decode.
 const ANALYSIS_RATE: u32 = 22_050;
 const MAX_WORKERS: usize = 4;
