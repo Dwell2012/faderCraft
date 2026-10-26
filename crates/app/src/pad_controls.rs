@@ -240,13 +240,13 @@ impl Shell {
             self.pad_tracks[deck] = track;
             let cues = self.deck_paths[deck]
                 .as_ref()
-                .and_then(|path| self.pad_cues.get(path.to_string_lossy().as_ref()))
+                .and_then(|path| self.pad_cues.get(&crate::track_identity::key(path)))
                 .copied()
                 .unwrap_or([None; HOT_CUES]);
             self.pad_send(deck, DeckAction::SetHotCues { cues });
             let styles = self.deck_paths[deck]
                 .as_ref()
-                .and_then(|p| self.cue_appearances.get(p.to_string_lossy().as_ref()))
+                .and_then(|p| self.cue_appearances.get(&crate::track_identity::key(p)))
                 .cloned()
                 .unwrap_or_default();
             for (slot, appearance) in styles.into_iter().enumerate() {
@@ -381,8 +381,7 @@ impl Shell {
             }
         }
         if let Some(path) = &self.deck_paths[deck] {
-            self.pad_cues
-                .insert(path.to_string_lossy().into_owned(), cues);
+            self.pad_cues.insert(crate::track_identity::key(path), cues);
             if let Err(error) = crate::pad_store::save(&data_dir(), &self.pad_cues) {
                 self.pads[deck].notice = format!("Could not save cues: {error}");
             }
@@ -440,7 +439,7 @@ impl Shell {
         }
         if let Some(path) = &self.deck_paths[deck] {
             self.cue_appearances
-                .entry(path.to_string_lossy().into_owned())
+                .entry(crate::track_identity::key(path))
                 .or_default()[slot] = appearance;
             if let Err(e) = crate::pad_store::save_appearances(&data_dir(), &self.cue_appearances) {
                 self.pads[deck].notice = format!("Could not save cue name/colour: {e}");
@@ -875,7 +874,7 @@ impl Shell {
             Page::SavedLoops => {
                 let path = self.deck_paths[deck]
                     .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned());
+                    .map(crate::track_identity::key);
                 if let Some(path) = path {
                     let existing = self.saved_loops.get(&path).and_then(|slots| slots[index]);
                     if self.pads[deck].delete_saved {
@@ -1270,7 +1269,7 @@ impl Shell {
             Page::SavedLoops => {
                 let saved = self.deck_paths[deck]
                     .as_ref()
-                    .and_then(|p| self.saved_loops.get(p.to_string_lossy().as_ref()))
+                    .and_then(|p| self.saved_loops.get(&crate::track_identity::key(p)))
                     .and_then(|s| s[index]);
                 (
                     saved.map_or(format!("{} · SAVE", index + 1), |r| {

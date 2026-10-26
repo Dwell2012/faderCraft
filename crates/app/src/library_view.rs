@@ -500,6 +500,16 @@ impl TableDelegate for TrackTable {
         let mut menu = menu
             .item(item("Load to Deck 1".into(), LibraryView::load_to_deck, 0))
             .item(item("Load to Deck 2".into(), LibraryView::load_to_deck, 1))
+            .item(item(
+                "Load to Deck 3 (C)".into(),
+                LibraryView::load_to_deck,
+                2,
+            ))
+            .item(item(
+                "Load to Deck 4 (D)".into(),
+                LibraryView::load_to_deck,
+                3,
+            ))
             .item(item("Add to Automix".into(), LibraryView::queue_track, 0));
         if track.missing {
             menu = menu
@@ -602,13 +612,7 @@ impl TableDelegate for TrackTable {
         let track = &self.tracks[row_ix];
         let decimals = bpm_decimals(cx);
         let text: SharedString = match self.field(col_ix) {
-            Field::Title => {
-                if self.played.contains(&track.path) {
-                    format!("[Played] {}", track.title).into()
-                } else {
-                    track.title.clone().into()
-                }
-            }
+            Field::Title => track.title.clone().into(),
             Field::Artist => track.artist.clone().into(),
             Field::Album => track.album.clone().into(),
             Field::Genre => track.genre.clone().into(),
@@ -647,6 +651,26 @@ impl TableDelegate for TrackTable {
             Field::Title if missing => format!("⚠ {text}").into(),
             _ => text,
         };
+        if matches!(self.field(col_ix), Field::Title) {
+            return div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .when(missing, |this| this.opacity(0.5))
+                .when(self.played.contains(&track.path), |this| {
+                    this.child(
+                        div()
+                            .id(("played", row_ix))
+                            .flex()
+                            .flex_shrink_0()
+                            .child(Icon::new(IconName::Check).small())
+                            .tooltip(|window, cx| {
+                                Tooltip::new("Played in current set").build(window, cx)
+                            }),
+                    )
+                })
+                .child(div().min_w_0().truncate().child(text));
+        }
         div()
             .truncate()
             .when(missing, |this| this.opacity(0.5))
@@ -712,6 +736,7 @@ pub struct LibraryView {
     folders: Vec<PlaylistFolder>,
     /// Playlist folders shown closed.
     collapsed: HashSet<i64>,
+    collapsed_playlists: HashSet<i64>,
     /// In the browser under the decks: the track on the decks that
     /// suggestions are for, and whether they are being shown.
     reference: Option<(i64, SharedString)>,
@@ -734,7 +759,7 @@ impl LibraryView {
     ///
     /// With `scan`, every folder is checked for changes straight away.
     pub fn new(compact: bool, scan: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let db_path = crate::settings::data_dir().join("library.db");
+        let db_path = crate::storage::database_path();
         let (library, error) = match Library::open(&db_path) {
             Ok(library) => (Some(library), None),
             Err(error) => (None, Some(error.to_string().into())),
@@ -827,6 +852,7 @@ impl LibraryView {
             groups: Vec::new(),
             folders: Vec::new(),
             collapsed: HashSet::new(),
+            collapsed_playlists: HashSet::new(),
             reference: None,
             suggesting: false,
             duplicates: None,
@@ -903,6 +929,20 @@ impl LibraryView {
         let library = self.library.as_ref()?;
         let id = library.track_at(path).ok()??;
         library.beat_grid(id).ok()?
+    }
+
+    /// Uses the same accepted/tagged/analysed key shown in the library.
+    pub fn key_at(&self, path: &Path) -> Option<Camelot> {
+        let library = self.library.as_ref()?;
+        let id = library.track_at(path).ok()??;
+        library
+            .tracks(&TrackQuery {
+                id: Some(id),
+                ..Default::default()
+            })
+            .ok()?
+            .pop()?
+            .camelot
     }
 
     /// Starts or stops watching the library's folders for changes.
@@ -1049,7 +1089,7 @@ impl LibraryView {
                             }
                         }
                     }))))
-            .child("[Played] marks tracks heard in the current set. Tracks qualify after 10 seconds of audible master playback; headphone previews do not count.")
+                .child("A checkmark marks tracks heard in the current set. Tracks qualify after 10 seconds of audible master playback; headphone previews do not count.")
             .child(div().id("history-entries").flex().flex_col().flex_1().min_h_0().overflow_y_scroll()
                 .children(entries.into_iter().enumerate().map(|(index, entry)| {
                     div().p_2().child(format!("{}. {}", index + 1, entry.title))
@@ -1059,6 +1099,7 @@ impl LibraryView {
 
     /// Re-reads the sources and the visible tracks from the database.
     fn reload(&mut self, cx: &mut Context<Self>) {
+        crate::track_identity::clear_cache();
         let Some(library) = &self.library else {
             return;
         };
@@ -1324,10 +1365,26 @@ impl LibraryView {
         self.editing = false;
 
         let (id, path) = (track.id, track.path.clone());
+        let cover = self
+            .library
+            .as_ref()
+            .and_then(|library| library.saved_lookup(id).ok().flatten())
+            .and_then(|saved| saved.details.artwork_file)
+            .and_then(|relative| {
+                djcraft_library::artwork::cached_path(&crate::settings::data_dir(), &relative)
+            });
         self.inspected = Some(track);
         cx.spawn(async move |this, cx| {
             let artwork = cx
-                .background_spawn(async move { read_artwork(&path) })
+                .background_spawn(async move {
+                    cover
+                        .and_then(|path| std::fs::read(path).ok())
+                        .map(|data| djcraft_library::Artwork {
+                            data,
+                            mime_type: None,
+                        })
+                        .or_else(|| read_artwork(&path))
+                })
                 .await
                 .and_then(|artwork| {
                     let format = match artwork.data.as_slice() {
@@ -1691,14 +1748,31 @@ impl LibraryView {
             self.field_text(EditField::Genre, cx),
         ];
         let provider = self.provider;
-        let Some(path) = self.inspected.as_ref().map(|track| track.path.clone()) else {
+        let Some((id, path)) = self
+            .inspected
+            .as_ref()
+            .map(|track| (track.id, track.path.clone()))
+        else {
             return;
         };
-        let lookup = cx.new(|cx| LookupView::new(current, provider, path, window, cx));
+        let saved = match self
+            .library
+            .as_ref()
+            .map(|library| library.saved_lookup(id))
+            .transpose()
+        {
+            Ok(saved) => saved.flatten(),
+            Err(error) => {
+                self.error = Some(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        let lookup = cx.new(|cx| LookupView::new(current, provider, path, saved, window, cx));
         cx.subscribe_in(
             &lookup,
             window,
-            |this, _, event: &LookupEvent, window, cx| {
+            move |this, _, event: &LookupEvent, window, cx| {
                 if let LookupEvent::Apply(values) = event {
                     for (field, value) in values {
                         let field = match field {
@@ -1711,6 +1785,21 @@ impl LibraryView {
                     }
                     this.notice = (!values.is_empty())
                         .then(|| "Details copied. Press Save to write them to the file.".into());
+                    this.editing = true;
+                    cx.notify();
+                }
+                if let LookupEvent::SaveLibrary(found, details, cover_warning) = event {
+                    let Some(library) = this.library.as_mut() else { return; };
+                    if let Err(error) = library.save_lookup(id, found, details) {
+                        this.error = Some(error.to_string().into()); cx.notify(); return;
+                    }
+                    let fresh = library.tracks(&TrackQuery { id: Some(id), ..Default::default() }).ok().and_then(|mut tracks| tracks.pop());
+                    this.reload(cx);
+                    if let Some(track) = fresh { this.inspect(track, window, cx); }
+                    let mut notice="Metadata saved to library. Available for local search; music files unchanged.".to_string();
+                    if let Some(warning)=cover_warning {notice.push_str(&format!(" Cover art: {warning}"));}
+                    this.notice = Some(notice.into());
+                    cx.emit(LibraryEvent::Changed);
                     cx.notify();
                 }
                 window.close_dialog(cx);
@@ -1856,7 +1945,7 @@ impl LibraryView {
             )
             .when(!editing, |this| {
                 this.child(
-                    div().flex().child(
+                    div().flex().gap_2().child(
                         Button::new("edit-info")
                             .outline()
                             .icon(IconName::Pencil)
@@ -1865,7 +1954,10 @@ impl LibraryView {
                                 this.editing = true;
                                 cx.notify();
                             })),
-                    ),
+                    ).child(Button::new("lookup-library-metadata").outline().icon(IconName::Search)
+                        .label("Metadata…")
+                        .tooltip("Look up metadata once, or inspect saved library metadata offline")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_lookup(window, cx)))),
                 )
             })
             .when(editing, |this| {
@@ -2742,32 +2834,11 @@ impl LibraryView {
                         .text_color(muted)
                         .child("Playlists"),
                 )
-                .children(self.playlists.iter().map(|playlist| {
-                    let id = playlist.id;
-                    div()
-                        .id(("browser-playlist", id as usize))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .h(px(32.))
-                        .px_2()
-                        .rounded_md()
-                        .text_sm()
-                        .when(
-                            self.section == Section::Playlists && self.playlist == Some(id),
-                            |this| this.bg(hover),
-                        )
-                        .hover(|style| style.bg(hover))
-                        .child(Icon::new(IconName::ListMusic).small().text_color(muted))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(playlist.name.clone()),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_playlist(id, cx)))
-                }))
+                .children({
+                    let mut rows = Vec::new();
+                    self.playlist_rows(None, 0, &mut rows, cx);
+                    rows
+                })
             })
             .when(!self.compact && !self.groups.is_empty(), |this| {
                 this.child(
@@ -2962,7 +3033,27 @@ impl LibraryView {
                 self.playlist_rows(Some(id), depth + 1, rows, cx);
             }
         }
-        for playlist in self.playlists.iter().filter(|p| p.folder == folder) {
+        self.playlist_children(folder, None, depth, rows, cx);
+    }
+
+    fn playlist_children(
+        &self,
+        folder: Option<i64>,
+        parent: Option<i64>,
+        depth: usize,
+        rows: &mut Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) {
+        let theme = cx.theme();
+        let (hover, muted) = (theme.secondary, theme.muted_foreground);
+        let indent = px(8. + depth as f32 * 14.);
+        for playlist in self
+            .playlists
+            .iter()
+            .filter(|p| p.parent == parent && (parent.is_some() || p.folder == folder))
+        {
+            let has_children = self.playlists.iter().any(|p| p.parent == Some(playlist.id));
+            let open = !self.collapsed_playlists.contains(&playlist.id);
             let id = playlist.id;
             let theme = cx.theme();
             rows.push(
@@ -2981,8 +3072,30 @@ impl LibraryView {
                     .pr_1()
                     .rounded_md()
                     .text_sm()
-                    .when(self.playlist == Some(id), |this| this.bg(theme.secondary))
+                    .when(
+                        self.section == Section::Playlists && self.playlist == Some(id),
+                        |this| this.bg(theme.secondary),
+                    )
                     .hover(|style| style.bg(hover))
+                    .when(has_children, |row| {
+                        row.child(
+                            Button::new(("expand-playlist", id as usize))
+                                .ghost()
+                                .xsmall()
+                                .icon(if open {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if !this.collapsed_playlists.remove(&id) {
+                                        this.collapsed_playlists.insert(id);
+                                    }
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         Icon::new(if playlist.rules.is_some() {
                             IconName::WandSparkles
@@ -3007,11 +3120,13 @@ impl LibraryView {
                     )
                     .child(self.playlist_menu(playlist, cx))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.playlist = Some(id);
-                        this.reload(cx);
+                        this.open_playlist(id, cx);
                     }))
                     .into_any_element(),
             );
+            if has_children && open {
+                self.playlist_children(folder, Some(id), depth + 1, rows, cx);
+            }
         }
     }
 
@@ -3046,6 +3161,7 @@ impl LibraryView {
         let view = cx.weak_entity();
         let folders = self.folder_choices(None);
         let current = playlist.folder;
+        let nested = playlist.parent.is_some();
         Button::new(("playlist-menu", id as usize))
             .ghost()
             .xsmall()
@@ -3057,6 +3173,32 @@ impl LibraryView {
                         view.update(cx, |view, cx| run(view, window, cx)).ok();
                     })
                 };
+                menu = menu.item(act(
+                    "New sublist…",
+                    Box::new(move |this, window, cx| {
+                        this.ask_name(
+                            "New sublist",
+                            "",
+                            "Create",
+                            move |this, name, cx| {
+                                let Some(library) = &this.library else {
+                                    return;
+                                };
+                                match library.create_sublist(id, &name) {
+                                    Ok(playlist) => {
+                                        this.section = Section::Playlists;
+                                        this.playlist = Some(playlist.id);
+                                        this.collapsed_playlists.remove(&id);
+                                    }
+                                    Err(error) => this.error = Some(error.to_string().into()),
+                                }
+                                this.reload(cx);
+                            },
+                            window,
+                            cx,
+                        );
+                    }),
+                ));
                 let name = name.clone();
                 menu = menu.item(act(
                     "Rename…",
@@ -3091,11 +3233,11 @@ impl LibraryView {
                                 this.change_library(|library| library.move_playlist(id, folder), cx)
                             }),
                         )
-                        .checked(folder == current),
+                        .checked(folder == current && !nested),
                     );
                 }
                 menu.separator().item(act(
-                    "Delete playlist",
+                    "Delete playlist (keeps sublists)",
                     Box::new(move |this, _, cx| this.delete_playlist(id, cx)),
                 ))
             })

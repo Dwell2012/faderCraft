@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use djcraft_library::lookup::{self, Provider, TrackMatch};
+use djcraft_library::lookup::{self, Provider, TrackDetails, TrackMatch};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme, Disableable,
@@ -14,6 +14,22 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+fn cached_cover(details: &TrackDetails) -> Option<std::sync::Arc<Image>> {
+    let path = djcraft_library::artwork::cached_path(
+        &crate::settings::data_dir(),
+        details.artwork_file.as_deref()?,
+    )?;
+    let bytes = std::fs::read(path).ok()?;
+    let format = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        ImageFormat::Png
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        ImageFormat::Jpeg
+    } else {
+        return None;
+    };
+    Some(std::sync::Arc::new(Image::from_bytes(format, bytes)))
+}
 
 /// A detail that a lookup result can fill in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +70,7 @@ impl LookupField {
 pub enum LookupEvent {
     /// Copy these values into the info panel. Nothing is saved yet.
     Apply(Vec<(LookupField, String)>),
+    SaveLibrary(TrackMatch, TrackDetails, Option<String>),
     Cancel,
 }
 
@@ -74,6 +91,14 @@ pub struct LookupView {
     /// Counts searches, so that a slow reply to an old one is ignored.
     searches: u64,
     message: Option<SharedString>,
+    details: std::collections::HashMap<usize, TrackDetails>,
+    pending_details: std::collections::HashSet<usize>,
+    details_loading: bool,
+    details_error: Option<String>,
+    saved_snapshot: bool,
+    cover_busy: bool,
+    cover_notice: Option<String>,
+    covers: std::collections::HashMap<usize, std::sync::Arc<Image>>,
 }
 
 impl LookupView {
@@ -83,6 +108,7 @@ impl LookupView {
         current: [String; 4],
         provider: Provider,
         path: PathBuf,
+        saved: Option<djcraft_library::SavedLookup>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,12 +142,43 @@ impl LookupView {
             searching: false,
             searches: 0,
             message: None,
+            details: Default::default(),
+            pending_details: Default::default(),
+            details_loading: false,
+            details_error: None,
+            saved_snapshot: false,
+            cover_busy: false,
+            cover_notice: None,
+            covers: Default::default(),
         };
-        view.search(cx);
+        if let Some(mut saved) = saved {
+            if saved.details.artwork_url.is_none() {
+                saved.details.artwork_url = saved
+                    .details
+                    .fields
+                    .iter()
+                    .find(|(field, _)| field == "MusicBrainz release ID")
+                    .and_then(|(_, id)| djcraft_library::artwork::source_url(id));
+            }
+            if let Some(image) = cached_cover(&saved.details) {
+                view.covers.insert(0, image);
+            }
+            view.saved_snapshot = true;
+            view.provider = saved.candidate.provider;
+            view.results = vec![saved.candidate];
+            view.details.insert(0, saved.details);
+            view.selected = Some(0);
+        } else {
+            view.search(cx);
+        }
         view
     }
 
     fn search(&mut self, cx: &mut Context<Self>) {
+        if self.cover_busy {
+            return;
+        }
+        self.saved_snapshot = false;
         let artist = self.artist.read(cx).value().to_string();
         let title = self.title.read(cx).value().to_string();
         let provider = self.provider;
@@ -136,6 +193,12 @@ impl LookupView {
         self.message = None;
         self.results.clear();
         self.selected = None;
+        self.details.clear();
+        self.covers.clear();
+        self.cover_notice = None;
+        self.pending_details.clear();
+        self.details_loading = false;
+        self.details_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -175,6 +238,9 @@ impl LookupView {
     }
 
     fn set_provider(&mut self, provider: Provider, cx: &mut Context<Self>) {
+        if self.cover_busy {
+            return;
+        }
         if provider != self.provider {
             self.provider = provider;
             self.search(cx);
@@ -192,10 +258,85 @@ impl LookupView {
             let new = field.of(found).trim();
             self.chosen[slot] = !new.is_empty() && new != self.current[slot].trim();
         }
+        self.details_error = None;
+        self.details_loading = false;
+        if self.pending_details.contains(&index) {
+            self.details_loading = true;
+        } else if !self.details.contains_key(&index) {
+            self.pending_details.insert(index);
+            let found = found.clone();
+            let search = self.searches;
+            let keys = cx
+                .try_global::<crate::settings::Settings>()
+                .map(|settings| settings.lookup_keys())
+                .unwrap_or_default();
+            self.details_loading = true;
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_spawn(async move { lookup::details(&found, &keys) })
+                    .await;
+                this.update(cx, |this, cx| {
+                    if this.searches != search {
+                        return;
+                    }
+                    this.pending_details.remove(&index);
+                    // Cache successful replies even if another result is now selected.
+                    match result {
+                        Ok(details) => {
+                            this.details.insert(index, details);
+                        }
+                        Err(error) if this.selected == Some(index) => {
+                            this.details_error = Some(error.to_string());
+                        }
+                        Err(_) => {}
+                    }
+                    if this.selected == Some(index) {
+                        this.details_loading = false;
+                        this.use_verified_track(index);
+                        for (slot, field) in LookupField::ALL.into_iter().enumerate() {
+                            let new = field.of(&this.results[index]).trim();
+                            this.chosen[slot] = !new.is_empty() && new != this.current[slot].trim();
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        } else {
+            self.use_verified_track(index);
+        }
         cx.notify();
     }
 
+    fn use_verified_track(&mut self, index: usize) {
+        if let Some(details) = self.details.get(&index) {
+            if let Some(title) = &details.matched_title {
+                self.results[index].title = title.clone();
+            }
+            if let Some(artist) = &details.matched_artist {
+                self.results[index].artist = artist.clone();
+            }
+        }
+    }
+
+    fn can_apply(&self) -> bool {
+        !self.details_loading
+            && !self.cover_busy
+            && self.selected.is_some_and(|index| {
+                self.results[index].provider != Provider::Discogs
+                    || self
+                        .details
+                        .get(&index)
+                        .is_some_and(|d| d.matched_title.is_some())
+            })
+            && self.chosen.iter().any(|chosen| *chosen)
+    }
+
     fn apply(&mut self, cx: &mut Context<Self>) {
+        if !self.can_apply() {
+            return;
+        }
         let Some(found) = self.selected.and_then(|index| self.results.get(index)) else {
             return;
         };
@@ -206,6 +347,94 @@ impl LookupView {
             .map(|(field, _)| (field, field.of(found).trim().to_string()))
             .collect();
         cx.emit(LookupEvent::Apply(values));
+    }
+
+    fn save_library(&mut self, cx: &mut Context<Self>) {
+        if self.cover_busy {
+            return;
+        }
+        let Some(index) = self.selected else {
+            return;
+        };
+        if self.details_loading {
+            return;
+        }
+        let Some(details) = self.details.get(&index).cloned() else {
+            return;
+        };
+        if self.results[index].provider == Provider::Discogs && details.matched_title.is_none() {
+            return;
+        }
+        let mut found = self.results[index].clone();
+        if !self.chosen[0] {
+            found.title = self.current[0].clone();
+        }
+        if !self.chosen[1] {
+            found.artist = self.current[1].clone();
+        }
+        if !self.chosen[2] {
+            found.album = self.current[2].clone();
+        }
+        if !self.chosen[3] {
+            found.genre = Some(self.current[3].clone());
+        }
+        if details.artwork_url.is_some() && cached_cover(&details).is_none() {
+            self.fetch_cover(Some(found), cx);
+        } else {
+            cx.emit(LookupEvent::SaveLibrary(found, details, None));
+        }
+    }
+
+    fn fetch_cover(&mut self, save: Option<TrackMatch>, cx: &mut Context<Self>) {
+        if self.cover_busy {
+            return;
+        }
+        let Some(index) = self.selected else {
+            return;
+        };
+        let Some(mut details) = self.details.get(&index).cloned() else {
+            return;
+        };
+        let Some(url) = details.artwork_url.clone() else {
+            return;
+        };
+        self.cover_busy = true;
+        self.cover_notice = None;
+        cx.notify();
+        let root = crate::settings::data_dir();
+        let search = self.searches;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { djcraft_library::artwork::download(&root, &url) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.cover_busy = false;
+                if search != this.searches {
+                    return;
+                }
+                let warning = match result {
+                    Ok(Some(relative)) => {
+                        details.artwork_file = Some(relative);
+                        None
+                    }
+                    Ok(None) => Some("No front cover is available for this release.".to_string()),
+                    Err(error) => Some(error.to_string()),
+                };
+                if let Some(image) = cached_cover(&details) {
+                    this.covers.insert(index, image);
+                }
+                this.details.insert(index, details.clone());
+                this.cover_notice = warning.clone().or_else(|| {
+                    Some("Cover cached. Save to library to keep it with this track.".into())
+                });
+                if let Some(found) = save {
+                    cx.emit(LookupEvent::SaveLibrary(found, details, warning));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn provider_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -366,10 +595,102 @@ impl LookupView {
                     div()
                         .text_xs()
                         .text_color(muted)
-                        .child("Tick the details to copy into the info panel. Press Save there to write them to the file."),
+                        .child("Choose which main library fields to update. Additional details are saved for local search. Music files stay unchanged."),
                 )
                 .children(rows),
         )
+    }
+
+    fn detail_panel(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let index = self.selected?;
+        let muted = cx.theme().muted_foreground;
+        let mut panel = div()
+            .id("lookup-full-details")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .h(px(210.))
+            .overflow_y_scroll()
+            .text_sm()
+            .child(
+                div()
+                    .font_weight(FontWeight::BOLD)
+                    .child(if self.saved_snapshot { "Saved library metadata (offline)" } else { "Track and release details" }),
+            ).child(div().text_xs().text_color(muted).child("Fields shown where supplied by the provider. Inspecting details does not write tags."));
+        if self.details_loading {
+            return Some(panel.child("Loading provider details…"));
+        }
+        if let Some(error) = &self.details_error {
+            return Some(
+                panel.child(error.clone()).child(
+                    Button::new("retry-lookup-details")
+                        .outline()
+                        .label("Retry details")
+                        .on_click(cx.listener(move |this, _, _, cx| this.select(index, cx))),
+                ),
+            );
+        }
+        let details = self.details.get(&index)?;
+        if let Some(cover) = self.covers.get(&index) {
+            panel = panel.child(
+                img(cover.clone())
+                    .w(px(110.))
+                    .h(px(110.))
+                    .object_fit(ObjectFit::Contain),
+            );
+        }
+        if details.artwork_url.is_some() {
+            panel = panel.child(
+                Button::new("lookup-download-cover")
+                    .outline()
+                    .label(if self.cover_busy {
+                        "Downloading cover…"
+                    } else {
+                        "Download cover"
+                    })
+                    .disabled(self.cover_busy)
+                    .on_click(cx.listener(|this, _, _, cx| this.fetch_cover(None, cx))),
+            );
+        }
+        if let Some(notice) = &self.cover_notice {
+            panel = panel.child(notice.clone());
+        }
+        for (label, value) in &details.fields {
+            panel = panel.child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .flex_shrink_0()
+                            .text_color(muted)
+                            .child(label.clone()),
+                    )
+                    .child(div().flex_1().min_w_0().child(value.clone())),
+            );
+        }
+        if !details.source_url.is_empty() {
+            let url = details.source_url.clone();
+            panel = panel.child(
+                Button::new("lookup-source")
+                    .outline()
+                    .label("Open provider page")
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+            );
+        }
+        if !details.tracks.is_empty() {
+            panel = panel.child(
+                div()
+                    .mt_2()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Release track list"),
+            );
+            for track in &details.tracks {
+                panel = panel.child(track.clone());
+            }
+        }
+        Some(panel)
     }
 }
 
@@ -400,7 +721,15 @@ impl Render for LookupView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let searching = self.searching;
-        let can_apply = self.selected.is_some() && self.chosen.iter().any(|chosen| *chosen);
+        let can_apply = self.can_apply();
+        let can_save = !self.cover_busy
+            && !self.details_loading
+            && self.selected.is_some_and(|index| {
+                self.details.get(&index).is_some_and(|details| {
+                    self.results[index].provider != Provider::Discogs
+                        || details.matched_title.is_some()
+                })
+            });
         let rows: Vec<_> = self
             .results
             .clone()
@@ -436,7 +765,7 @@ impl Render for LookupView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .h(px(280.))
+                    .h(px(180.))
                     .overflow_y_scroll()
                     .when(rows.is_empty(), |this| {
                         this.items_center()
@@ -451,6 +780,7 @@ impl Render for LookupView {
                     })
                     .children(rows),
             )
+            .children(self.detail_panel(cx))
             .children(comparison)
             .child(
                 div()
@@ -465,10 +795,16 @@ impl Render for LookupView {
                     )
                     .child(
                         Button::new("lookup-apply")
-                            .primary()
-                            .label("Use these details")
+                            .label("Copy to tag editor")
+                            .outline()
                             .disabled(!can_apply)
                             .on_click(cx.listener(|this, _, _, cx| this.apply(cx))),
+                    )
+                    .child(
+                        Button::new("lookup-save-library").primary().label("Save to library")
+                            .tooltip("Save metadata for offline library search; leave music files unchanged")
+                            .disabled(!can_save)
+                            .on_click(cx.listener(|this, _, _, cx| this.save_library(cx))),
                     ),
             )
     }

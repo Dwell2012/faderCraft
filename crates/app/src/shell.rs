@@ -425,6 +425,9 @@ impl Shell {
         .detach();
         if let Some(engine) = &mut shell.engine {
             for (path, preparation) in &shell.preparations {
+                let Some(path) = crate::track_identity::resolve(path) else {
+                    continue;
+                };
                 let _ = engine.apply(
                     Role::Host,
                     Action::Mixer {
@@ -487,7 +490,7 @@ impl Shell {
                 view.set_hidden_columns(&self.settings.hidden_columns, cx)
             });
         }
-        if let Err(error) = self.settings.save(&data_dir()) {
+        if let Err(error) = self.settings.save(&crate::storage::machine_dir()) {
             eprintln!("could not save settings: {error}");
         }
     }
@@ -530,7 +533,7 @@ impl Shell {
                     });
                     // How tempos are shown changes every view.
                     cx.refresh_windows();
-                    if let Err(error) = this.settings.save(&data_dir()) {
+                    if let Err(error) = this.settings.save(&crate::storage::machine_dir()) {
                         eprintln!("could not save settings: {error}");
                     }
                 }

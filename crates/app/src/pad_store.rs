@@ -3,10 +3,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 pub type CueStore = BTreeMap<String, [Option<HotCue>; HOT_CUES]>;
 pub fn load(root: &Path) -> CueStore {
-    std::fs::read(root.join("hot-cues.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    crate::track_identity::normalize(
+        root,
+        "hot-cues.json",
+        std::fs::read(root.join("hot-cues.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default(),
+    )
 }
 pub fn save(root: &Path, cues: &CueStore) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
@@ -47,10 +51,14 @@ mod tests {
 
 pub type AppearanceStore = BTreeMap<String, [djcraft_protocol::CueAppearance; HOT_CUES]>;
 pub fn load_appearances(root: &Path) -> AppearanceStore {
-    std::fs::read(root.join("cue-appearance.json"))
-        .ok()
-        .and_then(|v| serde_json::from_slice(&v).ok())
-        .unwrap_or_default()
+    crate::track_identity::normalize(
+        root,
+        "cue-appearance.json",
+        std::fs::read(root.join("cue-appearance.json"))
+            .ok()
+            .and_then(|v| serde_json::from_slice(&v).ok())
+            .unwrap_or_default(),
+    )
 }
 pub fn save_appearances(root: &Path, styles: &AppearanceStore) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;

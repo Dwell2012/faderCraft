@@ -28,7 +28,9 @@ impl Shell {
             return;
         };
         if state.loading
-            || self.preparations.contains_key(&path)
+            || self
+                .preparations
+                .contains_key(&crate::track_identity::key(&path))
             || self.preparation_pending.contains(&path)
         {
             return;
@@ -57,7 +59,10 @@ impl Shell {
             let _ = this.update(cx, |this, cx| {
                 this.preparation_pending.remove(&path);
                 // Manual edits made while analysis ran always win.
-                if !this.preparations.contains_key(&path) {
+                if !this
+                    .preparations
+                    .contains_key(&crate::track_identity::key(&path))
+                {
                     this.commit_preparation(path, preparation, true);
                 }
                 cx.notify();
@@ -84,7 +89,8 @@ impl Shell {
             self.preparation_notice = "Invalid marker order or transition setting".into();
             return;
         }
-        self.preparations.insert(path, preparation);
+        self.preparations
+            .insert(crate::track_identity::key(&path), preparation);
         self.preparation_notice.clear();
         if save {
             self.save_preparations();
@@ -107,7 +113,11 @@ impl Shell {
         let (Some(path), Some(track)) = (state.path, state.track) else {
             return;
         };
-        let mut prep = self.preparations.get(&path).cloned().unwrap_or_default();
+        let mut prep = self
+            .preparations
+            .get(&crate::track_identity::key(&path))
+            .cloned()
+            .unwrap_or_default();
         change(&mut prep, state.position_seconds, track.duration_seconds);
         self.commit_preparation(path, prep, true);
         cx.notify();
@@ -148,7 +158,11 @@ impl Shell {
             t = g.first_beat_seconds
                 + ((t - g.first_beat_seconds) / g.beat_seconds()).round() * g.beat_seconds();
         }
-        let mut prep = self.preparations.get(&path).cloned().unwrap_or_default();
+        let mut prep = self
+            .preparations
+            .get(&crate::track_identity::key(&path))
+            .cloned()
+            .unwrap_or_default();
         move_marker(&mut prep, marker, t, track.duration_seconds);
         self.commit_preparation(path, prep, false);
         cx.notify();
@@ -197,7 +211,11 @@ impl Shell {
             .track
             .as_ref()
             .map_or(1., |t| t.duration_seconds.max(0.01));
-        let prep = self.preparations.get(path).cloned().unwrap_or_default();
+        let prep = self
+            .preparations
+            .get(&crate::track_identity::key(path))
+            .cloned()
+            .unwrap_or_default();
         let selected = self.preparation_selected[deck].filter(|i| *i < prep.phrases.len());
         let mut strip = div()
             .relative()

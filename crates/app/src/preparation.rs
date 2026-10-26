@@ -2,13 +2,17 @@ use djcraft_protocol::{PhraseLabel, PhraseMarker, TrackPreparation};
 use std::{collections::BTreeMap, path::Path};
 pub type Preparations = BTreeMap<String, TrackPreparation>;
 pub fn load(root: &Path) -> Preparations {
-    std::fs::read(root.join("track-preparation.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Preparations>(&b).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, p)| p.valid())
-        .collect()
+    crate::track_identity::normalize(
+        root,
+        "track-preparation.json",
+        std::fs::read(root.join("track-preparation.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Preparations>(&b).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, p)| p.valid())
+            .collect(),
+    )
 }
 pub fn save(root: &Path, preparations: &Preparations) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;

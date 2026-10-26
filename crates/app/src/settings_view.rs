@@ -12,7 +12,7 @@ use gpui_kit::*;
 use djcraft_library::Placement;
 use djcraft_library::lookup::Provider;
 
-use crate::settings::{self, Settings, StartTab, ThemeChoice, data_dir};
+use crate::settings::{self, Settings, StartTab, ThemeChoice};
 
 actions!(settings, [CloseSettings]);
 
@@ -99,6 +99,7 @@ pub struct SettingsView {
     /// Text boxes for the AcoustID key and the Discogs token, made on first
     /// draw, as making them needs the window.
     key_inputs: Option<[Entity<InputState>; 2]>,
+    library_notice: Option<String>,
 }
 
 impl SettingsView {
@@ -109,6 +110,7 @@ impl SettingsView {
             audio,
             focus: cx.focus_handle(),
             key_inputs: None,
+            library_notice: None,
         }
     }
 
@@ -155,6 +157,26 @@ impl SettingsView {
         change(&mut self.settings);
         cx.emit(SettingsEvent::Changed(self.settings.clone()));
         cx.notify();
+    }
+
+    fn choose_library(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose a faderCraft library folder (local or OneDrive)".into()),
+        });
+        cx.spawn(async move |this,cx| {
+            let Ok(Ok(Some(paths)))=paths.await else{return;};
+            let Some(path)=paths.into_iter().next() else{return;};
+            this.update(cx,|this,cx| {
+                this.library_notice=Some(match crate::storage::choose_folder(&path) {
+                    Ok(())=>"Library folder selected. Close and restart faderCraft to use it. Let OneDrive finish syncing before switching computers.".into(),
+                    Err(error)=>format!("Could not select library folder: {error}"),
+                });
+                cx.notify();
+            }).ok();
+        }).detach();
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -376,7 +398,7 @@ impl SettingsView {
                     self.row("Output device", "Connect your audio interface before opening this menu.", device, cx),
                     self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
                     self.row("Master output pair", "Stereo software channels on the selected device. Changes require restart.", master, cx),
-                    self.row("Headphone cue pair", "Follows the active deck before channel faders. Use a distinct pair on the same multichannel device; ASIO recommended. Exclusive WASAPI is stereo only.", cue, cx),
+                    self.row("Headphone cue pair", "Monitors decks enabled with their headphone buttons, independently of active deck and channel faders. Use a distinct pair on the same multichannel device; ASIO recommended. Exclusive WASAPI is stereo only.", cue, cx),
                 ], cx)]
             }
             Page::Library => {
@@ -551,11 +573,14 @@ impl SettingsView {
                             cx,
                         ),
                         self.row(
-                            "Library location",
-                            "Where the library database and settings are stored.",
-                            self.info(data_dir().to_string_lossy().into_owned(), cx),
+                            "Library folder",
+                            self.library_notice.clone().unwrap_or_else(||format!("{} — artwork, stems, cues and a library snapshot. Changes apply after restart; an existing library is opened, an empty folder receives a copy. Use one computer at a time.",crate::storage::configured_folder().display())),
+                            Button::new("choose-library-folder").outline().label("Choose folder…")
+                                .on_click(cx.listener(|this,_,_,cx|this.choose_library(cx))),
                             cx,
                         ),
+                        self.row("Local settings", "Audio devices, credentials and the stem runtime stay on this computer.",
+                            self.info(crate::storage::machine_dir().to_string_lossy().into_owned(),cx),cx),
                     ],
                     cx,
                 ), analysis, tags, music_info]

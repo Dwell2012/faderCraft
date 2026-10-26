@@ -5,23 +5,27 @@ use std::path::{Path, PathBuf};
 pub type SavedLoops = BTreeMap<String, [Option<[f64; 2]>; 16]>;
 
 pub fn load(root: &Path) -> SavedLoops {
-    std::fs::read(root.join("saved-loops.json"))
-        .ok()
-        .and_then(|bytes| {
-            serde_json::from_slice::<BTreeMap<String, Vec<Option<[f64; 2]>>>>(&bytes).ok()
-        })
-        .map(|entries| {
-            entries
-                .into_iter()
-                .map(|(key, values)| {
-                    (
-                        key,
-                        std::array::from_fn(|i| values.get(i).copied().flatten()),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    crate::track_identity::normalize(
+        root,
+        "saved-loops.json",
+        std::fs::read(root.join("saved-loops.json"))
+            .ok()
+            .and_then(|bytes| {
+                serde_json::from_slice::<BTreeMap<String, Vec<Option<[f64; 2]>>>>(&bytes).ok()
+            })
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|(key, values)| {
+                        (
+                            key,
+                            std::array::from_fn(|i| values.get(i).copied().flatten()),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
 }
 
 pub fn save(root: &Path, loops: &SavedLoops) -> Result<(), String> {

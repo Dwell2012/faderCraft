@@ -132,7 +132,7 @@ pub struct FlowView {
 
 impl FlowView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let db_path = crate::settings::data_dir().join("library.db");
+        let db_path = crate::storage::database_path();
         let (library, error) = match Library::open(&db_path) {
             Ok(library) => (Some(library), None),
             Err(error) => (None, Some(error.to_string().into())),

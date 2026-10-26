@@ -36,6 +36,13 @@ impl Shell {
         match std::fs::read(data_dir().join("automix-queue.json")) {
             Ok(bytes) => match serde_json::from_slice::<Vec<QueueTrack>>(&bytes) {
                 Ok(tracks) => {
+                    let tracks: Vec<_> = tracks
+                        .into_iter()
+                        .filter_map(|mut track| {
+                            track.path = crate::track_identity::resolve(&track.path)?;
+                            Some(track)
+                        })
+                        .collect();
                     self.saved_queue = tracks.clone();
                     self.enqueue_automix(tracks, cx);
                 }
@@ -62,7 +69,17 @@ impl Shell {
             let tmp = data_dir().join("automix-queue.json.tmp");
             std::fs::write(
                 &tmp,
-                serde_json::to_vec_pretty(&remaining).map_err(|e| e.to_string())?,
+                serde_json::to_vec_pretty(
+                    &remaining
+                        .iter()
+                        .cloned()
+                        .map(|mut track| {
+                            track.path = crate::track_identity::key(&track.path);
+                            track
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
             std::fs::rename(tmp, data_dir().join("automix-queue.json")).map_err(|e| e.to_string())

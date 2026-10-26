@@ -10,13 +10,10 @@ use serde::{Deserialize, Serialize};
 
 const FILE_NAME: &str = "settings.json";
 
-/// Where djcraft keeps its library and settings. DJCRAFT_DATA_DIR points
-/// the app somewhere else, for development and testing.
+/// Portable library assets. The selected library folder may be in OneDrive;
+/// machine settings and the working database remain in local storage.
 pub fn data_dir() -> PathBuf {
-    std::env::var_os("DJCRAFT_DATA_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::data_dir().map(|dir| dir.join("djcraft")))
-        .unwrap_or_else(std::env::temp_dir)
+    crate::storage::library_dir()
 }
 
 /// Where track waveforms are kept: beside the library database, so they

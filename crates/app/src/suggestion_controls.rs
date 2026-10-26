@@ -87,7 +87,7 @@ impl Shell {
         let preparation = state
             .path
             .as_ref()
-            .and_then(|p| self.preparations.get(p))
+            .and_then(|p| self.preparations.get(&crate::track_identity::key(p)))
             .cloned()
             .unwrap_or_default();
         let duration = state.track.as_ref().map_or(0., |t| t.duration_seconds);

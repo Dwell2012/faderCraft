@@ -11,7 +11,9 @@ mod settings;
 mod settings_view;
 mod shell;
 mod stems;
+mod storage;
 mod tag_tools;
+mod track_identity;
 mod waveform;
 mod wheel;
 
@@ -49,9 +51,14 @@ fn main() {
         return;
     }
 
+    if let Err(error) = storage::initialize() {
+        eprintln!("Library storage: {error}");
+        storage::show_problem(error.to_string());
+        return;
+    }
     gpui_kit::application().with_assets(AllAssets).run(|cx| {
         gpui_kit::init(cx);
-        let settings = settings::Settings::load(&settings::data_dir());
+        let settings = settings::Settings::load(&storage::machine_dir());
         settings::move_old_waveforms();
         // Views read display settings, such as how tempos are shown, from here.
         cx.set_global(settings.clone());
@@ -107,4 +114,7 @@ fn main() {
         .expect("failed to open window");
         cx.activate(true);
     });
+    if let Err(error) = storage::finish() {
+        eprintln!("Library snapshot was not published: {error}");
+    }
 }
