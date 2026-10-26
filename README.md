@@ -12,6 +12,9 @@ See [the feature status](docs/FEATURES.md) for current capabilities and limitati
 [stem setup](docs/STEMS.md). Controller integrations remain in development.
 
 For development on another machine, start with the [Codex handover](docs/HANDOVER.md).
+Settings > Library can select a portable library folder, including OneDrive.
+Use one computer at a time and let sync finish after closing the app. The
+handover describes snapshot storage, local device settings and music relinking.
 
 The original project overview follows; its baseline feature descriptions predate
 the custom changes above.

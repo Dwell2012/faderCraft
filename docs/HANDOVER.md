@@ -1,6 +1,249 @@
 # Codex handover
 
+Stem model choice (26 October): stem_model defaults Fast for old settings; Detailed selects htdemucs_ft. Settings has background download/verify buttons and local availability markers. Both models stay on disk; the worker keeps only the current model loaded, switches on a queued request, and preloads the selected model at startup. Cache keys include model name, preserving existing htdemucs-v1 entries. Already attached stems require a deck reload to change model. Worker heartbeats cover first-use downloads, with absolute startup/job limits. Lost-GPU CPU fallback reloads the correct model. No library schema or engine/audio change.
+
+Persistent stem worker (26 October): stdin JSON requests and stdout ready/progress/done/error messages replace per-track Python launches. Shell warms the worker on a background executor and shows a startup splash until ready (or failure). One model and device weights remain loaded; CPU/GPU preference is supplied per job. Rust serializes requests, bounds unresponsive waits, discards failed workers, and shuts down the process at app exit. Cache identity/output are unchanged.
+
 Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
+
+## Four-deck performance foundation (24 October 2026)
+
+Stem acceleration (26 October): Settings > Audio > Stem preparation persists
+stem_gpu (default true, including older settings). Automatic prefers CUDA/ROCm
+or MPS; CPU only bypasses GPU probing. New jobs capture the setting when queued.
+The worker keeps whole-track buffers on CPU and transfers chunks for inference,
+uses TF32-capable high matmul precision on CUDA, and retries GPU runtime errors
+on CPU. Both paths retain half the logical cores capped at four CPU threads.
+The same model, overlap and shifts are retained; device does not invalidate
+existing stem caches. prepare.log records the device and fallback reason.
+Setup detects NVIDIA hardware and installs pinned torch/torchaudio CUDA 12.1
+wheels (or CPU wheels), with -Device CUDA/CPU overrides. Requirements accept
+either build. Python worker tests cover selection, override and GPU-error retry;
+Rust settings tests cover default/persistence. Rust audio processing is unchanged.
+Local CUDA validation: torch/torchaudio 2.5.1+cu121 on the RTX 3070 Laptop GPU
+(8GB VRAM, driver 536.67). A 32-second synthetic stereo sample produced four
+finite, correctly sized stems on both devices: inference 23.177s CPU (4 threads)
+versus 5.652s CUDA. These exclude Python/model startup and do not promise a
+fixed speedup on other tracks. Six worker unit tests and Rust workspace checks pass.
+
+Playlist sublists (25 October): schema 20 adds nullable parent_playlist_id and
+an index. A playlist menu offers New sublist; children can nest further and
+each retains its own tracks/order/count. Both sidebar trees share rendering,
+with independent expand/collapse state for folders and playlists. Moving a
+playlist to a folder detaches it from its parent and moves its descendants to
+that folder; deleting a playlist promotes its immediate children one level
+without deleting tracks or child playlists. Version-19 migration, reopening,
+independent memberships and parent/folder operations have headless coverage.
+
+Analysis version 10 corrects version 9's whole-track kick-phase selection.
+It scans kick-transient candidates chronologically and requires eight of the
+next nine beats to support a run. Descending bass centroid evidence is limited
+to the 90–170Hz attack band, avoiding flat bass tones. The first confirmed run
+wins over louder later sections, and time-domain refinement uses only that
+local run. The grid projects backwards through musical intros but not leading
+silence. It retains the previous bass/broadband fallback when no run is found.
+For local ATB 9PM, the first supported kick is around 30.48s; version 9 had
+incorrectly chosen a later phase. BPM remains 137.53, with corrected phase
+around 0.369s. Cached analyses refresh automatically; music tags are not written.
+Regressions cover a late kick entrance, louder later half-beat evidence,
+isolated hits, leading silence and bar numbering.
+
+Deck control groups mirror positions across the mixer without reversing the
+buttons inside them. Four-deck panels have three mirrored columns: key/pitch/
+tempo, transport controls, activation/headphone cue. Pitch/key lock sits between
+the disc/information group and transport (mirrored on B/D), rather than at the
+outer edge. Transport stacks Cue, Sync, Stems,
+then Play/Load, with Stems in its own row immediately above Play/Load.
+Two-deck mode keeps Cue, Sync, Play, Load
+and Stems together in one row. Per-deck stem buttons retain ready/loading/
+progress states and replace the old mixer buttons. Platters no longer repeat
+deck letters. B/D key information sits beside the platter and aligns right.
+Four-deck platter/BPM/key groups anchor to the outer edges. Their key details
+use one line with muted vertical dividers; two-deck key details stay stacked.
+
+Waveform colours now follow deck palettes: low is the darker shade, mid the
+deck primary, high the lighter shade (lime, sapphire, amber, violet). Track
+overviews share these palettes. Each scrolling row has its own Wave / Stems
+button, enabled once stems are attached. Stem mode overlays pink vocals, cyan
+instruments, amber bass and pale drums, with a matching legend. It uses the
+same row, height, playhead and grid: exactly two rows or four rows, never
+extra stem lanes. Overviews retain the mixed deck palette. Mode selection is
+per deck for the session and defaults to Wave. Stereo-safe RMS stem envelopes
+follow live stem gains, including stem EQ groups and pad mutes: a zero gain
+skips its overlay entirely. Mixed deck waveforms and overviews scale low/mid/high
+amplitudes by active Classic EQ gains, hiding killed bands. Non-Classic modes
+use neutral frequency gains because their retained Classic settings are bypassed
+in audio. Gains apply at paint time; cached source summaries remain unchanged.
+Flow's independent preview retains neutral waveform gains. Stem envelopes
+are calculated on the stem worker after residual reconstruction; drawing reads
+only the immutable summaries, not full stem audio. Existing stem caches work.
+
+Protocol DECKS is now four, shared with the engine. Deck IDs 0–3 are A–D.
+The performance toolbar saves a 2 Decks / 4 Decks preference in local settings;
+older settings retain two-deck view. Four-deck view stacks A/C left and B/D
+right around four mixer channels, with four aligned scrolling waveforms and
+the library below. Compact decks keep the same 480px performance height as
+two-deck mode. Pads, loops, effects and preparation open over the other deck
+on the same side, preserving library space. A/B expand down over C/D; C/D
+slide up over A/B and reveal tools beneath their transport. Clicking the same
+tool tab closes the overlay, reversing the 220ms eased animation. Switching
+tools keeps the deck raised; overlay ownership is separate from keyboard
+activation. The tools area scrolls within the existing 480px deck column.
+Four-deck slots remain fixed at 236px with an 8px gap during transitions, so
+moving the owner into the overlay never shifts its sibling deck.
+Short windows scroll vertically. C is amber and D violet.
+Loading C/D from the library menu, CLI or a custom controller mapping reveals
+four-deck view. C/D playback or active effects tails prevent hiding those decks.
+Deck activation selects Space transport; headphone buttons independently toggle
+cue, identically in two- and four-deck views. Loading and tool selection never
+change headphone selection. Startup has all deck cues off; multiple cues sum
+before the existing cue/master blend and level. Cued C/D cannot be hidden.
+MonitorState.cue_decks is an optional A–D bitmask: Some(0) is all off, while
+None preserves legacy single-deck monitoring via MonitorState.deck. Invalid
+mask bits are rejected. Numark headphone buttons use ToggleHeadphoneCue and
+LEDs follow every enabled deck; named legacy headphone-cue profile bindings
+are upgraded in memory without rewriting custom mappings on disk.
+
+The 360px four-deck mixer orders channels A/C/B/D. Volume faders remain below
+their EQ knobs in the same 50px column; channel VU meters sit left of A/C
+and right of B/D. Closely paired master VU meters sit between C/B,
+with subtle channel separators. Sampler, centred master, cue gain and cue/master
+blend share one knob row; master remains a fader in two-deck view. Master knob
+dragging uses relative vertical motion and retains squared gain/unity reset.
+Both mixer layouts use curve diagrams for crossfader variations, with names
+on hover.
+Crossfader side buttons independently toggle A–D bitmasks via
+MixerAction::SetCrossfaderRouting. Defaults are A/C left and B/D right. Neither
+side means bypass; both sides sum and cap at unity. Routing is session state,
+with legacy serialized state defaulting to the original mapping. Changes are
+smoothed on the audio thread and update live-load protection and play history.
+Manual routing stops Automix; later Automix starts use the selected routing.
+Headphones use separately smoothed cue gains for all four decks, pre-fader and
+pre-crossfader. Pads, cues, loops, effects, stems, preparation, tempo returns,
+waveform positions and play-history tracking have per-deck state throughout.
+Four-deck Sync prefers the other playing deck with a known grid whose current
+uninterrupted playback started earliest, independent of playhead position or
+fader gain. Pause, track replacement and cue preview reset/exclude priority.
+If no eligible deck is playing, Sync prefers the paired deck (A/B or C/D),
+then another visible deck with a grid. Two-deck Sync keeps its A/B pairing.
+It matches the reference's effective BPM and aligns the nearest beat only
+when both decks play. All operations use the role-checked protocol.
+Automix intentionally remains an A/B workflow; it never adopts or loads C/D.
+Its shared crossfader still affects C/D, and manual deck control retains the
+existing Automix takeover behaviour. Existing hardware profiles remain A/B;
+four-deck hardware mapping and listening acceptance require separate device tests.
+No dependency or library schema changes are needed.
+
+Loop resize (including controller half/double) and Direct buttons now extend
+to 0.125 and 0.0625 beats. Size labels retain four decimal places when needed.
+The engine's existing 10ms minimum remains; headless playback checks cover
+wrapping and releasing both micro-loop sizes at 140 BPM.
+
+Verification: 305 workspace tests pass, one ignored; Windows workspace build,
+formatting and licence/source checks pass. Clippy completes with existing
+warnings. Headless regressions cover all-four summing, every crossfader curve,
+cue isolation/switching with faders closed, independent C/D transport/controls,
+invalid IDs/roles, custom C/D MIDI mappings and A/B-only Automix adoption.
+Runtime layout checks use an isolated consistent SQLite backup of the existing
+development library (968 tracks), with source audio read-only. No music moved.
+
+## Linked EQ and Key Shift pads (23 October 2026)
+
+Ctrl-scroll on EQ applies the actual clamped control delta in reverse to the
+other deck's matching band, preserving existing offsets. This covers Classic
+and stem EQ layouts, plus the two deck volume faders: cutting one raises the
+other by the same fader amount within limits. Trim and monitor controls stay independent.
+
+Key Shift is a new pad page with latched absolute offsets, not cumulative taps.
+Parameter 1 selects semitones, whole tones, major or natural minor intervals;
+parameter 2 steps the current shift in the selected mode, within ±12 semitones.
+Pad 4 is Reset; Shift-click any pad also resets.
+Scale intervals are relative to the original track tonic, using the explicitly
+selected major/minor scale. No automatic key detection is required. The eight
+offsets repeat in the optional 16-pad layout. Shifts are limited to ±12 semitones
+and apply through DeckAction::SetKeyShift with key_shift in DeckState.
+The existing preallocated Signalsmith stretcher handles transposition without
+using an effect slot or changing tempo. Key Lock preserves the original key
+plus the selected shift across tempo changes; without Key Lock, normal tempo
+pitch follows the selected shift. Scratching uses the existing unshifted vinyl
+path and resumes the shift afterwards. Shift is a deck control, not a file tag.
+Below the waveform, outside each centred platter (left for A, right for B),
+the deck shows the transposed note name and Camelot key plus the selected
+shift. Keys follow the library's accepted/tagged/analysed value and refresh on
+library changes. With Key Lock off, tempo contributes to the displayed pitch;
+fractional semitones appear as cents. Unknown source keys stay explicitly unknown.
+
+## Library folder, OneDrive and artwork (23 October 2026)
+
+Settings > Library > Library folder selects a local or OneDrive directory,
+effective after restart. An empty directory receives a consistent library
+snapshot and copies of cues, preparation, loops, queue, waveform/stem caches,
+artwork and sampler assets. Originals are retained. Selecting an existing
+portable library opens it rather than merging the current library into it.
+No data is moved to OneDrive until the user chooses that folder.
+
+The folder contains `library.snapshot.db` plus the portable assets. The app
+uses a machine-local working SQLite database under
+`<machine-data>/library-workspaces/<folder-hash>/library.db`, restoring the shared
+snapshot at startup and publishing a consistent `VACUUM INTO` snapshot after a
+normal shutdown. Never sync or copy a live SQLite database and its WAL files as
+an alternative to this handoff. `library-location.json`, `settings.json`, audio
+device selections, credentials, build tools and the Python/model runtime stay
+local. `DJCRAFT_DATA_DIR` still isolates development configuration and local work.
+
+Use one computer at a time. Close faderCraft and let OneDrive finish syncing
+before opening on another machine. Mark the portable library (and any music
+needed offline) Always keep on this device. This is snapshot handoff, not a
+concurrent cloud database or automatic merge service. A changed shared snapshot
+prevents an older session from overwriting it; unpublished local work and its
+session marker are retained for recovery. Startup shows storage failures rather
+than silently opening a different library. Logs report failed publication.
+An interrupted session can resume locally if the shared snapshot has not changed.
+
+Music is not moved. On a computer with different music paths, use the existing
+Find missing files / relink tools, preserving track IDs rather than reimporting
+duplicates. Hot cues, cue appearance, saved loops, preparation and saved queues
+now use stable `library-track:<token>` keys where tracks are in the library.
+Schema 19 backfills permanent random track tokens and assigns them to new tracks;
+deleted SQLite row IDs cannot reattach old cues to unrelated new music. Legacy
+path keys are converted on load and persisted before later relinking, retaining
+a `.before-portable-ids` backup of the original JSON file. Loose
+tracks not registered in the library still use their original paths.
+
+MusicBrainz release details now offer Cover Art Archive front covers (500px).
+Download cover previews an image; Save to library fetches an available cover
+and stores its relative `artwork/<release-id>-500.jpg`/`.png` filename in the saved
+metadata. Missing/failed covers do not block metadata saving. Cached covers are
+shown in Track info before embedded artwork, and no image is written to music
+tags. Existing metadata snapshots tolerate the added optional image fields.
+iTunes and Discogs artwork downloads are not implemented in this first pass.
+`cargo run -p djcraft-library --example cover -- <release-id> <cache-root>`
+provides a read-only source-file download/cache diagnostic.
+
+## Saved online metadata (23 October 2026)
+
+The lookup popup fetches detailed information for a selected result in the
+background and caches it for that search. MusicBrainz recording/release lookups,
+iTunes track/album lookups and authenticated Discogs release lookups supply
+dates, duration, credits, labels/catalogue numbers, identifiers and release
+track lists where available. AcoustID recording IDs can use MusicBrainz details.
+Search-generation guards discard old replies; failed detail requests leave search
+results available and offer retry. All MusicBrainz requests share a rate limiter.
+
+Discogs searches find releases, so a selected release's actual track list is
+matched against the requested version before copying title/artist. An unmatched
+release remains inspectable but cannot copy fabricated track metadata. Detail
+inspection never writes tags. The primary Save to library action stores the
+accepted main fields, year, detailed provider snapshot and searchable text in
+schema 18's track_metadata table. Main fields are applied to tracks and restored
+after rescans; deliberate tag edits supersede corresponding accepted fields.
+Search includes saved detail values and year, but excludes other tracks in the
+release track list. Reopening Metadata reads the saved snapshot offline; only
+Search or switching provider performs another lookup. Both library views refresh
+after save. Copy to tag editor retains the separate reviewed file-write/undo flow.
+`cargo run -p djcraft-library --example lookup -- <artist> <title> --details`
+prints full details for the top result of each configured provider for diagnostics.
+Discogs live verification requires a personal token; fixtures cover its parser.
 
 ## Controller bridge checkpoint (current-machine work)
 
@@ -509,7 +752,7 @@ its startup latency; paused decks prepare this ahead of Play. Starts immediately
 after a seek/load prepare on the first callback. The 64-frame peak-protection
 lookahead and device/output buffering still apply. No device latency is removed.
 
-Current-set history: schema 17 adds play_sets/play_history; no music tags are changed. Shell HistoryTracker accumulates 10 seconds of audible playback per loaded deck track, excluding Cue and scrubbing. Library > History starts fresh sets and browses retained sets. Both track browsers display [Played] beside the title. Flags persist across restarts; explicitly start New set to clear them.
+Current-set history: schema 17 adds play_sets/play_history; no music tags are changed. Shell HistoryTracker accumulates 10 seconds of audible playback per loaded deck track, excluding Cue and scrubbing. Library > History starts fresh sets and browses retained sets. Both track browsers display a checkmark icon beside the title (hover: Played in current set). Flags persist across restarts; explicitly start New set to clear them.
 
 ## faderCraft branding (19 October 2026)
 The user-facing name is now faderCraft. Windows MSVC builds embed the lime/sapphire fader icon as resource ID 1 (GPUI loads this for the taskbar), plus product metadata. Build requires Windows SDK rc.exe, provided by tools/dev-shell.ps1. Cargo package/executable and existing data paths remain djcraft/DJCraft for compatibility with libraries, caches and launch scripts.

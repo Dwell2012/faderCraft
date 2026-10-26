@@ -1,5 +1,9 @@
 # djcraft feature list
 
+- [x] Select downloadable Fast or Detailed (fine-tuned) stem models in Audio settings, with model-specific caches and persistent GPU/CPU processing.
+
+- [x] Preload a persistent stem model at startup with a splash screen; reuse the worker and GPU weights across tracks, with CPU override/fallback and worker recovery.
+
 djcraft is an open-source DJ application: a music library manager, a live mixing
 engine at rekordbox Performance-mode parity, in-app radio for listening to other
 DJs' live mixes, and remote collaboration.
@@ -57,8 +61,10 @@ the committed scope of the custom build.
 
 - [~] BPM and beat grid detection (constant tempo and four beats to the bar
       only; kick phase uses uncompressed bass strength to reject quieter
-      offbeat notes, with attack timing refined from spectral flux. Covered by
-      synthetic regression tests and checked against Castles In The Sky;
+      offbeat notes, with attack timing refined from spectral flux. Repeated
+      descending-pitch kicks anchor on the first confirmed run, refine locally and project the
+      grid backwards, avoiding an offbeat bass-intro lock. Covered by
+      synthetic regression tests and checked against Castles In The Sky and ATB 9PM;
       broader real-track accuracy is unmeasured; manual grid editing is missing)
 - [~] Key detection (one key per track, major or minor; tested on
       synthetic music only, so accuracy on real tracks is not measured yet)
@@ -112,6 +118,25 @@ Feature set modelled on Mixed In Key 10.
       the results and prefers original releases; Discogs needs the user's own
       token and is untested against the live service)
 - [x] Review-and-diff screen before any tag is written
+- [x] Online lookup detail panel: selected MusicBrainz, iTunes and Discogs results
+      fetch track/release dates, duration, credits, identifiers, label/catalogue
+      information and release track lists where supplied, with a provider link.
+      AcoustID matches can fetch MusicBrainz details. Discogs tag-copy requires a
+      track-list match; detailed fields are for inspection, not automatic writes.
+- [x] One-time online lookup saved to the library: accepted metadata and provider
+      details persist offline and survive rescans. Local search includes saved
+      credits, label/catalogue numbers, identifiers and dates. Metadata opens the
+      saved snapshot without another request; Search explicitly refreshes it.
+      Save to library never writes audio-file tags.
+- [x] Download MusicBrainz release front covers through Cover Art Archive, cache
+      them with the library and display offline without modifying music tags.
+      iTunes/Discogs image downloads remain pending.
+- [~] Portable library folder selectable in Settings, including OneDrive:
+      asset/cue/stem storage plus consistent SQLite snapshot handoff between
+      computers. Local working database and device settings remain local.
+      One computer at a time, close and finish syncing before switching; no
+      concurrent merge support. Registered tracks retain cue/preparation identity
+      after relinking files from different music locations.
 - [x] Reviewed recording date/year edits with undo; omitted dates preserve existing values (programmatic tag edits).
 - [x] Batch tag alignment with undo (writes the analysed BPM, key and energy
       into the tags of every track in the list; any batch of tag changes can
@@ -152,6 +177,9 @@ Feature set modelled on Mixed In Key 10.
 - [x] Track browser with virtualised table, sorting, column chooser, search
 - [~] Playlists and folders (folders inside folders, rename, move, reorder
       tracks by menu or drag and drop in playlist order; sidebar reordering pending)
+- [x] Nested playlist sublists with independent tracks, expand/collapse and
+      creation from a playlist's menu in Library and the performance browser.
+      Deleting a parent retains its sublists; moving to a folder carries the subtree.
 - [x] Smart playlists (rule-based) (title, artist, album, genre, BPM,
       energy, year, key or keys that mix, and date added; every rule or any)
 - [x] Auto-classification by genre, energy and era (automatic groups in the
@@ -189,8 +217,16 @@ Feature set modelled on Mixed In Key 10.
 ### Decks
 
 - [x] Two decks with scrolling and overview waveforms
-- [x] Frequency-coloured waveforms: low red, mid green, high blue, with
-      three independently smoothed translucent overlays, dimmed played sections
+- [x] Deck-coloured waveforms: dark/primary/light low/mid/high overlays in each
+      deck's lime/sapphire/amber/violet palette, including track overviews.
+      Per-deck Wave / Stems switches the same scrolling row to translucent
+      vocal/instrument/bass/drum overlays when prepared stems are available.
+      Two rows in two-deck mode and four rows in four-deck mode; no extra lanes.
+      Classic EQ scales each frequency overlay live in deck waveforms and
+      overviews; killed bands disappear. Stem overlays follow the actual
+      stem gains from EQ controls or pad mutes, hiding muted sources.
+      Stem envelopes are prepared off the audio thread from real separated audio.
+      Frequency envelopes use three independently smoothed translucent overlays
       and cached stereo band analysis (250 Hz/2.5 kHz splits)
 - [~] Play/pause, cue, jump to start (play and pause only)
 - [~] Tempo fader with selectable ranges (slower and faster buttons in 1%
@@ -222,7 +258,9 @@ Feature set modelled on Mixed In Key 10.
 - [x] Three-band complementary EQ (250 Hz / 2.5 kHz crossovers, neutral
       centre, band kill to +6 dB); drag knobs vertically, double-click to reset
 - [ ] Channel filter
-- [~] Headphone cue follows the active deck, post-EQ/effects and before channel,
+- [~] Independent per-deck headphone cue toggles in both two- and four-deck views,
+      supporting multiple decks or all off; activation/keyboard focus is separate.
+      Cue is post-EQ/effects and before channel,
       crossfader and master faders. Settings select a separate stereo pair on the
       same ASIO/shared multichannel device. Cue/master blend exists in the protocol;
       right-side mixer knobs provide headphone volume and cue/master blend
@@ -248,10 +286,30 @@ Feature set modelled on Mixed In Key 10.
 
 ### Decks and transport
 
-- [ ] Four decks
+- [x] Four independent decks (A–D), with a saved 2 Decks / 4 Decks view switch,
+      four mixer channels, waveforms, transport, pads, loops, effects, stems and
+      headphone selection. Compact four-deck panels keep the library at the
+      two-deck view's height. A/B tools expand over C/D; C/D slide up over A/B
+      with tools underneath. The active tool tab closes the animated overlay.
+      Mirrored control groups retain internal button order. Four-deck columns
+      group key/pitch/tempo, transport, and activation/headphone cue. Stems has
+      its own transport row above Play/Load; two-deck controls use one row.
+      Compact Cue, Sync and Stems buttons match the Play/Load row width and size.
+      Four-deck platters and BPM/key information sit at the outer edges;
+      key details share one line with subtle vertical dividers.
+      Mixer channels follow A/C/B/D, with volume faders below EQ, outer VU meters, central stereo
+      master meters and a single sampler/master/headphone knob row.
+      A/C default to the left crossfader side; B/D to the right. Independent
+      A/B/C/D toggles on each side allow multiple assignments; neither side
+      bypasses the crossfader, and both sides stay at unity without boosting.
+      Four-deck Sync follows the longest continuously playing other deck with
+      a beat grid; falls back to pairing when none is playing.
+      Automix remains on A/B; custom controller mappings can address C/D.
+      Existing two-deck hardware profiles retain their original assignments.
 - [ ] Slip mode
 - [ ] Reverse play
 - [x] Loop move and independent In / Out adjustment
+- [x] Beat-loop sizing down to 0.125 and 0.0625 beats through resize and Direct controls
 - [ ] 16 hot cues per deck
 - [~] Key shift and key sync (a block in Flow can be shifted by semitones
       for planning; the decks cannot shift key yet)
@@ -285,7 +343,9 @@ Feature set modelled on Mixed In Key 10.
       while preserving their individual levels, with smoothed gain changes.
 
 - [x] Local cached four-source separation (vocals, instruments, bass, drums);
-      optional CPU Demucs runtime/model installed with `tools/setup-stems.ps1`
+      optional Demucs runtime/model installed with `tools/setup-stems.ps1`.
+      Settings > Audio selects Automatic (GPU preferred, default) or CPU only;
+      GPU failures retry with the existing four-thread CPU cap.
 - [x] EQ dropdown beside Stems: Classic, EZRemix, Modern EQ and four-stem layouts
       (see [STEMS.md](STEMS.md) for source grouping and setup)
 - [~] Per-stem level / full cut, mousewheel, double-click reset and smoothed gains
@@ -442,8 +502,8 @@ sources need it first); each later milestone adds its own extension points.
 The interface is inspired by djay Pro's approach: few visible controls, large
 waveforms, and options tucked into popovers.
 
-- [ ] Mode switcher: classic two-turntable view, 2-deck waveform view, 4-deck
-      view, automix view, single-deck prep view
+- [~] Mode switcher: saved 2 Decks / 4 Decks performance views (classic
+      two-turntable view, automix view and single-deck prep view remain pending)
 - [ ] Horizontal and vertical waveform layouts
 - [~] Library docked under the decks, expandable to full window, with a source
       sidebar (local, playlists, external sources, radio) (folders and
@@ -533,6 +593,10 @@ waveforms, and options tucked into popovers.
 - [x] Stem mute/isolate pads work with Classic EQ and prepared stems
 - [x] Cue flags on rhythm waveforms, parameter wheel controls and page cycling
 - [x] Automated Scratch: eight native patterns, quantized starts, Over/Cut and transport recovery
+- [x] Key Shift pads: latched ±12-semitone deck transposition, semitone/whole-tone/major/natural-minor pad modes, reset and protocol state; tempo remains independent with Key Lock enabled.
+- [x] Below the waveform, the outer side of each platter displays the current musical/Camelot key after Key Shift, with cents for unlocked tempo changes; missing source keys are shown as unknown.
+- [x] Ctrl-scroll on Classic or stem EQ moves the other deck's matching band by the opposite control amount, preserving offsets and respecting limits.
+- [x] Ctrl-scroll on deck volume faders lowers one while raising the other by the same fader amount, within limits.
 - [~] Sampler: 16 persistent slots, disk/library imports, 12 original defaults, source capture, On/Off/Hold/Stutter, looping and master output [multiple banks and routing pending]
 - [ ] StemSwap, Keycue, Scratchbank, DMX, custom scripting/editor and hardware pad assignments
 
@@ -641,7 +705,7 @@ lookahead and device/output buffering still apply. No device latency is removed.
 
 ### Current-set play history
 
-- [x] Library and performance browser mark tracks `[Played]` after 10 seconds of audible master playback (not headphone/Cue previews or waveform scrubbing).
+- [x] Library and performance browser mark tracks with a checkmark icon after 10 seconds of audible master playback (not headphone/Cue previews or waveform scrubbing).
 - [x] Library > History lists each set in play order, with Previous/Next and New set controls. Sets and flags survive restarts; starting a new set clears current flags without deleting earlier history. Each file appears once per set.
 
 - [x] Track right-click menu: Remove from library (keep file), including missing tracks. Removes playlist/Flow references and excludes the file from future folder scans.
