@@ -165,6 +165,7 @@ pub enum Tab {
 }
 
 pub struct Shell {
+    stems_starting: bool,
     play_history: [HistoryTracker; DECKS],
     sync_playback: [SyncPlayback; DECKS],
     deck_focus: FocusHandle,
@@ -397,6 +398,7 @@ impl Shell {
             });
         }
         let mut shell = Self {
+            stems_starting: true,
             automix: Default::default(),
             saved_queue: Vec::new(),
             automix_notice: String::new(),
@@ -490,6 +492,21 @@ impl Shell {
             loop_in: [None; DECKS],
             loop_notice: std::array::from_fn(|_| String::new()),
         };
+        let prefer_gpu = shell.settings.stem_gpu;
+        let model = shell.settings.stem_model.name();
+        let warmup = cx
+            .background_executor()
+            .spawn(async move { crate::stems::warm_up(prefer_gpu, model) });
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = warmup.await {
+                eprintln!("Stem startup: {error}");
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.stems_starting = false;
+                cx.notify();
+            });
+        })
+        .detach();
         for (deck, path) in tracks.into_iter().take(DECKS).enumerate() {
             shell.send(deck, DeckAction::Load { path });
         }
@@ -1965,6 +1982,25 @@ fn clock(seconds: f64) -> String {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.stems_starting {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .bg(cx.theme().background)
+                .text_color(cx.theme().foreground)
+                .child(div().text_3xl().child("faderCraft"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Loading stem model and warming up audio processing…"),
+                )
+                .into_any_element();
+        }
         for deck in 0..DECKS {
             if let Some((start, began)) = self.tempo_returns[deck] {
                 let elapsed = began.elapsed().as_secs_f64();

@@ -114,6 +114,7 @@ fn main() {
         .expect("failed to open window");
         cx.activate(true);
     });
+    stems::shutdown();
     if let Err(error) = storage::finish() {
         eprintln!("Library snapshot was not published: {error}");
     }

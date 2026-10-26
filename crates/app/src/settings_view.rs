@@ -1,6 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme, Icon, Sizable,
+    ActiveTheme, Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
@@ -12,7 +12,7 @@ use gpui_kit::*;
 use djcraft_library::Placement;
 use djcraft_library::lookup::Provider;
 
-use crate::settings::{self, Settings, StartTab, ThemeChoice};
+use crate::settings::{self, Settings, StartTab, StemModel, ThemeChoice};
 
 actions!(settings, [CloseSettings]);
 
@@ -100,6 +100,9 @@ pub struct SettingsView {
     /// draw, as making them needs the window.
     key_inputs: Option<[Entity<InputState>; 2]>,
     library_notice: Option<String>,
+    model_download: bool,
+    model_notice: String,
+    models_downloaded: [bool; 2],
 }
 
 impl SettingsView {
@@ -111,7 +114,49 @@ impl SettingsView {
             focus: cx.focus_handle(),
             key_inputs: None,
             library_notice: None,
+            model_download: false,
+            model_notice: String::new(),
+            models_downloaded: StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name())),
         }
+    }
+
+    fn download_stem_model(&mut self, model: StemModel, cx: &mut Context<Self>) {
+        if self.model_download {
+            return;
+        }
+        self.model_download = true;
+        self.model_notice = format!("Downloading {} model…", model.label());
+        cx.notify();
+        let work = cx
+            .background_executor()
+            .spawn(async move { crate::stems::download_model(model.name()) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.model_download = false;
+                this.model_notice = match result {
+                    Ok(()) => format!("{} model ready", model.label()),
+                    Err(error) => error,
+                };
+                this.models_downloaded =
+                    StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name()));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn model_download_button(&self, model: StemModel, index: usize, cx: &Context<Self>) -> Button {
+        Button::new(("download-stem-model", index))
+            .outline()
+            .w(px(200.))
+            .label(if self.models_downloaded[index] {
+                "Downloaded"
+            } else {
+                "Download"
+            })
+            .disabled(self.model_download || self.models_downloaded[index])
+            .on_click(cx.listener(move |this, _, _, cx| this.download_stem_model(model, cx)))
     }
 
     /// Makes the key and token text boxes, filled in from the settings, and
@@ -392,6 +437,22 @@ impl SettingsView {
                 let cue = self.dropdown("cue-pair", self.settings.audio_cue_pair.unwrap_or(u16::MAX), &[u16::MAX, 0, 2, 4, 6],
                     |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
                     |s, n| s.audio_cue_pair = if n == u16::MAX { None } else { Some(n) }, cx);
+                let stems = self.dropdown("stem-device", self.settings.stem_gpu, &[true, false],
+                    |gpu| if gpu { "Auto (GPU preferred)" } else { "CPU only" },
+                    |s, gpu| s.stem_gpu = gpu, cx);
+                let model = self.dropdown("stem-model", self.settings.stem_model, &StemModel::ALL,
+                    StemModel::label, |s, model| s.stem_model = model, cx);
+                let fast_download = self.model_download_button(StemModel::Fast, 0, cx);
+                let detailed_download = self.model_download_button(StemModel::Detailed, 1, cx);
+                let mut stem_rows = vec![
+                    self.row("Separation model", "Reload a deck after switching. Each model keeps its own stem cache.", model, cx),
+                    self.row("Fast model", "Demucs: quicker four-stem separation.", fast_download, cx),
+                    self.row("Detailed model", "Fine-tuned Demucs: potentially cleaner separation, around four times slower.", detailed_download, cx),
+                    self.row("Processing device", "Applies to new jobs. Automatic falls back to CPU if needed; CPU uses at most four threads. Prepared stems stay cached.", stems, cx),
+                ];
+                if !self.model_notice.is_empty() {
+                    stem_rows.push(self.row("Download status", "", self.info(self.model_notice.clone(), cx), cx));
+                }
                 vec![self.section("Output", vec![
                     self.row("Currently running", "New audio selections take effect after restarting faderCraft.", self.info(self.audio.clone(), cx), cx),
                     self.row("Audio backend", "WASAPI exclusive uses the device directly and prevents other apps sharing that output. ASIO uses an installed driver.", backend, cx),
@@ -399,7 +460,7 @@ impl SettingsView {
                     self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
                     self.row("Master output pair", "Stereo software channels on the selected device. Changes require restart.", master, cx),
                     self.row("Headphone cue pair", "Monitors decks enabled with their headphone buttons, independently of active deck and channel faders. Use a distinct pair on the same multichannel device; ASIO recommended. Exclusive WASAPI is stereo only.", cue, cx),
-                ], cx)]
+                ], cx), self.section("Stem preparation", stem_rows, cx)]
             }
             Page::Library => {
                 let scan = Switch::new("scan-on-startup")

@@ -164,8 +164,17 @@ impl Shell {
         })
         .detach();
         let worker_track = track.clone();
+        let prefer_gpu = self.settings.stem_gpu;
+        let model = self.settings.stem_model.name();
         let work = cx.background_executor().spawn(async move {
-            let ready = crate::stems::load_or_prepare(&worker_track, &root, prepare, &progress)?;
+            let ready = crate::stems::load_or_prepare(
+                &worker_track,
+                &root,
+                prepare,
+                &progress,
+                prefer_gpu,
+                model,
+            )?;
             if ready && worker_track.vocal_regions().is_none() {
                 if let Some(vocals) = worker_track.vocal_stem() {
                     let regions =

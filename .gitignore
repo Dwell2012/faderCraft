@@ -1,1 +1,5 @@
 /target
+
+# Python worker bytecode
+__pycache__/
+*.py[cod]

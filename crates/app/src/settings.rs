@@ -83,6 +83,31 @@ impl StartTab {
     }
 }
 
+/// Both models produce the same four sources; only preparation differs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StemModel {
+    #[default]
+    Fast,
+    Detailed,
+}
+
+impl StemModel {
+    pub const ALL: [Self; 2] = [Self::Fast, Self::Detailed];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fast => "htdemucs",
+            Self::Detailed => "htdemucs_ft",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "Fast",
+            Self::Detailed => "Detailed (fine-tuned)",
+        }
+    }
+}
+
 /// The user's preferences. Every field has a default, so a settings file
 /// from an older version, or with a setting missing, still loads.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -98,6 +123,9 @@ pub struct Settings {
     pub start_tab: StartTab,
     /// Show all four decks in the performance view.
     pub four_decks: bool,
+    /// Prefer an available GPU for local stem preparation; false forces CPU.
+    pub stem_gpu: bool,
+    pub stem_model: StemModel,
     /// Check the library's folders for changes when the app opens.
     pub scan_on_startup: bool,
     /// Pick up changes to the library's folders while the app is open.
@@ -183,6 +211,8 @@ impl Default for Settings {
             theme: ThemeChoice::default(),
             start_tab: StartTab::default(),
             four_decks: false,
+            stem_gpu: true,
+            stem_model: StemModel::Fast,
             scan_on_startup: true,
             watch_folders: true,
             info_provider: Provider::default(),
@@ -272,6 +302,8 @@ mod tests {
             theme: ThemeChoice::Light,
             start_tab: StartTab::Library,
             four_decks: true,
+            stem_gpu: false,
+            stem_model: StemModel::Detailed,
             scan_on_startup: false,
             watch_folders: false,
             info_provider: Provider::Itunes,
@@ -307,6 +339,8 @@ mod tests {
         assert_eq!(partial.audio_buffer, 0);
         assert!(partial.scan_on_startup);
         assert!(partial.watch_folders);
+        assert!(partial.stem_gpu);
+        assert_eq!(partial.stem_model, StemModel::Fast);
         assert_eq!(partial.tempo_range(), TempoRange::default());
 
         std::fs::write(dir.join(FILE_NAME), "not json").unwrap();

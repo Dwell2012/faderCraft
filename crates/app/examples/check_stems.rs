@@ -21,7 +21,11 @@ fn main() -> Result<(), String> {
     let root = Path::new(&root).join("stem-check");
     println!("Runtime: {}", stems::runtime_dir().display());
     let progress = AtomicU8::new(0);
-    stems::load_or_prepare(&excerpt, &root, true, &progress)?;
+    let model = std::env::args().nth(2).unwrap_or_else(|| "htdemucs".into());
+    stems::warm_up(true, &model)?;
+    let result = stems::load_or_prepare(&excerpt, &root, true, &progress, true, &model);
+    stems::shutdown();
+    result?;
     if !excerpt.stems_ready() {
         return Err("stem validation did not complete".into());
     }
