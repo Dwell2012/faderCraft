@@ -96,6 +96,8 @@ pub struct Settings {
     pub audio_cue_pair: Option<u16>,
     pub theme: ThemeChoice,
     pub start_tab: StartTab,
+    /// Show all four decks in the performance view.
+    pub four_decks: bool,
     /// Check the library's folders for changes when the app opens.
     pub scan_on_startup: bool,
     /// Pick up changes to the library's folders while the app is open.
@@ -180,6 +182,7 @@ impl Default for Settings {
             audio_cue_pair: None,
             theme: ThemeChoice::default(),
             start_tab: StartTab::default(),
+            four_decks: false,
             scan_on_startup: true,
             watch_folders: true,
             info_provider: Provider::default(),
@@ -268,6 +271,7 @@ mod tests {
             audio_cue_pair: Some(2),
             theme: ThemeChoice::Light,
             start_tab: StartTab::Library,
+            four_decks: true,
             scan_on_startup: false,
             watch_folders: false,
             info_provider: Provider::Itunes,

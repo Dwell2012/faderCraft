@@ -12,7 +12,7 @@ pub struct Controllers {
     next_scan: std::time::Instant,
     failed: std::collections::BTreeSet<String>,
     trace_notes: usize,
-    monitor_deck: u8,
+    monitor: djcraft_protocol::MonitorState,
     outputs: std::collections::BTreeMap<String, (Output, Vec<[u8; 3]>)>,
 }
 
@@ -23,7 +23,17 @@ impl Controllers {
         };
         let json = std::fs::read_to_string(&path)
             .map_err(|e| format!("controller profile {path:?}: {e}"))?;
-        let bridge = Bridge::new(Profile::from_json(&json)?)?;
+        let mut profile = Profile::from_json(&json)?;
+        // Upgrade only the named legacy headphone buttons; custom activation mappings stay intact.
+        for mapping in &mut profile.mappings {
+            if mapping.id.starts_with("headphone-cue-")
+                && let djcraft_controllers::Binding::HostButton { press, .. } = &mut mapping.binding
+                && let djcraft_controllers::HostCommand::SelectDeck { deck } = *press
+            {
+                *press = djcraft_controllers::HostCommand::ToggleHeadphoneCue { deck };
+            }
+        }
+        let bridge = Bridge::new(profile)?;
         let mut controllers = Self {
             bridge,
             inputs: Vec::new(),
@@ -35,7 +45,7 @@ impl Controllers {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
             outputs: Default::default(),
-            monitor_deck: 0,
+            monitor: Default::default(),
         };
         controllers.rescan();
         Ok(Some(controllers))
@@ -113,7 +123,7 @@ impl Controllers {
         let connected: Vec<_> = self.inputs.iter().map(|(n, _)| n.clone()).collect();
         for name in connected {
             if self.outputs.contains_key(&name)
-                || self.bridge.feedback(&name, self.monitor_deck).is_empty()
+                || self.bridge.feedback_monitor(&name, self.monitor).is_empty()
             {
                 continue;
             }
@@ -134,7 +144,7 @@ impl Controllers {
     }
 
     fn sync_feedback(&mut self, port: &str, force: bool) {
-        let desired = self.bridge.feedback(port, self.monitor_deck);
+        let desired = self.bridge.feedback_monitor(port, self.monitor);
         let Some((output, previous)) = self.outputs.get_mut(port) else {
             return;
         };
@@ -184,7 +194,7 @@ impl Controllers {
             self.trace_notes -= 1;
         }
         let force = self.bridge.profile().mappings.iter().any(|m| m.port == port && matches!(&m.binding, djcraft_controllers::Binding::Jog { config } if config.scratch_toggle == Some(event.source)));
-        self.monitor_deck = state.monitor.deck;
+        self.monitor = state.monitor;
         let actions = self.bridge.process(port, event, state);
         let force = force
             || self.bridge.profile().mappings.iter().any(|m| {
@@ -201,7 +211,7 @@ impl Controllers {
 
     pub fn tick(&mut self, state: &SessionState) -> Vec<Action> {
         let actions = self.bridge.tick(state);
-        self.monitor_deck = state.monitor.deck;
+        self.monitor = state.monitor;
         let ports: Vec<_> = self.outputs.keys().cloned().collect();
         for port in ports {
             self.sync_feedback(&port, false);

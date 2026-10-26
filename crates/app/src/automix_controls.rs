@@ -6,7 +6,7 @@ impl Shell {
             match engine.apply(Role::Host, Action::Mixer { action }) {
                 Ok(()) => {
                     self.automix_notice.clear();
-                    self.tempo_returns = [None; 2];
+                    self.tempo_returns = [None; DECKS];
                 }
                 Err(error) => {
                     self.automix_notice = format!(

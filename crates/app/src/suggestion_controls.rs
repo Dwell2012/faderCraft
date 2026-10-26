@@ -1,7 +1,7 @@
 use super::*;
 impl Shell {
     pub(super) fn ensure_loudness(&mut self, cx: &mut Context<Self>) {
-        for deck in 0..2 {
+        for deck in 0..DECKS {
             let Some(track) = self
                 .engine
                 .as_ref()

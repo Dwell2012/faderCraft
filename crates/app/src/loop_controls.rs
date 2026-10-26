@@ -17,6 +17,7 @@ impl Default for LoopOptions {
     }
 }
 const VIEWS: [&str; 5] = ["Main", "Adjust", "Saved", "Record", "Direct"];
+const MIN_LOOP_EXPONENT: i32 = -4;
 fn snap(time: f64, grid: TempoResult) -> f64 {
     (grid.first_beat_seconds
         + ((time - grid.first_beat_seconds) / grid.beat_seconds()).round() * grid.beat_seconds())
@@ -153,7 +154,7 @@ impl Shell {
     }
     pub(super) fn resize_loop(&mut self, deck: usize, step: i32, cx: &mut Context<Self>) {
         let previous = self.loop_size[deck];
-        self.loop_size[deck] = (previous + step).clamp(-2, 6);
+        self.loop_size[deck] = (previous + step).clamp(MIN_LOOP_EXPONENT, 6);
         if let Some([start, end]) = self.loop_state(deck).and_then(|s| s.loop_region) {
             let length = (end - start) * 2f64.powi(self.loop_size[deck] - previous);
             let region = if self.loop_options[deck].backward {
@@ -194,7 +195,7 @@ impl Shell {
     ) {
         let Some(path) = self.deck_paths[deck]
             .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(crate::track_identity::key)
         else {
             return;
         };
@@ -313,7 +314,11 @@ impl Shell {
             .loop_region
             .and_then(|[a, b]| self.grids[deck].map(|g| (b - a) / g.beat_seconds()))
             .unwrap_or(2f64.powi(self.loop_size[deck]));
-        let label = format!("{} beats", (beats * 100.).round() / 100.);
+        let beat_label = format!("{beats:.4}");
+        let label = format!(
+            "{} beats",
+            beat_label.trim_end_matches('0').trim_end_matches('.')
+        );
         let colour = if deck == 0 {
             rgb(0xc8ff38)
         } else {
@@ -542,7 +547,7 @@ impl Shell {
             2 => {
                 let slots = self.deck_paths[deck]
                     .as_ref()
-                    .and_then(|p| self.saved_loops.get(p.to_string_lossy().as_ref()))
+                    .and_then(|p| self.saved_loops.get(&crate::track_identity::key(p)))
                     .copied()
                     .unwrap_or([None; 16]);
                 panel = panel.child(
@@ -607,21 +612,26 @@ impl Shell {
             _ => {
                 panel = panel.child(
                     div().flex().flex_wrap().gap_1().children(
-                        (-2..=5)
+                        (MIN_LOOP_EXPONENT..=5)
                             .map(|exponent| {
                                 let selected =
                                     active && (beats - 2f64.powi(exponent)).abs() < 0.001;
-                                Button::new(("direct-loop", deck * 8 + (exponent + 2) as usize))
-                                    .tooltip("Activate a loop of this length.")
-                                    .xsmall()
-                                    .outline()
-                                    .label(format!("{}", 2f64.powi(exponent)))
-                                    .selected(selected)
-                                    .disabled(!loaded || self.grids[deck].is_none())
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                Button::new((
+                                    "direct-loop",
+                                    deck * 10 + (exponent - MIN_LOOP_EXPONENT) as usize,
+                                ))
+                                .tooltip("Activate a loop of this length.")
+                                .xsmall()
+                                .outline()
+                                .label(format!("{}", 2f64.powi(exponent)))
+                                .selected(selected)
+                                .disabled(!loaded || self.grids[deck].is_none())
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         this.loop_size[deck] = exponent;
                                         this.auto_loop(deck, selected, cx);
-                                    }))
+                                    },
+                                ))
                             })
                             .collect::<Vec<_>>(),
                     ),

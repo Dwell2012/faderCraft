@@ -150,11 +150,7 @@ impl Shell {
         fx: EffectState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let accent = if deck == 0 {
-            rgb(0xc8ff38)
-        } else {
-            rgb(0x3864e8)
-        };
+        let accent = deck_colour(deck);
         let synced = parameter == 1 && fx.sync && fx.kind.timed() && self.grids[deck].is_some();
         let v = if synced {
             BEATS
@@ -269,11 +265,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let weak = cx.entity().downgrade();
-        let accent = if deck == 0 {
-            rgb(0xc8ff38)
-        } else {
-            rgb(0x3864e8)
-        };
+        let accent = deck_colour(deck);
         let mut row = div()
             .flex()
             .items_center()
@@ -539,7 +531,7 @@ impl Shell {
                     .items_center()
                     .child(format!(
                         "Deck {} · {} · {}",
-                        if deck == 0 { "A" } else { "B" },
+                        deck_label(deck),
                         slot + 1,
                         fx.kind.label()
                     ))

@@ -1,11 +1,31 @@
 use super::*;
 
-fn deck_colour(index: usize) -> Rgba {
-    if index == 0 {
-        rgb(0xc8ff38)
+pub(super) fn current_key_label(
+    key: Option<djcraft_library::Camelot>,
+    state: &DeckState,
+) -> String {
+    let Some(key) = key else {
+        return format!("Key unknown · Shift {:+.0} st", state.key_shift);
+    };
+    let offset = state.key_shift as f64
+        + if state.key_lock {
+            0.
+        } else {
+            12. * state.tempo.log2()
+        };
+    let nearest = offset.round() as i32;
+    let shifted = key.shifted(nearest);
+    let cents = ((offset - nearest as f64) * 100.).round() as i32;
+    let detune = if cents == 0 {
+        String::new()
     } else {
-        rgb(0x3864e8)
-    }
+        format!(" {cents:+}¢")
+    };
+    format!(
+        "Key {} · {shifted}{detune} · Shift {:+.0} st",
+        shifted.name(),
+        state.key_shift
+    )
 }
 
 impl Shell {
@@ -23,12 +43,13 @@ impl Shell {
             .children(
                 decks
                     .iter()
-                    .take(2)
+                    .take(self.visible_decks())
                     .enumerate()
                     .map(|(index, state)| {
                         let track = self.engine.as_ref().and_then(|e| e.track(index));
                         let grid = self.grids[index];
                         let colour = deck_colour(index);
+                        let stems_ready = track.is_some_and(|track| track.stem_levels(0).is_some());
                         div()
                             .flex()
                             .flex_1()
@@ -37,14 +58,26 @@ impl Shell {
                             .border_color(cx.theme().border)
                             .child(
                                 div()
-                                    .w(px(30.))
+                                    .w(px(94.))
                                     .flex_shrink_0()
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .text_color(colour)
                                     .font_weight(FontWeight::BOLD)
-                                    .child(if index == 0 { "A" } else { "B" }),
+                                    .gap_1()
+                                    .child(deck_label(index))
+                                    .child(Button::new(("waveform-mode", index)).xsmall().outline()
+                                        .label(if self.stem_waveforms[index] && stems_ready { "Stems" } else { "Wave" })
+                                        .selected(self.stem_waveforms[index] && stems_ready)
+                                        .disabled(!stems_ready)
+                                        .tooltip(if stems_ready {
+                                            "Switch this deck between low/mid/high waveform and vocal/instrument/bass/drum overlays."
+                                        } else { "Prepare stems to enable this deck's stem waveform view." })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.stem_waveforms[index] = !this.stem_waveforms[index];
+                                            cx.notify();
+                                        }))),
                             )
                             .child(
                                 div()
@@ -88,6 +121,9 @@ impl Shell {
                                             state.hot_cues,
                                             state.cue_appearance.clone(),
                                             index,
+                                            self.stem_waveforms[index],
+                                            if state.eq_mode == EqMode::Classic { state.eq } else { [1.; 3] },
+                                            state.stem_gains,
                                         ))
                                     })
                                     .when(track.is_none(), |this| {
@@ -129,6 +165,8 @@ impl Shell {
         &self,
         index: usize,
         state: &DeckState,
+        controls: Option<AnyElement>,
+        identity: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> Div {
         let colour = deck_colour(index);
@@ -145,106 +183,190 @@ impl Shell {
         let beat = grid
             .filter(|g| position >= g.first_beat_seconds)
             .map(|g| ((position - g.first_beat_seconds) / g.beat_seconds()).floor() as usize % 4);
-        let platter =
-            div()
-                .id(("platter", index))
-                .relative()
-                .w(px(120.))
-                .h(px(120.))
-                .flex_shrink_0()
-                .rounded_full()
-                .border_1()
-                .border_color(ring)
-                .bg(cx.theme().secondary.opacity(0.3))
-                .child(
-                    canvas(
-                        |_, _, _| (),
-                        move |bounds, _, window, _| {
-                            let centre = bounds.origin
-                                + point(bounds.size.width / 2., bounds.size.height / 2.);
-                            let radius = bounds.size.width.as_f32() / 2. - 7.;
-                            for mark in 0..120 {
-                                let angle = mark as f32 / 120. * std::f32::consts::TAU;
-                                let active =
-                                    loaded && mark as f64 / 120. <= position / duration.max(0.001);
+        let platter = div()
+            .id(("platter", index))
+            .relative()
+            .w(px(if self.settings.four_decks { 64. } else { 120. }))
+            .h(px(if self.settings.four_decks { 64. } else { 120. }))
+            .flex_shrink_0()
+            .rounded_full()
+            .border_1()
+            .border_color(ring)
+            .bg(cx.theme().secondary.opacity(0.3))
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, _| {
+                        let centre =
+                            bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
+                        let radius = bounds.size.width.as_f32() / 2. - 7.;
+                        for mark in 0..120 {
+                            let angle = mark as f32 / 120. * std::f32::consts::TAU;
+                            let active =
+                                loaded && mark as f64 / 120. <= position / duration.max(0.001);
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    centre
+                                        + point(
+                                            px(angle.sin() * radius - 1.),
+                                            px(-angle.cos() * radius - 1.),
+                                        ),
+                                    size(px(2.), px(2.)),
+                                ),
+                                if active { colour.into() } else { ring },
+                            ));
+                        }
+                        if loaded {
+                            let angle = (position * 0.5555556 * std::f64::consts::TAU) as f32;
+                            for distance in (radius as usize).saturating_sub(10)..radius as usize {
                                 window.paint_quad(fill(
                                     Bounds::new(
                                         centre
                                             + point(
-                                                px(angle.sin() * radius - 1.),
-                                                px(-angle.cos() * radius - 1.),
+                                                px(angle.sin() * distance as f32 - 1.),
+                                                px(-angle.cos() * distance as f32 - 1.),
                                             ),
                                         size(px(2.), px(2.)),
                                     ),
-                                    if active { colour.into() } else { ring },
+                                    colour,
                                 ));
                             }
-                            if loaded {
-                                let angle = (position * 0.5555556 * std::f64::consts::TAU) as f32;
-                                for distance in 39..49 {
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            centre
-                                                + point(
-                                                    px(angle.sin() * distance as f32 - 1.),
-                                                    px(-angle.cos() * distance as f32 - 1.),
-                                                ),
-                                            size(px(2.), px(2.)),
-                                        ),
-                                        colour,
-                                    ));
-                                }
-                            }
-                        },
-                    )
-                    .size_full(),
+                        }
+                    },
                 )
-                .child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .justify_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_size(px(28.))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(colour)
-                                .child(if index == 0 { "A" } else { "B" }),
-                        )
-                        .child(div().text_size(px(10.)).text_color(muted).child(
-                            if state.playing {
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(muted)
+                            .child(if state.playing {
                                 "PLAYING"
                             } else if loaded {
                                 "READY"
                             } else {
                                 "EMPTY"
-                            },
-                        )),
+                            }),
+                    ),
+            )
+            .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                this.wheel_waveform(index, event, false, cx)
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.begin_waveform_drag(index, event.position.x.as_f32(), false, cx);
+                    cx.stop_propagation();
+                }),
+            );
+
+        if self.settings.four_decks {
+            return div()
+                .flex()
+                .h(px(120.))
+                .flex_shrink_0()
+                .items_center()
+                .gap_3()
+                .when(index % 2 == 1, |row| row.flex_row_reverse())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .h_full()
+                        .items_center()
+                        .gap_3()
+                        .when(index % 2 == 1, |group| group.flex_row_reverse())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .justify_start()
+                                .gap_3()
+                                .when(index % 2 == 1, |group| group.flex_row_reverse())
+                                .child(platter)
+                                .child(
+                                    div()
+                                        .id(("compact-tempo", index))
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .when(index % 2 == 1, |info| info.items_end().text_right())
+                                        .on_scroll_wheel(cx.listener(
+                                            move |this, event: &ScrollWheelEvent, _, cx| {
+                                                this.wheel_tempo(index, event, cx)
+                                            },
+                                        ))
+                                        .child(
+                                            div().text_size(px(10.)).text_color(muted).child("BPM"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(22.))
+                                                .text_color(colour)
+                                                .child(tempo_text),
+                                        )
+                                        .child(div().text_size(px(10.)).child(format!(
+                                            "−{} remaining",
+                                            clock(remaining / state.tempo)
+                                        )))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .text_size(px(11.))
+                                                .text_color(colour)
+                                                .whitespace_nowrap()
+                                                .children(
+                                                    current_key_label(self.deck_keys[index], state)
+                                                        .split(" · ")
+                                                        .enumerate()
+                                                        .map(|(part, line)| {
+                                                            div()
+                                                                .when(part > 0, |label| {
+                                                                    label
+                                                                        .ml(px(7.))
+                                                                        .pl(px(7.))
+                                                                        .border_l_1()
+                                                                        .border_color(
+                                                                            muted.opacity(0.3),
+                                                                        )
+                                                                })
+                                                                .child(line.to_owned())
+                                                        })
+                                                        .collect::<Vec<_>>(),
+                                                ),
+                                        ),
+                                ),
+                        ),
                 )
-                .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
-                    this.wheel_waveform(index, event, false, cx)
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        this.begin_waveform_drag(index, event.position.x.as_f32(), false, cx);
-                        cx.stop_propagation();
-                    }),
-                );
+                .child(self.pitch_control(index, state, cx))
+                .children(controls)
+                .children(identity);
+        }
 
         div()
             .relative()
             .flex()
-            .when(index == 1, |d| d.flex_row_reverse())
-            .h(px(150.))
+            .when(index % 2 == 1, |d| d.flex_row_reverse())
+            .h(px(if self.settings.four_decks { 104. } else { 150. }))
             .flex_shrink_0()
             .items_center()
             .justify_end()
-            .when(index == 1, |d| d.justify_start())
+            .when(index % 2 == 1, |row| row.justify_start())
             .gap_4()
             .child(
                 div()
@@ -255,13 +377,39 @@ impl Shell {
                     .justify_center()
                     .child(platter),
             )
+            .when(loaded && !state.loading, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .w(relative(0.5))
+                        .top(px(40.))
+                        .when(index % 2 == 0, |d| {
+                            d.right(relative(0.5)).mr(px(72.)).w(px(130.))
+                        })
+                        .when(index % 2 == 1, |d| {
+                            d.left(relative(0.5)).ml(px(72.)).w(px(130.)).text_right()
+                        })
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(colour)
+                        .children(
+                            current_key_label(self.deck_keys[index], state)
+                                .split(" · ")
+                                .map(|line| div().child(line.to_owned()))
+                                .collect::<Vec<_>>(),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .w(px(90.))
                     .flex_shrink_0()
-                    .when(index == 0, |d| d.items_end().text_right())
+                    .when(index % 2 == 0, |d| d.items_end().text_right())
                     .min_w_0()
                     .gap_1()
                     .child(
@@ -518,6 +666,31 @@ fn pitch_ratio(fraction: f64) -> f64 {
 
 #[cfg(test)]
 mod pitch_tests {
+    #[test]
+    fn current_key_follows_shift_and_unlocked_tempo() {
+        use djcraft_library::Camelot;
+        use djcraft_protocol::DeckState;
+        let original = Camelot::parse("Am");
+        let mut state = DeckState {
+            tempo: 1.,
+            key_lock: true,
+            key_shift: 2.,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::current_key_label(original, &state),
+            "Key B minor · 10A · Shift +2 st"
+        );
+        state.key_shift = 0.;
+        assert!(super::current_key_label(original, &state).starts_with("Key A minor · 8A"));
+        state.key_lock = false;
+        state.tempo = 2f64.powf(1.25 / 12.);
+        assert!(super::current_key_label(original, &state).starts_with("Key B♭ minor · 3A +25¢"));
+        assert_eq!(
+            super::current_key_label(None, &state),
+            "Key unknown · Shift +0 st"
+        );
+    }
     #[test]
     fn pitch_fader_has_unity_at_centre_and_preserves_full_tempo_range() {
         assert_eq!(super::pitch_ratio(0.), super::MIN_TEMPO);

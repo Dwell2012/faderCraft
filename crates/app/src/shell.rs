@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use djcraft_engine::{Engine, MAX_TEMPO, MIN_TEMPO, Track};
+use djcraft_engine::{DECKS, Engine, MAX_TEMPO, MIN_TEMPO, Track};
 use djcraft_library::TempoResult;
 use djcraft_protocol::{Action, CrossfaderCurve, DeckAction, DeckState, EqMode, MixerAction, Role};
 #[path = "automix_controls.rs"]
@@ -40,6 +40,14 @@ use crate::waveform::{VISIBLE_SECONDS, overview, waveform};
 
 const TOP_BAR_HEIGHT: Pixels = px(52.);
 const OVERVIEW_HEIGHT: f32 = 36.;
+
+fn deck_label(deck: usize) -> &'static str {
+    ["A", "B", "C", "D"][deck]
+}
+
+fn deck_colour(deck: usize) -> Rgba {
+    rgb(crate::waveform::deck_palette(deck)[1])
+}
 
 /// Visual clock follows audio with gradual corrections between buffer updates.
 #[derive(Default, Clone, Copy)]
@@ -85,6 +93,47 @@ impl WaveformDrag {
     }
 }
 
+/// Track uninterrupted transport playback independently of seek position or output gain.
+#[derive(Default)]
+struct SyncPlayback {
+    path: Option<String>,
+    started: Option<Instant>,
+}
+
+impl SyncPlayback {
+    fn update(&mut self, path: Option<&str>, playing: bool, now: Instant) {
+        if self.path.as_deref() != path {
+            self.path = path.map(str::to_owned);
+            self.started = None;
+        }
+        if playing && path.is_some() {
+            self.started.get_or_insert(now);
+        } else {
+            self.started = None;
+        }
+    }
+}
+
+fn select_sync_reference(
+    deck: usize,
+    visible: usize,
+    grids: &[Option<TempoResult>],
+    playback: &[SyncPlayback; DECKS],
+) -> Option<usize> {
+    if visible > 2
+        && let Some(other) = (0..visible)
+            .filter(|&other| other != deck && grids[other].is_some())
+            .filter_map(|other| playback[other].started.map(|started| (other, started)))
+            .min_by_key(|&(other, started)| (started, other))
+            .map(|(other, _)| other)
+    {
+        return Some(other);
+    }
+    std::iter::once(deck ^ 1)
+        .chain(0..visible)
+        .find(|&other| other < visible && other != deck && grids[other].is_some())
+}
+
 /// Accumulate listening time, never seek distance or pitch-adjusted time.
 #[derive(Default)]
 struct HistoryTracker {
@@ -116,14 +165,16 @@ pub enum Tab {
 }
 
 pub struct Shell {
-    play_history: [HistoryTracker; 2],
+    play_history: [HistoryTracker; DECKS],
+    sync_playback: [SyncPlayback; DECKS],
     deck_focus: FocusHandle,
     active_deck: usize,
+    monitor: djcraft_protocol::MonitorState,
     focus_loaded_deck: bool,
     cue_preview: Option<(usize, f64, Option<String>)>,
-    cue_anchor: [Option<(f64, Option<String>)>; 2],
+    cue_anchor: [Option<(f64, Option<String>)>; DECKS],
     pitch_drag: Option<usize>,
-    pitch_areas: [Rc<Cell<Bounds<Pixels>>>; 2],
+    pitch_areas: [Rc<Cell<Bounds<Pixels>>>; DECKS],
     automix: djcraft_protocol::AutomixState,
     saved_queue: Vec<djcraft_protocol::QueueTrack>,
     automix_notice: String,
@@ -144,74 +195,146 @@ pub struct Shell {
     /// The beat grid of each deck's track, when it is a library track that
     /// has been analysed.
     grids: Vec<Option<TempoResult>>,
+    deck_keys: Vec<Option<djcraft_library::Camelot>>,
     /// Where each deck's whole-track waveform is on screen, for seeking.
     overview_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     waveform_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     drag: Option<WaveformDrag>,
-    display_positions: [DisplayPosition; 2],
+    display_positions: [DisplayPosition; DECKS],
     last_frame: Instant,
-    overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; 2],
-    pending_seeks: [Option<(f64, Instant)>; 2],
-    mixer_values: [f32; 23],
+    overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; DECKS],
+    pending_seeks: [Option<(f64, Instant)>; DECKS],
+    mixer_values: [f32; mixer_controls::CONTROL_COUNT],
     mixer_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     mixer_drag: Option<(usize, f32, f32)>,
-    mixer_peaks: [f32; 4],
+    mixer_peaks: [f32; DECKS + 2],
     mixer_curve: CrossfaderCurve,
+    crossfader_routing: djcraft_protocol::CrossfaderRouting,
     eq_mode: EqMode,
-    stem_tracks: [Option<std::sync::Arc<djcraft_engine::Track>>; 2],
-    stem_busy: [bool; 2],
-    stem_progress: [std::sync::Arc<std::sync::atomic::AtomicU8>; 2],
-    stem_status: [String; 2],
+    stem_waveforms: [bool; DECKS],
+    deck_eq_modes: [EqMode; DECKS],
+    stem_tracks: [Option<std::sync::Arc<djcraft_engine::Track>>; DECKS],
+    stem_busy: [bool; DECKS],
+    stem_progress: [std::sync::Arc<std::sync::atomic::AtomicU8>; DECKS],
+    stem_status: [String; DECKS],
     wheel_scrub: Option<(usize, f64, bool, Instant)>,
-    tempo_returns: [Option<(f64, Instant)>; 2],
+    tempo_returns: [Option<(f64, Instant)>; DECKS],
     /// The deck a track was loaded onto last.
     last_loaded: Option<usize>,
     pending_load: Option<(usize, String)>,
-    pads: [pad_controls::Pads; 2],
+    pads: [pad_controls::Pads; DECKS],
     pad_cues: crate::pad_store::CueStore,
     cue_appearances: crate::pad_store::AppearanceStore,
-    pad_tracks: [Option<Arc<Track>>; 2],
-    deck_panel: [usize; 2],
-    effect_view: [usize; 2],
-    effect_selected: [usize; 2],
-    effect_details: [Option<usize>; 2],
+    pad_tracks: [Option<Arc<Track>>; DECKS],
+    deck_panel: [usize; DECKS],
+    deck_tools_open: bool,
+    deck_tools_deck: usize,
+    deck_tools_from: f32,
+    deck_tools_changed: Instant,
+    effect_view: [usize; DECKS],
+    effect_selected: [usize; DECKS],
+    effect_details: [Option<usize>; DECKS],
     effect_drag: Option<(usize, usize, u8, f32, f32)>,
-    loop_size: [i32; 2],
-    loop_options: [loop_controls::LoopOptions; 2],
-    loop_view: [usize; 2],
-    loop_last: [Option<[f64; 2]>; 2],
-    loudness_tracks: [Option<(Arc<Track>, f64, bool)>; 2],
+    loop_size: [i32; DECKS],
+    loop_options: [loop_controls::LoopOptions; DECKS],
+    loop_view: [usize; DECKS],
+    loop_last: [Option<[f64; 2]>; DECKS],
+    loudness_tracks: [Option<(Arc<Track>, f64, bool)>; DECKS],
     preparations: crate::preparation::Preparations,
     preparation_pending: std::collections::BTreeSet<String>,
-    preparation_selected: [Option<usize>; 2],
+    preparation_selected: [Option<usize>; DECKS],
     preparation_drag: Option<(usize, String, preparation_controls::Marker)>,
     preparation_notice: String,
     saved_loops: crate::loop_store::SavedLoops,
-    loop_recording: [Option<(std::sync::Arc<djcraft_engine::Track>, f64)>; 2],
-    loop_in: [Option<f64>; 2],
-    loop_notice: [String; 2],
+    loop_recording: [Option<(std::sync::Arc<djcraft_engine::Track>, f64)>; DECKS],
+    loop_in: [Option<f64>; DECKS],
+    loop_notice: [String; DECKS],
 }
 
 impl Shell {
+    fn has_stem_waveforms(&self) -> bool {
+        (0..self.visible_decks()).any(|deck| {
+            self.stem_waveforms[deck]
+                && self
+                    .engine
+                    .as_ref()
+                    .and_then(|engine| engine.track(deck))
+                    .is_some_and(|track| track.stem_levels(0).is_some())
+        })
+    }
+
+    fn visible_decks(&self) -> usize {
+        if self.settings.four_decks { DECKS } else { 2 }
+    }
+
+    /// Four decks follow the longest-running eligible transport; idle decks use pairing.
+    fn sync_reference(&self, deck: usize) -> Option<usize> {
+        select_sync_reference(deck, self.visible_decks(), &self.grids, &self.sync_playback)
+    }
+
+    fn set_four_decks(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        // Never hide a running deck, including an effects tail.
+        if !enabled
+            && self.engine.as_mut().is_some_and(|engine| {
+                engine.state().decks[2..]
+                    .iter()
+                    .any(|d| d.playing || d.effect_tail)
+                    || engine.state().monitor.cue_mask() & 0b1100 != 0
+            })
+        {
+            return;
+        }
+        self.end_cue_preview(cx);
+        self.end_wheel_scrub();
+        self.release_pads(cx);
+        self.end_waveform_drag(cx);
+        self.pitch_drag = None;
+        self.mixer_drag = None;
+        self.effect_drag = None;
+        self.settings.four_decks = enabled;
+        if !enabled && self.active_deck >= 2 {
+            self.active_deck %= 2;
+        }
+        if let Err(error) = self.settings.save(&crate::storage::machine_dir()) {
+            eprintln!("Could not save deck layout: {error}");
+        }
+        cx.set_global(self.settings.clone());
+        cx.notify();
+    }
+
     /// Opens the audio engine and loads `tracks` onto the decks in order.
     pub fn new(
         tracks: Vec<String>,
-        settings: Settings,
+        mut settings: Settings,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if tracks.len() > 2 {
+            settings.four_decks = true;
+        }
         let (engine, engine_error) = match crate::settings::open_audio(&settings) {
             Ok(mut engine) => {
-                for deck in 0..2 {
+                for deck in 0..DECKS {
                     let _ = engine.apply(
                         Role::Host,
                         Action::Deck {
-                            deck,
+                            deck: deck as u8,
                             action: DeckAction::SetKeyLock { on: true },
                         },
                     );
                 }
                 engine.set_cache_dir(crate::settings::waveform_dir());
+                let _ = engine.apply(
+                    Role::Host,
+                    Action::Mixer {
+                        action: MixerAction::SetMonitor {
+                            monitor: djcraft_protocol::MonitorState {
+                                cue_decks: Some(0),
+                                ..Default::default()
+                            },
+                        },
+                    },
+                );
                 engine.set_sampler_dir(data_dir().join("Sampler"));
                 (Some(engine), None)
             }
@@ -300,86 +423,74 @@ impl Shell {
             engine_error,
             deck_focus: cx.focus_handle(),
             active_deck: 0,
+            monitor: Default::default(),
             focus_loaded_deck: false,
             cue_preview: None,
-            cue_anchor: [None, None],
+            cue_anchor: std::array::from_fn(|_| None),
             pitch_drag: None,
             pitch_areas: std::array::from_fn(|_| Rc::default()),
-            deck_paths: vec![None; 2],
-            grids: vec![None; 2],
-            overview_areas: (0..2).map(|_| Rc::default()).collect(),
-            waveform_areas: (0..2).map(|_| Rc::default()).collect(),
+            deck_paths: vec![None; DECKS],
+            grids: vec![None; DECKS],
+            deck_keys: vec![None; DECKS],
+            overview_areas: (0..DECKS).map(|_| Rc::default()).collect(),
+            waveform_areas: (0..DECKS).map(|_| Rc::default()).collect(),
             drag: None,
-            display_positions: [DisplayPosition::default(); 2],
+            display_positions: [DisplayPosition::default(); DECKS],
             last_frame: Instant::now(),
             play_history: Default::default(),
+            sync_playback: Default::default(),
             overview_cache: std::array::from_fn(|_| Rc::default()),
-            pending_seeks: [None; 2],
-            mixer_values: [
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                1.,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                1.,
-                1.,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                0.5,
-                1.,
-                std::f32::consts::FRAC_1_SQRT_2,
-                0.,
-            ],
-            mixer_areas: (0..23).map(|_| Rc::default()).collect(),
+            pending_seeks: [None; DECKS],
+            mixer_values: mixer_controls::initial_values(),
+            mixer_areas: (0..mixer_controls::CONTROL_COUNT)
+                .map(|_| Rc::default())
+                .collect(),
             mixer_drag: None,
-            mixer_peaks: [0.; 4],
+            mixer_peaks: [0.; DECKS + 2],
             mixer_curve: CrossfaderCurve::default(),
+            crossfader_routing: djcraft_protocol::CrossfaderRouting::default(),
             eq_mode: EqMode::Classic,
-            stem_tracks: [None, None],
-            stem_busy: [false; 2],
+            stem_waveforms: [false; DECKS],
+            deck_eq_modes: [EqMode::Classic; DECKS],
+            stem_tracks: std::array::from_fn(|_| None),
+            stem_busy: [false; DECKS],
             stem_progress: std::array::from_fn(|_| {
                 std::sync::Arc::new(std::sync::atomic::AtomicU8::new(254))
             }),
-            stem_status: [String::new(), String::new()],
+            stem_status: std::array::from_fn(|_| String::new()),
             wheel_scrub: None,
-            tempo_returns: [None; 2],
+            tempo_returns: [None; DECKS],
             last_loaded: None,
             pending_load: None,
             pads: std::array::from_fn(|_| pad_controls::Pads::default()),
             pad_cues: crate::pad_store::load(&data_dir()),
             cue_appearances: crate::pad_store::load_appearances(&data_dir()),
-            pad_tracks: [None, None],
-            deck_panel: [2; 2],
-            effect_view: [0; 2],
-            effect_selected: [0; 2],
-            effect_details: [None; 2],
+            pad_tracks: std::array::from_fn(|_| None),
+            deck_panel: [2; DECKS],
+            deck_tools_open: false,
+            deck_tools_deck: 0,
+            deck_tools_from: 0.,
+            deck_tools_changed: Instant::now(),
+            effect_view: [0; DECKS],
+            effect_selected: [0; DECKS],
+            effect_details: [None; DECKS],
             effect_drag: None,
-            loop_size: [2; 2],
-            loop_options: [loop_controls::LoopOptions::default(); 2],
-            loop_view: [0; 2],
-            loop_last: [None; 2],
-            loudness_tracks: [None, None],
+            loop_size: [2; DECKS],
+            loop_options: [loop_controls::LoopOptions::default(); DECKS],
+            loop_view: [0; DECKS],
+            loop_last: [None; DECKS],
+            loudness_tracks: std::array::from_fn(|_| None),
             preparations: crate::preparation::load(&data_dir()),
             preparation_pending: Default::default(),
-            preparation_selected: [None; 2],
+            preparation_selected: [None; DECKS],
             preparation_drag: None,
             preparation_notice: String::new(),
             saved_loops: crate::loop_store::load(&data_dir()),
-            loop_recording: [None, None],
-            loop_in: [None; 2],
-            loop_notice: [String::new(), String::new()],
+            loop_recording: std::array::from_fn(|_| None),
+            loop_in: [None; DECKS],
+            loop_notice: std::array::from_fn(|_| String::new()),
         };
-        for (deck, path) in tracks.into_iter().enumerate() {
+        for (deck, path) in tracks.into_iter().take(DECKS).enumerate() {
             shell.send(deck, DeckAction::Load { path });
         }
         if shell.controllers.is_some() {
@@ -449,6 +560,11 @@ impl Shell {
     /// loaded last.
     fn refresh_grids(&mut self, cx: &mut Context<Self>) {
         let library = self.library.read(cx);
+        self.deck_keys = self
+            .deck_paths
+            .iter()
+            .map(|path| path.as_deref().and_then(|path| library.key_at(path)))
+            .collect();
         self.grids = self
             .deck_paths
             .iter()
@@ -460,7 +576,7 @@ impl Shell {
             .and_then(|path| library.track_at(path));
         self.browser
             .update(cx, |view, cx| view.set_reference(reference, cx));
-        for deck in 0..2 {
+        for deck in 0..DECKS {
             self.send(
                 deck,
                 DeckAction::SetBeatGrid {
@@ -550,10 +666,18 @@ impl Shell {
     /// Loads a library track. With no deck named, it goes to the first one
     /// that is not playing; if every deck is playing, nothing is replaced.
     fn load_from_library(&mut self, path: &Path, deck: Option<usize>, cx: &mut Context<Self>) {
+        let visible = self.visible_decks();
         let Some(engine) = &mut self.engine else {
             return;
         };
-        let free = || engine.state().decks.iter().position(|deck| !deck.playing);
+        let free = || {
+            engine
+                .state()
+                .decks
+                .iter()
+                .take(visible)
+                .position(|deck| !deck.playing)
+        };
         let Some(deck) = deck.or_else(free) else {
             return;
         };
@@ -578,6 +702,12 @@ impl Shell {
     }
 
     fn request_load(&mut self, deck: usize, path: String, cx: &mut Context<Self>) {
+        if deck >= DECKS {
+            return;
+        }
+        if deck >= 2 && !self.settings.four_decks {
+            self.set_four_decks(true, cx);
+        }
         if self
             .engine
             .as_mut()
@@ -671,11 +801,13 @@ impl Shell {
 
     fn sync_deck(&mut self, deck: usize, cx: &mut Context<Self>) {
         self.end_wheel_scrub();
+        let Some(other) = self.sync_reference(deck) else {
+            return;
+        };
         let Some(engine) = &mut self.engine else {
             return;
         };
         let state = engine.state();
-        let other = 1 - deck;
         if let (Some(grid), Some(reference)) = (self.grids[deck], self.grids[other]) {
             let local = &state.decks[deck];
             let master = &state.decks[other];
@@ -811,6 +943,9 @@ impl Shell {
 
     /// Sends a deck action to the engine as the session host.
     fn send(&mut self, deck: usize, action: DeckAction) {
+        if matches!(action, DeckAction::Load { .. } | DeckAction::Pause) {
+            self.sync_playback[deck] = SyncPlayback::default();
+        }
         if matches!(
             action,
             DeckAction::Load { .. }
@@ -894,7 +1029,6 @@ impl Shell {
         match engine.apply(Role::Host, action) {
             Ok(()) if loading => {
                 self.active_deck = deck;
-                self.cue_active_deck();
                 self.focus_loaded_deck = true;
             }
             Err(reason) => eprintln!("action rejected: {reason:?}"),
@@ -939,6 +1073,9 @@ impl Shell {
     fn controller_action(&mut self, action: Action, cx: &mut Context<Self>) {
         match action {
             Action::Deck { deck, action } if usize::from(deck) < self.deck_paths.len() => {
+                if deck >= 2 && !self.settings.four_decks {
+                    self.set_four_decks(true, cx);
+                }
                 match action {
                     DeckAction::Load { path } => self.request_load(usize::from(deck), path, cx),
                     DeckAction::SetHotCues { cues } => {
@@ -968,6 +1105,9 @@ impl Shell {
         if deck >= self.deck_paths.len() {
             return;
         }
+        if deck >= 2 && !self.settings.four_decks {
+            self.set_four_decks(true, cx);
+        }
         match command {
             HostCommand::LoopPad { pad, alternate, .. } => {
                 self.controller_loop_pad(deck, pad, alternate, cx);
@@ -986,9 +1126,9 @@ impl Shell {
                     self.end_cue_preview(cx);
                 }
             }
+            HostCommand::ToggleHeadphoneCue { .. } => self.toggle_headphone_cue(deck),
             HostCommand::SelectDeck { .. } => {
                 self.active_deck = deck;
-                self.cue_active_deck();
             }
             HostCommand::Stutter { .. } => {
                 if let Some(state) = self.engine.as_mut().map(|e| e.state().decks[deck].clone())
@@ -1007,10 +1147,10 @@ impl Shell {
         cx.notify();
     }
 
-    fn cue_active_deck(&mut self) {
+    fn toggle_headphone_cue(&mut self, deck: usize) {
         if let Some(engine) = &mut self.engine {
             let mut monitor = engine.state().monitor;
-            monitor.deck = self.active_deck as u8;
+            monitor.cue_decks = Some(monitor.cue_mask() ^ (1 << deck));
             let _ = engine.apply(
                 Role::Host,
                 Action::Mixer {
@@ -1084,6 +1224,33 @@ impl Shell {
                                 .on_click(cx.listener(|this, _, _, cx| this.prepare_stems(cx))),
                             )
                             .child(self.eq_mode_menu(cx))
+                            .when(self.has_stem_waveforms(), |bar| {
+                                bar.child(
+                                    div().flex().gap_2().text_size(px(10.)).children(
+                                        crate::waveform::STEM_LABELS
+                                            .into_iter()
+                                            .zip(crate::waveform::STEM_COLOURS)
+                                            .map(|(label, colour)| {
+                                                div().text_color(rgb(colour)).child(label)
+                                            }),
+                                    ),
+                                )
+                            })
+                            .children([false, true].into_iter().map(|four| {
+                                Button::new(if four { "four-decks" } else { "two-decks" })
+                                    .small()
+                                    .outline()
+                                    .label(if four { "4 Decks" } else { "2 Decks" })
+                                    .selected(self.settings.four_decks == four)
+                                    .tooltip(if four {
+                                        "Show decks A, B, C and D"
+                                    } else {
+                                        "Show A/B. Stop and uncue C/D before hiding them."
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_four_decks(four, cx)
+                                    }))
+                            }))
                         })
                         .child(
                             // Keep Windows title-bar dragging from swallowing Settings clicks.
@@ -1154,100 +1321,142 @@ impl Shell {
             .map_or(1., |track| track.duration_seconds.max(0.001));
         let playing = state.playing;
 
-        let deck_accent = if index == 0 {
-            rgb(0xc8ff38)
-        } else {
-            rgb(0x3864e8)
-        };
+        let deck_accent = deck_colour(index);
         let deck_selected = self.active_deck == index;
-        let controls = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_2()
-            .child(
-                Button::new(("load", index))
-                    .tooltip("Choose an audio file for this deck.")
-                    .outline()
-                    .small()
-                    .icon(IconName::FolderOpen)
-                    .on_click(cx.listener(move |_, _, _, cx| {
-                        let paths = cx.prompt_for_paths(PathPromptOptions {
-                            files: true,
-                            directories: false,
-                            multiple: false,
-                            prompt: Some("Load".into()),
-                        });
-                        cx.spawn(async move |this, cx| {
-                            let Ok(Ok(Some(paths))) = paths.await else {
-                                return;
-                            };
-                            let Some(path) = paths.first() else {
-                                return;
-                            };
-                            let path = path.to_string_lossy().into_owned();
-                            this.update(cx, |this, cx| {
-                                this.request_load(index, path, cx);
-                                this.refresh_grids(cx);
-                                cx.notify();
-                            })
-                            .ok();
-                        })
-                        .detach();
-                    })),
-            )
-            .child(
-                Button::new(("play", index))
-                    .tooltip("Play or pause this deck.")
-                    .primary()
-                    .small()
-                    .icon(if playing {
-                        IconName::Pause
-                    } else {
-                        IconName::Play
-                    })
-                    .disabled(state.track.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let action = if playing {
-                            DeckAction::Pause
-                        } else {
-                            DeckAction::Play
-                        };
-                        this.send(index, action);
+        let headphone_cued = self.monitor.cue_enabled(index);
+        let load_button = Button::new(("load", index))
+            .tooltip("Choose an audio file for this deck.")
+            .outline()
+            .small()
+            .icon(IconName::FolderOpen)
+            .when(self.settings.four_decks, |button| button.w(px(28.)))
+            .on_click(cx.listener(move |_, _, _, cx| {
+                let paths = cx.prompt_for_paths(PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: false,
+                    prompt: Some("Load".into()),
+                });
+                cx.spawn(async move |this, cx| {
+                    let Ok(Ok(Some(paths))) = paths.await else {
+                        return;
+                    };
+                    let Some(path) = paths.first() else {
+                        return;
+                    };
+                    let path = path.to_string_lossy().into_owned();
+                    this.update(cx, |this, cx| {
+                        this.request_load(index, path, cx);
+                        this.refresh_grids(cx);
                         cx.notify();
-                    })),
+                    })
+                    .ok();
+                })
+                .detach();
+            }));
+        let play_button = Button::new(("play", index))
+            .tooltip("Play or pause this deck.")
+            .primary()
+            .small()
+            .when(self.settings.four_decks, |button| button.w(px(28.)))
+            .icon(if playing {
+                IconName::Pause
+            } else {
+                IconName::Play
+            })
+            .disabled(state.track.is_none())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let action = if playing {
+                    DeckAction::Pause
+                } else {
+                    DeckAction::Play
+                };
+                this.send(index, action);
+                cx.notify();
+            }));
+        let sync_button = Button::new(("sync", index))
+            .outline()
+            .small()
+            .label("Sync")
+            .when(self.settings.four_decks, |button| button.w_full())
+            .tooltip(if self.settings.four_decks {
+                "Match the longest-playing other deck with a beat grid; align the nearest beat when both play. If none is playing, prefer the paired deck."
+            } else {
+                "Match the other deck's tempo; align the nearest beat when both play"
+            })
+            .disabled(
+                state.track.is_none()
+                    || self.grids[index].is_none()
+                    || self.sync_reference(index).is_none(),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.sync_deck(index, cx)));
+        let cue_button = div()
+            .id(("cue-hold", index))
+            .when(self.settings.four_decks, |group| group.w_full())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    this.begin_cue_preview(index, cx);
+                    window.focus(&this.deck_focus, cx);
+                    cx.stop_propagation();
+                }),
             )
             .child(
-                Button::new(("sync", index))
+                Button::new(("cue", index))
                     .outline()
                     .small()
-                    .label("Sync")
-                    .tooltip("Match the other deck's tempo; align the nearest beat when both play")
-                    .disabled(
-                        state.track.is_none()
-                            || self.grids[index].is_none()
-                            || self.grids[1 - index].is_none(),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.sync_deck(index, cx))),
-            )
-            .child(
-                div().id(("cue-hold", index))
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                        this.begin_cue_preview(index, cx);
-                        window.focus(&this.deck_focus, cx);
-                        cx.stop_propagation();
-                    }))
-                    .child(Button::new(("cue", index)).outline().small().label("Cue")
-                        .tooltip("Hold to preview; release to stop and return to the starting point.")
-                        .disabled(state.track.is_none()))
+                    .label("Cue")
+                    .when(self.settings.four_decks, |button| button.w_full())
+                    .tooltip("Hold to preview; release to stop and return to the starting point.")
+                    .disabled(state.track.is_none()),
             );
+        let stems_button = self
+            .prepare_stems_button(index, cx)
+            .small()
+            .when(self.settings.four_decks, |button| button.w_full());
+        let controls = if self.settings.four_decks {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_1()
+                .w(px(64.))
+                .flex_shrink_0()
+                .child(cue_button)
+                .child(sync_button)
+                .child(stems_button)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(play_button)
+                        .child(load_button),
+                )
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(cue_button)
+                .child(sync_button)
+                .child(play_button)
+                .child(load_button)
+                .child(stems_button)
+        }
+        .into_any_element();
+        let (display_controls, footer_controls) = if self.settings.four_decks {
+            (Some(controls), None)
+        } else {
+            (None, Some(controls))
+        };
         let deck_select = Button::new(("select-deck", index))
             .outline()
             .w(px(40.))
-            .h(px(36.))
-            .text_lg()
+            .h(px(28.))
+            .text_xs()
             .font_weight(FontWeight::BOLD)
-            .label(if index == 0 { "A" } else { "B" })
+            .label(deck_label(index))
             .selected(deck_selected)
             .border_color(deck_accent)
             .bg(if deck_selected {
@@ -1260,13 +1469,29 @@ impl Shell {
             } else {
                 deck_accent
             })
-            .tooltip("Select this deck for Space: play / pause.")
+            .tooltip("Activate this deck for keyboard controls. Does not change headphone cue.")
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.active_deck = index;
-                this.cue_active_deck();
                 window.focus(&this.deck_focus, cx);
                 cx.notify();
             }));
+
+        let identity = div().flex().items_center().gap_1().flex_shrink_0().when(self.settings.four_decks, |group| group.flex_col())
+                    .child(deck_select)
+                    .child(Button::new(("headphone-cue", index)).outline().small()
+                        .icon(IconName::Headphones)
+                        .selected(headphone_cued)
+                        .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
+                        .tooltip("Toggle this deck in headphones. Independent of deck activation; multiple decks can be cued.")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_headphone_cue(index);
+                            cx.notify();
+                        }))).into_any_element();
+        let (display_identity, footer_identity) = if self.settings.four_decks {
+            (Some(identity), None)
+        } else {
+            (None, Some(identity))
+        };
 
         div()
             .id(("deck-drop", index))
@@ -1290,7 +1515,7 @@ impl Shell {
             .flex_col()
             .flex_1()
             .min_w_0()
-            .gap_2()
+            .gap_1()
             .p_2()
             .min_h_0()
             .when_some(
@@ -1361,26 +1586,22 @@ impl Shell {
                 div()
                     .flex()
                     .items_center()
-                    .when(index == 1, |d| d.flex_row_reverse())
+                    .when(index % 2 == 1, |d| d.flex_row_reverse())
                     .gap_3()
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .text_color(if index == 0 {
-                                rgb(0xc8ff38)
-                            } else {
-                                rgb(0x3864e8)
-                            })
+                            .text_color(deck_colour(index))
                             .font_weight(FontWeight::BOLD)
-                            .child(if index == 0 { "A" } else { "B" }),
+                            .child(deck_label(index)),
                     )
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .when(index == 1, |d| d.text_right())
+                            .when(index % 2 == 1, |d| d.text_right())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
@@ -1410,7 +1631,11 @@ impl Shell {
                         this.wheel_waveform(index, event, true, cx)
                     }))
                     .relative()
-                    .h(px(OVERVIEW_HEIGHT))
+                    .h(px(if self.settings.four_decks {
+                        28.
+                    } else {
+                        OVERVIEW_HEIGHT
+                    }))
                     .flex_shrink_0()
                     .rounded_md()
                     .bg(theme.secondary.opacity(0.5))
@@ -1425,6 +1650,11 @@ impl Shell {
                             state.hot_cues,
                             state.cue_appearance.clone(),
                             index,
+                            if state.eq_mode == EqMode::Classic {
+                                state.eq
+                            } else {
+                                [1.; 3]
+                            },
                         ))
                     })
                     .on_mouse_down(
@@ -1435,11 +1665,12 @@ impl Shell {
                         }),
                     ),
             )
-            .child(self.deck_display(index, state, cx))
+            .child(self.deck_display(index, state, display_controls, display_identity, cx))
             .child(
                 div()
                     .flex()
-                    .when(index == 1, |d| d.flex_row_reverse())
+                    .when(index % 2 == 1, |d| d.flex_row_reverse())
+                    .flex_wrap()
                     .flex_shrink_0()
                     .items_center()
                     .gap_1()
@@ -1450,49 +1681,150 @@ impl Shell {
                                 .enumerate()
                                 .map(|(panel, label)| {
                                     Button::new(("deck-panel", index * 4 + panel))
-                                .tooltip(
-                                    "Show these tools without moving the deck transport controls.",
-                                )
-                                .xsmall()
-                                .outline()
-                                .label(label)
-                                .selected(self.deck_panel[index] == panel)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.release_pad(index);
-                                    this.deck_panel[index] = panel;
-                                    cx.notify();
-                                }))
+                                        .tooltip("Toggle tools over the other deck on this side.")
+                                        .xsmall()
+                                        .outline()
+                                        .label(label)
+                                        .selected(
+                                            self.deck_panel[index] == panel
+                                                && (!self.settings.four_decks
+                                                    || (self.deck_tools_open
+                                                        && self.deck_tools_deck == index)),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.release_pads(cx);
+                                            if this.settings.four_decks {
+                                                let same_deck = this.deck_tools_deck == index;
+                                                let close = this.deck_tools_open
+                                                    && same_deck
+                                                    && this.deck_panel[index] == panel;
+                                                this.deck_tools_from = if same_deck {
+                                                    this.deck_tools_progress()
+                                                } else {
+                                                    0.
+                                                };
+                                                this.deck_tools_changed = Instant::now();
+                                                this.deck_tools_deck = index;
+                                                this.deck_tools_open = !close;
+                                                this.active_deck = index;
+                                            }
+                                            this.deck_panel[index] = panel;
+                                            cx.notify();
+                                        }))
                                 })
                                 .collect::<Vec<_>>(),
                         ),
                     )
                     .child(div().flex_1())
-                    .child(controls.flex_shrink_0())
+                    .children(footer_controls)
                     .child(div().w(px(10.)).flex_shrink_0())
-                    .child(deck_select),
+                    .children(footer_identity),
             )
-            .child(
+            .when(!self.settings.four_decks, |deck| {
+                deck.child(
+                    div()
+                        .id(("deck-tools-scroll", index))
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .child(self.deck_tools(index, state, cx)),
+                )
+            })
+    }
+
+    fn deck_tools_progress(&self) -> f32 {
+        let t = (self.deck_tools_changed.elapsed().as_secs_f32() / 0.22).min(1.);
+        let eased = t * t * (3. - 2. * t);
+        self.deck_tools_from
+            + ((if self.deck_tools_open { 1. } else { 0. }) - self.deck_tools_from) * eased
+    }
+
+    fn deck_column(&self, side: usize, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
+        let progress = self.deck_tools_progress();
+        let owner = self.deck_tools_deck;
+        let overlay = self.settings.four_decks && owner % 2 == side && progress > 0.;
+        let mut column = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .gap_2();
+        for index in [side, side + 2]
+            .into_iter()
+            .filter(|&d| d < self.visible_decks())
+        {
+            if self.settings.four_decks {
+                // Keep identical slots while the owner is rendered in the overlay.
+                // A flexible empty placeholder redistributes the other deck's space.
+                let slot = div().h(px(236.)).flex_shrink_0().flex().flex_col();
+                column = column.child(if overlay && index == owner {
+                    slot
+                } else {
+                    slot.children(decks.get(index).map(|state| self.deck(index, state, cx)))
+                });
+            } else if let Some(state) = decks.get(index) {
+                column = column.child(self.deck(index, state, cx));
+            }
+        }
+        if overlay && let Some(state) = decks.get(owner) {
+            column = column.child(
                 div()
-                    .id(("deck-tools-scroll", index))
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(match self.deck_panel[index] {
-                        0 => self.loop_panel(index, state, cx).into_any_element(),
-                        1 => self.effect_panel(index, state, cx),
-                        2 => self.pad_panel(index, state, false, cx).into_any_element(),
-                        _ => div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(if owner >= 2 {
+                        244. * (1. - progress)
+                    } else {
+                        0.
+                    }))
+                    .h(px(236. + 244. * progress))
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .rounded_lg()
+                    .bg(cx.theme().background)
+                    .occlude()
+                    .child(
+                        div()
+                            .h(px(236.))
+                            .flex_shrink_0()
                             .flex()
                             .flex_col()
-                            .gap_2()
-                            .when(state.track.is_none(), |d| {
-                                d.child("Load a track to prepare phrases, cues and loudness.")
-                            })
-                            .child(self.preparation_panel(index, state, cx))
-                            .child(self.suggestions_panel(index, state, cx))
-                            .into_any_element(),
-                    }),
-            )
+                            .child(self.deck(owner, state, cx)),
+                    )
+                    .child(
+                        div()
+                            .id(("overlay-deck-tools", owner))
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .p_2()
+                            .border_1()
+                            .border_color(Hsla::from(deck_colour(owner)).opacity(0.35))
+                            .child(self.deck_tools(owner, state, cx)),
+                    ),
+            );
+        }
+        column
+    }
+
+    fn deck_tools(&self, index: usize, state: &DeckState, cx: &mut Context<Self>) -> AnyElement {
+        match self.deck_panel[index] {
+            0 => self.loop_panel(index, state, cx).into_any_element(),
+            1 => self.effect_panel(index, state, cx),
+            2 => self.pad_panel(index, state, false, cx).into_any_element(),
+            _ => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .when(state.track.is_none(), |d| {
+                    d.child("Load a track to prepare phrases, cues and loudness.")
+                })
+                .child(self.preparation_panel(index, state, cx))
+                .child(self.suggestions_panel(index, state, cx))
+                .into_any_element(),
+        }
     }
 
     fn content(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
@@ -1503,13 +1835,13 @@ impl Shell {
                 div()
                     .id("performance-scroll")
                     .size_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .h_full()
-                            .min_h_0()
+                            .min_h(px(780.))
                             .gap_2()
                             .child(self.rhythm_panel(decks, cx))
                             .when_some(self.engine_error.clone(), |this, error| {
@@ -1519,15 +1851,19 @@ impl Shell {
                                 div()
                                     .flex()
                                     .flex_shrink_0()
-                                    .h(px(if self.eq_mode == EqMode::Stems {
-                                        510.
-                                    } else {
-                                        480.
-                                    }))
+                                    .h(px(
+                                        if !self.settings.four_decks
+                                            && self.eq_mode == EqMode::Stems
+                                        {
+                                            510.
+                                        } else {
+                                            480.
+                                        },
+                                    ))
                                     .gap_2()
-                                    .children(decks.first().map(|state| self.deck(0, state, cx)))
+                                    .child(self.deck_column(0, decks, cx))
                                     .child(self.mixer_panel(cx))
-                                    .children(decks.get(1).map(|state| self.deck(1, state, cx))),
+                                    .child(self.deck_column(1, decks, cx)),
                             )
                             .child(
                                 div()
@@ -1552,7 +1888,7 @@ impl Shell {
                                                 div()
                                                     .text_size(px(10.))
                                                     .text_color(cx.theme().muted_foreground)
-                                                    .child("Drag a track onto deck A or B"),
+                                                    .child("Drag a track onto a deck"),
                                             ),
                                     )
                                     .child(
@@ -1629,7 +1965,7 @@ fn clock(seconds: f64) -> String {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        for deck in 0..2 {
+        for deck in 0..DECKS {
             if let Some((start, began)) = self.tempo_returns[deck] {
                 let elapsed = began.elapsed().as_secs_f64();
                 let ratio = returning_tempo(start, elapsed);
@@ -1664,6 +2000,7 @@ impl Render for Shell {
         let mut decks = match &mut self.engine {
             Some(engine) => {
                 let state = engine.state();
+                self.monitor = state.monitor;
                 self.automix = state.automix.clone();
                 if self.automix.enabled && self.automix.smart {
                     self.eq_mode = EqMode::Classic;
@@ -1683,26 +2020,33 @@ impl Render for Shell {
                 self.mixer_values[21] = state.monitor.gain.sqrt();
                 self.mixer_values[22] = state.monitor.mix;
                 self.mixer_curve = state.crossfader_curve;
-                self.mixer_peaks[2..4].copy_from_slice(&state.master_stereo_peak);
+                self.crossfader_routing = state.crossfader_routing;
+                self.mixer_peaks[DECKS..DECKS + 2].copy_from_slice(&state.master_stereo_peak);
                 for (i, deck) in state.decks.iter().enumerate() {
-                    self.mixer_values[i * 5] = (deck.trim_db + 12.) / 24.;
+                    self.deck_eq_modes[i] = deck.eq_mode;
+                    self.mixer_values[mixer_controls::channel_index(i)] =
+                        (deck.trim_db + 12.) / 24.;
                     for band in 0..3 {
                         let gain = deck.eq[band];
-                        self.mixer_values[i * 5 + 3 - band] = if gain <= 1. {
-                            gain / 2.
-                        } else {
-                            0.5 + gain.log10() * 20. / 12.
-                        };
+                        self.mixer_values[mixer_controls::channel_index(i) + 3 - band] =
+                            if gain <= 1. {
+                                gain / 2.
+                            } else {
+                                0.5 + gain.log10() * 20. / 12.
+                            };
                     }
-                    self.mixer_values[i * 5 + 4] = deck.volume.sqrt();
+                    self.mixer_values[mixer_controls::channel_index(i) + 4] = deck.volume.sqrt();
                     self.mixer_peaks[i] = deck.peak;
-                    self.mixer_values[12 + i * 4..16 + i * 4].copy_from_slice(
-                        &mixer_controls::stem_controls_from_gains(self.eq_mode, deck.stem_gains),
-                    );
+                    self.mixer_values
+                        [mixer_controls::stem_index(i)..mixer_controls::stem_index(i) + 4]
+                        .copy_from_slice(&mixer_controls::stem_controls_from_gains(
+                            deck.eq_mode,
+                            deck.stem_gains,
+                        ));
                 }
                 state.decks
             }
-            None => vec![DeckState::default(); 2],
+            None => vec![DeckState::default(); DECKS],
         };
         if auto_paths_changed {
             self.refresh_grids(cx);
@@ -1716,6 +2060,12 @@ impl Render for Shell {
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
         for (index, deck) in decks.iter().enumerate() {
+            let transport_playing = deck.playing
+                && self
+                    .cue_preview
+                    .as_ref()
+                    .is_none_or(|(preview, _, _)| *preview != index);
+            self.sync_playback[index].update(deck.path.as_deref(), transport_playing, now);
             let audible = deck.playing
                 && self
                     .cue_preview
@@ -1728,8 +2078,11 @@ impl Render for Shell {
                 && deck.peak > 0.00001
                 && deck.volume > 0.
                 && self.mixer_values[10] > 0.
-                && djcraft_engine::crossfader_gains(self.mixer_values[11], self.mixer_curve)[index]
-                    > 1e-6;
+                && djcraft_engine::routed_crossfader_gain(
+                    index,
+                    self.crossfader_routing,
+                    djcraft_engine::crossfader_gains(self.mixer_values[11], self.mixer_curve),
+                ) > 1e-6;
             if self.play_history[index].update(deck.path.as_deref(), audible, elapsed)
                 && let (Some(path), Some(track)) = (&deck.path, &deck.track)
             {
@@ -1786,6 +2139,7 @@ impl Render for Shell {
                 || deck.track.as_ref().is_some_and(|t| !t.fully_loaded)
         };
         if self.tempo_returns.iter().any(Option::is_some)
+            || (self.settings.four_decks && self.deck_tools_changed.elapsed().as_secs_f32() < 0.22)
             || self.wheel_scrub.is_some()
             || decks.iter().any(moving)
             || self.pending_seeks.iter().any(Option::is_some)
@@ -1874,11 +2228,46 @@ impl Render for Shell {
             .when_some(self.settings_view.clone(), |this, view| {
                 this.child(deferred(view))
             })
+            .into_any_element()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn four_deck_sync_uses_longest_continuous_playback() {
+        use super::{SyncPlayback, select_sync_reference};
+        let grid = djcraft_library::TempoResult {
+            bpm: 120.,
+            first_beat_seconds: 0.,
+            confidence: 1.,
+            downbeat: 0,
+        };
+        let mut grids = [Some(grid); super::DECKS];
+        let mut playback: [SyncPlayback; super::DECKS] = Default::default();
+        let now = std::time::Instant::now();
+        let later = now + std::time::Duration::from_secs(10);
+        playback[2].update(Some("c"), true, now);
+        playback[1].update(Some("b"), true, later);
+        // C wins over paired B, even when B's playhead is further into its track.
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
+        assert_eq!(select_sync_reference(2, 4, &grids, &playback), Some(1));
+        assert_eq!(select_sync_reference(0, 2, &grids, &playback), Some(1));
+        playback[2].update(Some("c"), true, later);
+        assert_eq!(playback[2].started, Some(now));
+        playback[2].update(Some("c"), false, later);
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(1));
+        playback[2].update(Some("c"), true, later + std::time::Duration::from_secs(1));
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(1));
+        grids[1] = None;
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
+        playback[2].update(Some("replacement"), false, later);
+        assert_eq!(playback[2].started, None);
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
+        grids.fill(None);
+        assert_eq!(select_sync_reference(0, 4, &grids, &playback), None);
+    }
+
     use super::{DisplayPosition, HistoryTracker, WaveformDrag, nearest_beat_offset};
     use djcraft_library::TempoResult;
     #[test]

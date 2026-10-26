@@ -10,6 +10,19 @@ use gpui_kit::*;
 pub const VISIBLE_SECONDS: f64 = 8.;
 const COLUMN_WIDTH: f32 = 2.;
 
+/// Low/mid/high: shadow, deck primary, highlight.
+pub(crate) fn deck_palette(deck: usize) -> [u32; 3] {
+    [
+        [0x607b1b, 0xc8ff38, 0xefffc2],
+        [0x203b8e, 0x3864e8, 0xb6c8ff],
+        [0x895218, 0xffb347, 0xffe3b5],
+        [0x6c3894, 0xcf85ff, 0xefceff],
+    ][deck % djcraft_protocol::DECKS]
+}
+
+pub(crate) const STEM_COLOURS: [u32; 4] = [0xff6ba9, 0x48d1dd, 0xffb347, 0xd8e4f0];
+pub(crate) const STEM_LABELS: [&str; 4] = ["Vocals", "Instruments", "Bass", "Drums"];
+
 fn column_bands(track: &Track, range: std::ops::Range<usize>) -> [f32; 3] {
     let mut sum = [0f32; 3];
     for i in range {
@@ -50,6 +63,16 @@ fn display_columns(
     count: usize,
     step: f64,
 ) -> Vec<Option<DisplayColumn>> {
+    display_source_columns(track, first, count, step, None)
+}
+
+fn display_source_columns(
+    track: &Track,
+    first: i64,
+    count: usize,
+    step: f64,
+    stem: Option<usize>,
+) -> Vec<Option<DisplayColumn>> {
     let ready = track.peak_count() as i64;
     let raw: Vec<_> = (-2..count as i64 + 3)
         .map(|offset| {
@@ -59,7 +82,15 @@ fn display_columns(
             if range.is_empty() {
                 return None;
             }
-            let bands = column_bands(track, range.start as usize..range.end as usize);
+            let bands = if let Some(stem) = stem {
+                let energy = range
+                    .clone()
+                    .map(|i| track.stem_levels(i as usize).unwrap_or_default()[stem].powi(2))
+                    .sum::<f32>();
+                [energy.sqrt(), 0., 0.]
+            } else {
+                column_bands(track, range.start as usize..range.end as usize)
+            };
             Some(DisplayColumn {
                 energy: bands.map(|v| v * v / (end - start).max(1) as f32),
             })
@@ -73,51 +104,74 @@ fn paint_columns(
     bounds: Bounds<Pixels>,
     columns: &[Option<DisplayColumn>],
     shift: f32,
+    palette: [u32; 3],
+    gains: [f32; 3],
 ) {
-    let height = bounds.size.height.as_f32();
-    // Continuous envelopes retain fractional-pixel motion. Each band is one
-    // opaque filled path instead of thousands of quads. Low is painted first,
-    // then mid, then high, so high frequencies sit on top.
-    for (band, tint) in [0xff5555, 0x55ee88, 0x5599ff].into_iter().enumerate() {
-        {
-            window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                let mut path = PathBuilder::fill();
-                let mut start = 0;
-                while start < columns.len() {
-                    if columns[start].is_none() {
-                        start += 1;
-                        continue;
-                    }
-                    let mut end = start + 1;
-                    while end < columns.len() && columns[end].is_some() {
-                        end += 1;
-                    }
-                    let edge = |i: usize, bottom: bool| {
-                        let amplitude = columns[i].unwrap().energy[band].max(0.).sqrt();
-                        let half = (amplitude * std::f32::consts::SQRT_2).min(1.) * height / 2.;
-                        bounds.origin
-                            + point(
-                                px(i as f32 * COLUMN_WIDTH - shift),
-                                px(height / 2. + if bottom { half } else { -half }),
-                            )
-                    };
-                    path.move_to(edge(start, false));
-                    for i in start + 1..end {
-                        path.line_to(edge(i, false));
-                    }
-                    for i in (start..end).rev() {
-                        path.line_to(edge(i, true));
-                    }
-                    path.close();
-                    start = end;
-                }
-                if let Ok(path) = path.build() {
-                    let color: Hsla = rgb(tint).into();
-                    window.paint_path(path, color);
-                }
-            });
-        }
+    // Low sits behind mid and high; each keeps its own amplitude envelope.
+    for (band, tint) in palette.into_iter().enumerate() {
+        paint_band(
+            window,
+            bounds,
+            columns,
+            shift,
+            band,
+            tint,
+            0.85,
+            gains[band],
+        );
     }
+}
+
+fn paint_band(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    columns: &[Option<DisplayColumn>],
+    shift: f32,
+    band: usize,
+    tint: u32,
+    opacity: f32,
+    gain: f32,
+) {
+    if gain <= 0. {
+        return;
+    }
+    let height = bounds.size.height.as_f32();
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let mut path = PathBuilder::fill();
+        let mut start = 0;
+        while start < columns.len() {
+            if columns[start].is_none() {
+                start += 1;
+                continue;
+            }
+            let mut end = start + 1;
+            while end < columns.len() && columns[end].is_some() {
+                end += 1;
+            }
+            let edge = |i: usize, bottom: bool| {
+                let amplitude = columns[i].unwrap().energy[band].max(0.).sqrt() * gain;
+                let half = (amplitude * std::f32::consts::SQRT_2).min(1.) * height / 2.;
+                bounds.origin
+                    + point(
+                        px(i as f32 * COLUMN_WIDTH - shift),
+                        px(height / 2. + if bottom { half } else { -half }),
+                    )
+            };
+            path.move_to(edge(start, false));
+            for i in start + 1..end {
+                path.line_to(edge(i, false));
+            }
+            for i in (start..end).rev() {
+                path.line_to(edge(i, true));
+            }
+            path.close();
+            start = end;
+        }
+        if let Ok(path) = path.build() {
+            let color: Hsla = rgb(tint).into();
+            window.paint_path(path, color.opacity(opacity));
+        }
+    });
 }
 
 fn cue_flags(
@@ -186,6 +240,9 @@ pub fn waveform(
     hot_cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     cue_styles: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     deck: usize,
+    show_stems: bool,
+    eq_gains: [f32; 3],
+    stem_gains: [f32; 4],
 ) -> impl IntoElement {
     let flags = cue_flags(
         hot_cues,
@@ -255,9 +312,41 @@ pub fn waveform(
                                 rgb(0xffdb55),
                             ));
                         }
-                        let data =
-                            display_columns(&track, first, columns as usize, peaks_per_column);
-                        paint_columns(window, bounds, &data, shift);
+                        if show_stems && track.stem_levels(0).is_some() {
+                            for (stem, tint) in STEM_COLOURS.into_iter().enumerate() {
+                                if stem_gains[stem] <= 0. {
+                                    continue;
+                                }
+                                let data = display_source_columns(
+                                    &track,
+                                    first,
+                                    columns as usize,
+                                    peaks_per_column,
+                                    Some(stem),
+                                );
+                                paint_band(
+                                    window,
+                                    bounds,
+                                    &data,
+                                    shift,
+                                    0,
+                                    tint,
+                                    0.55,
+                                    stem_gains[stem],
+                                );
+                            }
+                        } else {
+                            let data =
+                                display_columns(&track, first, columns as usize, peaks_per_column);
+                            paint_columns(
+                                window,
+                                bounds,
+                                &data,
+                                shift,
+                                deck_palette(deck),
+                                eq_gains,
+                            );
+                        }
                         let x = (columns / 2) as f32 * COLUMN_WIDTH;
                         for (line_x, bar_line) in
                             grid_lines(grid, position_seconds, width, x, tempo)
@@ -337,6 +426,7 @@ pub fn overview(
     cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     styles: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     deck: usize,
+    eq_gains: [f32; 3],
 ) -> impl IntoElement {
     let duration = track.frames() as f64 / track.sample_rate as f64;
     let flags = cue_flags(cues, &styles, deck, 0., duration, false);
@@ -375,7 +465,14 @@ pub fn overview(
                         cached.frames = frames;
                     }
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                        paint_columns(window, bounds, &cached.columns, 0.);
+                        paint_columns(
+                            window,
+                            bounds,
+                            &cached.columns,
+                            0.,
+                            deck_palette(deck),
+                            eq_gains,
+                        );
                     });
                     window.paint_quad(fill(
                         Bounds::new(
@@ -396,6 +493,25 @@ mod tests {
     // Not `super::*`: that would bring in GPUI's own `test` attribute.
     use super::{DisplayColumn, VISIBLE_SECONDS, grid_lines, smooth_columns};
     use djcraft_library::TempoResult;
+
+    #[test]
+    fn stem_view_samples_real_source_envelopes_without_moving_the_timeline() {
+        let track = djcraft_engine::Track::from_samples("stems", 48000, vec![0.5; 256 * 2 * 8]);
+        track
+            .attach_stems([
+                vec![0.1; 256 * 2 * 8].into_boxed_slice(),
+                vec![0.; 256 * 2 * 8].into_boxed_slice(),
+                vec![0.05; 256 * 2 * 8].into_boxed_slice(),
+                vec![0.2; 256 * 2 * 8].into_boxed_slice(),
+            ])
+            .unwrap();
+        for (stem, expected) in [0.1f32, 0.15, 0.05, 0.2].into_iter().enumerate() {
+            let columns = super::display_source_columns(&track, 0, 8, 1., Some(stem));
+            assert!((columns[3].unwrap().energy[0] - expected * expected).abs() < 1e-5);
+            let preroll = super::display_source_columns(&track, -8, 8, 1., Some(stem));
+            assert!(preroll[..8].iter().all(Option::is_none));
+        }
+    }
 
     #[test]
     fn matched_tempos_have_equal_beat_spacing_and_motion() {
