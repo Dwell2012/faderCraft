@@ -90,6 +90,172 @@ fn titles(library: &Library, search: &str) -> Vec<String> {
 }
 
 #[test]
+fn accepted_online_metadata_is_searchable_offline_and_survives_rescans() {
+    use djcraft_library::lookup::{MatchReference, Provider, TrackDetails, TrackMatch};
+    let dir = TempDir::new("saved-online-metadata");
+    let music = dir.0.join("music");
+    let path = music.join("untidy.wav");
+    write_tagged(&path, "Untidy title", "Unknown", "Dance", "128", "8A");
+    let original = std::fs::read(&path).unwrap();
+    let db = dir.0.join("library.db");
+    let mut library = Library::open(&db).unwrap();
+    let source = library.add_folder(&music).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    let found = TrackMatch {
+        reference: Some(MatchReference::Discogs(123)),
+        title: "Real Song (Extended Mix)".into(),
+        artist: "Real Artist".into(),
+        album: "Real Release".into(),
+        year: Some("1999".into()),
+        genre: Some("Trance".into()),
+        score: 99,
+        compilation: false,
+        provider: Provider::Discogs,
+    };
+    let details = TrackDetails {
+        fields: vec![
+            ("Label / catalogue".into(), "UniqueLabel CAT_10%".into()),
+            ("ISRC".into(), "GBTEST990001".into()),
+        ],
+        tracks: vec!["Another Artist Unrelated Song".into()],
+        source_url: "https://www.discogs.com/release/123".into(),
+        ..Default::default()
+    };
+    library.save_lookup(id, &found, &details).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "library save must never alter music bytes"
+    );
+    for query in [
+        "Real Artist",
+        "UniqueLabel",
+        "CAT_10%",
+        "GBTEST990001",
+        "1999",
+        "Trance UniqueLabel",
+    ] {
+        assert_eq!(
+            titles(&library, query),
+            vec![found.title.clone()],
+            "{query}"
+        );
+    }
+    assert!(
+        titles(&library, "Unrelated Song").is_empty(),
+        "other album tracks must not identify this track"
+    );
+    assert!(
+        titles(&library, "CATZ10x").is_empty(),
+        "wildcards are literal"
+    );
+    drop(library);
+    let mut library = Library::open(&db).unwrap();
+    let saved = library.saved_lookup(id).unwrap().unwrap();
+    assert_eq!(saved.candidate, found);
+    assert_eq!(saved.details, details);
+    // A real file change forces a re-read; accepted metadata still wins in the library.
+    write_tagged(
+        &path,
+        "Different disk title",
+        "Disk Artist",
+        "House",
+        "130",
+        "9A",
+    );
+    library.scan(source.id, |_| {}).unwrap();
+    let track = library
+        .tracks(&TrackQuery::default())
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(track.title, found.title);
+    assert_eq!(track.artist, found.artist);
+    assert_eq!(track.year, Some(1999));
+    assert_eq!(
+        track.bpm,
+        Some(130.0),
+        "lookup must not override audio/tag tempo"
+    );
+    // Deliberate reviewed tag edits can supersede an accepted title and be undone.
+    let edit = TrackEdit {
+        title: "Manually edited title".into(),
+        artist: "Disk Artist".into(),
+        genre: "House".into(),
+        bpm: Some(130.0),
+        key: Some("9A".into()),
+        ..Default::default()
+    };
+    let change = library.plan_edit(id, &edit).unwrap();
+    let summary = library.apply_changes("Manual title", &[change]).unwrap();
+    assert_eq!(summary.written, 1);
+    assert_eq!(
+        titles(&library, "Manually edited title"),
+        vec!["Manually edited title"]
+    );
+    library.undo_batch(summary.batch.unwrap()).unwrap();
+    assert_eq!(
+        titles(&library, "Different disk title"),
+        vec!["Different disk title"]
+    );
+    library.remove_source(source.id).unwrap();
+    assert!(library.saved_lookup(id).unwrap().is_none());
+}
+
+#[test]
+fn metadata_migration_preserves_existing_tracks_and_empty_fields_do_not_erase_them() {
+    use djcraft_library::lookup::{Provider, TrackDetails, TrackMatch};
+    let dir = TempDir::new("metadata-migration");
+    let path = dir.0.join("song.wav");
+    write_tagged(&path, "Title", "Artist", "Dance", "128", "8A");
+    let db = dir.0.join("library.db");
+    let mut library = Library::open(&db).unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    drop(library);
+    let raw = rusqlite::Connection::open(&db).unwrap();
+    raw.execute_batch("DROP TRIGGER tracks_assign_identity; DROP TABLE track_identities; DROP TABLE track_metadata;
+        DROP INDEX playlist_children; ALTER TABLE playlists DROP COLUMN parent_playlist_id; PRAGMA user_version=17;")
+        .unwrap();
+    drop(raw);
+    let mut library = Library::open(&db).unwrap();
+    let found = TrackMatch {
+        reference: None,
+        title: String::new(),
+        artist: String::new(),
+        album: String::new(),
+        year: None,
+        genre: None,
+        score: 100,
+        compilation: false,
+        provider: Provider::Itunes,
+    };
+    library
+        .save_lookup(id, &found, &TrackDetails::default())
+        .unwrap();
+    let track = library
+        .tracks(&TrackQuery::default())
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(
+        (
+            track.title.as_str(),
+            track.artist.as_str(),
+            track.genre.as_str()
+        ),
+        ("Title", "Artist", "Dance")
+    );
+    assert!(
+        library
+            .save_lookup(id + 100, &found, &TrackDetails::default())
+            .is_err()
+    );
+}
+
+#[test]
 fn scans_a_folder_and_reads_tags() {
     let dir = TempDir::new("tags");
     write_tagged(&dir.0.join("a.wav"), "Opening", "Zed", "House", "124", "8A");
@@ -313,6 +479,92 @@ fn the_database_persists_and_rejects_newer_schemas() {
 }
 
 #[test]
+fn playlist_sublists_keep_independent_tracks_and_survive_parent_changes() {
+    let music = TempDir::new("sublist-music");
+    write_tagged(&music.0.join("a.wav"), "Alpha", "A", "", "120", "1A");
+    write_tagged(&music.0.join("b.wav"), "Beta", "B", "", "120", "1A");
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&music.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let tracks = library.tracks(&TrackQuery::default()).unwrap();
+    let folder = library.create_folder("Sets", None).unwrap();
+    let parent = library.create_playlist("Friday").unwrap();
+    library.move_playlist(parent.id, Some(folder.id)).unwrap();
+    let child = library.create_sublist(parent.id, "Warm up").unwrap();
+    let nested = library.create_sublist(child.id, "Early").unwrap();
+    assert_eq!(
+        (child.parent, child.folder),
+        (Some(parent.id), Some(folder.id))
+    );
+    library.add_to_playlist(parent.id, &[tracks[0].id]).unwrap();
+    library.add_to_playlist(child.id, &[tracks[1].id]).unwrap();
+    let titles = |id| {
+        library
+            .tracks(&TrackQuery {
+                playlist: Some(id),
+                ..Default::default()
+            })
+            .unwrap()
+            .into_iter()
+            .map(|t| t.title)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(titles(parent.id), ["Alpha"]);
+    assert_eq!(titles(child.id), ["Beta"]);
+    assert!(titles(nested.id).is_empty());
+    library.move_playlist(parent.id, None).unwrap();
+    let lists = library.playlists().unwrap();
+    assert!(lists.iter().all(|p| p.folder.is_none()));
+    assert_eq!(
+        lists.iter().find(|p| p.id == nested.id).unwrap().parent,
+        Some(child.id)
+    );
+    library.delete_playlist(child.id).unwrap();
+    let lists = library.playlists().unwrap();
+    assert_eq!(
+        lists.iter().find(|p| p.id == nested.id).unwrap().parent,
+        Some(parent.id)
+    );
+    library.delete_playlist(parent.id).unwrap();
+    assert_eq!(library.playlists().unwrap()[0].parent, None);
+    assert_eq!(library.tracks(&TrackQuery::default()).unwrap().len(), 2);
+    assert!(library.create_sublist(99999, "Missing").is_err());
+    assert!(library.create_sublist(nested.id, " ").is_err());
+    assert_eq!(library.playlists().unwrap().len(), 1);
+}
+
+#[test]
+fn version_19_playlists_migrate_and_sublists_persist() {
+    let root = TempDir::new("sublist-migration");
+    let db = root.0.join("library.db");
+    let library = Library::open(&db).unwrap();
+    let parent = library.create_playlist("Existing").unwrap();
+    drop(library);
+    let old = rusqlite::Connection::open(&db).unwrap();
+    old.execute_batch(
+        "DROP INDEX playlist_children;
+        ALTER TABLE playlists DROP COLUMN parent_playlist_id;
+        PRAGMA user_version=19;",
+    )
+    .unwrap();
+    drop(old);
+    let library = Library::open(&db).unwrap();
+    assert_eq!(library.playlists().unwrap()[0].parent, None);
+    let child = library.create_sublist(parent.id, "New child").unwrap();
+    drop(library);
+    let library = Library::open(&db).unwrap();
+    let lists = library.playlists().unwrap();
+    assert_eq!(
+        lists.iter().find(|p| p.id == child.id).unwrap().parent,
+        Some(parent.id)
+    );
+    assert_eq!(
+        lists.iter().find(|p| p.id == parent.id).unwrap().name,
+        "Existing"
+    );
+}
+
+#[test]
 fn playlists_hold_tracks_from_several_sources_in_order() {
     let first = TempDir::new("pl-1");
     let second = TempDir::new("pl-2");
@@ -399,7 +651,10 @@ fn an_existing_library_gains_playlists_on_upgrade() {
     // Put the file back to how the first schema left it.
     let raw = rusqlite::Connection::open(&db).unwrap();
     raw.execute_batch(
-        "DROP TABLE play_history;
+        "DROP TRIGGER tracks_assign_identity;
+         DROP TABLE track_identities;
+         DROP TABLE track_metadata;
+         DROP TABLE play_history;
          DROP TABLE play_sets;
          DROP TABLE ignored_files;
          ALTER TABLE playlists DROP COLUMN folder_id;

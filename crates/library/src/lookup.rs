@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
+mod details;
+pub use details::details;
+
 /// MusicBrainz asks every client to identify itself.
 const USER_AGENT: &str = concat!(
     "djcraft/",
@@ -95,6 +98,12 @@ pub fn search(
         }
         found = find("")?;
     }
+    if provider == Provider::Discogs {
+        // Preserve the requested mix/version for matching the release track list.
+        for candidate in &mut found {
+            candidate.title = wanted_title.clone();
+        }
+    }
     Ok(rank(found, &wanted_artist, &wanted_title))
 }
 
@@ -162,6 +171,8 @@ struct AcoustIdResult {
 #[derive(Deserialize)]
 struct AcoustIdRecording {
     #[serde(default)]
+    id: String,
+    #[serde(default)]
     title: String,
     #[serde(default)]
     artists: Vec<ArtistCredit>,
@@ -205,6 +216,8 @@ fn parse_acoustid(body: &str) -> Result<Vec<TrackMatch>> {
                 .find(original)
                 .or(recording.releasegroups.first());
             found.push(TrackMatch {
+                reference: (!recording.id.is_empty())
+                    .then(|| MatchReference::Recording(recording.id.clone(), String::new())),
                 title: recording.title,
                 artist: recording
                     .artists
@@ -241,6 +254,8 @@ struct DiscogsResponse {
 
 #[derive(Deserialize)]
 struct DiscogsRelease {
+    #[serde(default)]
+    id: Option<u64>,
     /// "Artist - Release title".
     #[serde(default)]
     title: String,
@@ -298,6 +313,7 @@ fn parse_discogs(body: &str, title: &str) -> Result<Vec<TrackMatch>> {
                 _ => None,
             });
             Some(TrackMatch {
+                reference: release.id.map(MatchReference::Discogs),
                 title: title.to_string(),
                 compilation: artist == "Various",
                 artist,
@@ -323,8 +339,10 @@ pub fn search_terms(artist: &str, title: &str) -> (String, String) {
 }
 
 /// One candidate for what a track is.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrackMatch {
+    /// Provider identifiers used to fetch details only for a selected result.
+    pub reference: Option<MatchReference>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -336,6 +354,29 @@ pub struct TrackMatch {
     /// of the artist's own.
     pub compilation: bool,
     pub provider: Provider,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum MatchReference {
+    Recording(String, String),
+    Discogs(u64),
+    Itunes(u64),
+}
+
+/// Provider-supplied information for display, never an instruction to write tags.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TrackDetails {
+    /// Optional cover source and a portable cached filename relative to the library.
+    #[serde(default)]
+    pub artwork_url: Option<String>,
+    #[serde(default)]
+    pub artwork_file: Option<String>,
+    pub fields: Vec<(String, String)>,
+    pub tracks: Vec<String>,
+    pub source_url: String,
+    /// A track verified against the release track list, where supported.
+    pub matched_title: Option<String>,
+    pub matched_artist: Option<String>,
 }
 
 /// MusicBrainz allows one request a second from each client.
@@ -358,6 +399,8 @@ struct Response {
 #[derive(Deserialize)]
 struct Recording {
     #[serde(default)]
+    id: String,
+    #[serde(default)]
     title: String,
     #[serde(default, rename = "artist-credit")]
     artists: Vec<ArtistCredit>,
@@ -379,6 +422,8 @@ struct ArtistCredit {
 
 #[derive(Deserialize)]
 struct Release {
+    #[serde(default)]
+    id: String,
     #[serde(default)]
     title: String,
     #[serde(default)]
@@ -410,7 +455,18 @@ fn get(
     request: impl Fn() -> ureq::RequestBuilder<ureq::typestate::WithoutBody>,
 ) -> Result<String> {
     let name = provider.label();
-    let send = || request().header("User-Agent", USER_AGENT).call();
+    let send = || {
+        if provider == Provider::MusicBrainz {
+            // Search and selected-result enrichment share the same request budget.
+            static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+            let mut last = LAST.lock().unwrap_or_else(|error| error.into_inner());
+            if let Some(at) = *last {
+                std::thread::sleep(MUSICBRAINZ_INTERVAL.saturating_sub(at.elapsed()));
+            }
+            *last = Some(std::time::Instant::now());
+        }
+        request().header("User-Agent", USER_AGENT).call()
+    };
     let response = match send() {
         // Busy, or asked to slow down: wait a moment and try once more.
         Err(ureq::Error::StatusCode(429 | 503)) => {
@@ -454,6 +510,8 @@ struct ItunesResponse {
 #[serde(rename_all = "camelCase")]
 struct ItunesSong {
     #[serde(default)]
+    track_id: Option<u64>,
+    #[serde(default)]
     track_name: String,
     #[serde(default)]
     artist_name: String,
@@ -486,6 +544,7 @@ fn parse_itunes(body: &str) -> Result<Vec<TrackMatch>> {
         .into_iter()
         .filter(|song| !song.track_name.is_empty())
         .map(|song| TrackMatch {
+            reference: song.track_id.map(MatchReference::Itunes),
             title: song.track_name,
             artist: song.artist_name,
             album: song.collection_name,
@@ -544,6 +603,12 @@ fn parse_musicbrainz(body: &str) -> Result<Vec<TrackMatch>> {
             let year = year_of(&recording.first_release)
                 .or_else(|| release.and_then(|release| year_of(&release.date)));
             TrackMatch {
+                reference: (!recording.id.is_empty()).then(|| {
+                    MatchReference::Recording(
+                        recording.id.clone(),
+                        release.map(|r| r.id.clone()).unwrap_or_default(),
+                    )
+                }),
                 title: recording.title,
                 artist: recording
                     .artists
@@ -807,6 +872,7 @@ mod tests {
 
     fn found(title: &str, artist: &str, album: &str) -> TrackMatch {
         TrackMatch {
+            reference: None,
             title: title.into(),
             artist: artist.into(),
             album: album.into(),
@@ -957,6 +1023,7 @@ mod tests {
         assert_eq!(
             matches[0],
             TrackMatch {
+                reference: Some(MatchReference::Recording("x".into(), "r".into())),
                 title: "Turn Up the Speakers".into(),
                 artist: "Afrojack & Martin Garrix".into(),
                 album: "Turn Up the Speakers".into(),
@@ -1038,6 +1105,7 @@ mod tests {
         assert_eq!(
             parse_itunes(body).unwrap(),
             [TrackMatch {
+                reference: None,
                 title: "Turn Up the Speakers".into(),
                 artist: "Afrojack & Martin Garrix".into(),
                 album: "Turn Up the Speakers - Single".into(),

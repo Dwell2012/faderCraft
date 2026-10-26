@@ -611,6 +611,33 @@ impl Library {
         let stamp = file_stamp(&path)
             .ok_or_else(|| Error::Tags(format!("{} disappeared", path.display())))?;
         // Re-read what the file now says, rather than trust the request.
+        // Deliberate tag edits supersede the corresponding accepted library fields.
+        self.conn.execute(
+            "UPDATE track_metadata SET
+                title=CASE WHEN ?2 THEN ?3 ELSE title END,
+                artist=CASE WHEN ?4 THEN ?5 ELSE artist END,
+                album=CASE WHEN ?6 THEN ?7 ELSE album END,
+                genre=CASE WHEN ?8 THEN ?9 ELSE genre END,
+                year=CASE WHEN ?10 THEN ?11 ELSE year END
+             WHERE track_id=?1",
+            params![
+                change.track_id,
+                change.before.title != change.after.title,
+                change.after.title,
+                change.before.artist != change.after.artist,
+                change.after.artist,
+                change.before.album != change.after.album,
+                change.after.album,
+                change.before.genre != change.after.genre,
+                change.after.genre,
+                change.before.date != change.after.date,
+                change
+                    .after
+                    .date
+                    .as_deref()
+                    .and_then(|date| date.get(..4)?.parse::<i32>().ok())
+            ],
+        )?;
         store_track(&self.conn, source_id, &locator, &path, stamp)?;
         // Only the tags changed, so the audio need not be analysed again.
         self.conn.execute(

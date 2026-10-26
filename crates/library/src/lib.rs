@@ -4,12 +4,14 @@
 //! folders are the only source so far; other kinds (network shares, plugin
 //! sources) fit the same two fields.
 
+pub mod artwork;
 mod camelot;
 mod export;
 mod flow;
 mod history;
 mod import;
 pub mod lookup;
+mod metadata;
 mod organise;
 mod scan;
 mod tags;
@@ -38,8 +40,9 @@ pub use tags::{AlignOptions, ApplySummary, Cleanup, Placement, PlannedChange, Ta
 pub use watch::FolderWatcher;
 
 pub use history::PlayHistoryEntry;
+pub use metadata::SavedLookup;
 
-const SCHEMA_VERSION: i64 = 17;
+const SCHEMA_VERSION: i64 = 20;
 
 /// A measured tempo is shown only when the analysis was at least this sure
 /// of it. Below that (mixes with several tempos, music with no clear beat)
@@ -257,6 +260,8 @@ pub struct Playlist {
     pub track_count: usize,
     /// The folder it is in; `None` at the top level.
     pub folder: Option<i64>,
+    /// Optional parent playlist; sublists retain their own tracks and ordering.
+    pub parent: Option<i64>,
     /// For a smart playlist, the rules that choose its tracks.
     pub rules: Option<SmartRules>,
 }
@@ -270,7 +275,7 @@ pub struct TrackQuery {
     pub source: Option<i64>,
     /// Only tracks in this playlist, in playlist order.
     pub playlist: Option<i64>,
-    /// Words that must each appear in the title, artist, album or genre.
+    /// Words that must each appear in the track or its saved online metadata.
     pub search: String,
     /// Only tracks in one of these keys. Empty means any key.
     pub keys: Vec<Camelot>,
@@ -285,6 +290,14 @@ pub struct Library {
 }
 
 impl Library {
+    /// Publish a consistent, standalone SQLite snapshot, without copying live WAL files.
+    /// The destination must not already exist.
+    pub fn snapshot(&self, destination: &Path) -> Result<()> {
+        self.conn
+            .execute("VACUUM INTO ?1", [destination.to_string_lossy().as_ref()])?;
+        Ok(())
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -574,6 +587,45 @@ impl Library {
                  COMMIT;",
             )?;
         }
+        if version < 18 {
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE track_metadata (
+                     track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                     title TEXT NOT NULL, artist TEXT NOT NULL, album TEXT NOT NULL,
+                     genre TEXT NOT NULL, year INTEGER,
+                     candidate TEXT NOT NULL, details TEXT NOT NULL,
+                     search_text TEXT NOT NULL, saved_at INTEGER NOT NULL DEFAULT (unixepoch())
+                 );
+                 PRAGMA user_version = 18;
+                 COMMIT;",
+            )?;
+        }
+        if version < 19 {
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE track_identities (
+                     track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+                     token TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16))))
+                 );
+                 INSERT INTO track_identities(track_id) SELECT id FROM tracks;
+                 CREATE TRIGGER tracks_assign_identity AFTER INSERT ON tracks BEGIN
+                     INSERT INTO track_identities(track_id) VALUES(NEW.id);
+                 END;
+                 PRAGMA user_version=19;
+                 COMMIT;",
+            )?;
+        }
+        if version < 20 {
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE playlists ADD COLUMN parent_playlist_id INTEGER
+                     REFERENCES playlists(id) ON DELETE SET NULL;
+                 CREATE INDEX playlist_children ON playlists(parent_playlist_id);
+                 PRAGMA user_version=20;
+                 COMMIT;",
+            )?;
+        }
         Ok(Self { conn })
     }
 
@@ -794,6 +846,7 @@ impl Library {
             name: name.to_string(),
             track_count: 0,
             folder: None,
+            parent: None,
             rules: None,
         })
     }
@@ -802,7 +855,7 @@ impl Library {
     /// tracks its rules choose now.
     pub fn playlists(&self) -> Result<Vec<Playlist>> {
         let mut statement = self.conn.prepare(
-            "SELECT p.id, p.name, COUNT(pt.track_id), p.folder_id, p.rules
+            "SELECT p.id, p.name, COUNT(pt.track_id), p.folder_id, p.rules, p.parent_playlist_id
              FROM playlists p LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
              GROUP BY p.id ORDER BY p.created_at, p.id",
         )?;
@@ -813,6 +866,7 @@ impl Library {
                     name: row.get(1)?,
                     track_count: row.get::<_, i64>(2)? as usize,
                     folder: row.get(3)?,
+                    parent: row.get(5)?,
                     rules: None,
                 },
                 row.get::<_, Option<String>>(4)?,
@@ -852,9 +906,45 @@ impl Library {
 
     /// Deletes a playlist. Its tracks stay in the library.
     pub fn delete_playlist(&self, id: i64) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE playlists SET parent_playlist_id =
+            (SELECT parent_playlist_id FROM playlists WHERE id = ?1)
+            WHERE parent_playlist_id = ?1",
+            [id],
+        )?;
+        transaction.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        transaction.commit()?;
         Ok(())
+    }
+
+    /// Creates an independent playlist beneath another playlist.
+    pub fn create_sublist(&self, parent: i64, name: &str) -> Result<Playlist> {
+        if name.trim().is_empty() {
+            return Err(Error::Library("a sublist needs a name".into()));
+        }
+        let inserted = self.conn.execute(
+            "INSERT INTO playlists(name, created_at, folder_id, parent_playlist_id)
+             SELECT ?2, unixepoch(), folder_id, id FROM playlists WHERE id = ?1",
+            params![parent, name.trim()],
+        )?;
+        if inserted == 0 {
+            return Err(Error::Library("parent playlist no longer exists".into()));
+        }
+        let id = self.conn.last_insert_rowid();
+        let folder = self.conn.query_row(
+            "SELECT folder_id FROM playlists WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(Playlist {
+            id,
+            name: name.trim().to_owned(),
+            track_count: 0,
+            folder,
+            parent: Some(parent),
+            rules: None,
+        })
     }
 
     /// Appends tracks to a playlist, skipping any it already contains.
@@ -976,7 +1066,10 @@ impl Library {
             let n = values.len();
             sql.push_str(&format!(
                 " AND (t.title LIKE ?{n} ESCAPE '\\' OR t.artist LIKE ?{n} ESCAPE '\\'
-                   OR t.album LIKE ?{n} ESCAPE '\\' OR t.genre LIKE ?{n} ESCAPE '\\')"
+                   OR t.album LIKE ?{n} ESCAPE '\\' OR t.genre LIKE ?{n} ESCAPE '\\'
+                   OR CAST(t.year AS TEXT) LIKE ?{n} ESCAPE '\\'
+                   OR EXISTS(SELECT 1 FROM track_metadata m WHERE m.track_id=t.id
+                       AND m.search_text LIKE ?{n} ESCAPE '\\'))"
             ));
         }
         if let Some(group) = &query.group {

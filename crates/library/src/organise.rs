@@ -411,7 +411,12 @@ impl Library {
     /// Puts a playlist in a folder, or at the top level with `None`.
     pub fn move_playlist(&self, playlist: i64, folder: Option<i64>) -> Result<()> {
         self.conn.execute(
-            "UPDATE playlists SET folder_id = ?2 WHERE id = ?1",
+            "WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM playlists WHERE id = ?1
+                UNION ALL SELECT p.id FROM playlists p JOIN subtree s ON p.parent_playlist_id = s.id
+             ) UPDATE playlists SET folder_id = ?2,
+                parent_playlist_id = CASE WHEN id = ?1 THEN NULL ELSE parent_playlist_id END
+             WHERE id IN (SELECT id FROM subtree)",
             params![playlist, folder],
         )?;
         Ok(())

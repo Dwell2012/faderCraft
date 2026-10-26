@@ -227,6 +227,17 @@ pub(crate) fn store_track(
             tags.year
         ],
     )?;
+    // Accepted online metadata belongs to the library, independently of disk tags.
+    conn.execute(
+        "UPDATE tracks SET
+            title=(SELECT title FROM track_metadata WHERE track_id=tracks.id),
+            artist=(SELECT artist FROM track_metadata WHERE track_id=tracks.id),
+            album=(SELECT album FROM track_metadata WHERE track_id=tracks.id),
+            genre=(SELECT genre FROM track_metadata WHERE track_id=tracks.id),
+            year=COALESCE((SELECT year FROM track_metadata WHERE track_id=tracks.id),year)
+         WHERE source_id=?1 AND locator=?2 AND EXISTS(SELECT 1 FROM track_metadata WHERE track_id=tracks.id)",
+        params![source_id,locator],
+    )?;
     Ok(())
 }
 
