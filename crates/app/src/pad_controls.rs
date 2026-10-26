@@ -19,9 +19,10 @@ pub(super) enum Page {
     Fx,
     Sampler,
     AutoScratch,
+    KeyShift,
 }
 impl Page {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::HotCues,
         Self::Loop,
         Self::Roll,
@@ -34,6 +35,7 @@ impl Page {
         Self::Fx,
         Self::Sampler,
         Self::AutoScratch,
+        Self::KeyShift,
     ];
     fn label(self) -> &'static str {
         match self {
@@ -49,6 +51,7 @@ impl Page {
             Self::Fx => "Pad FX",
             Self::Sampler => "Sampler",
             Self::AutoScratch => "Scratch",
+            Self::KeyShift => "Key Shift",
         }
     }
 }
@@ -84,9 +87,9 @@ pub(super) struct Pads {
     page: Page,
     split: Option<Page>,
     favorites: bool,
-    bank: [i32; 12],
-    size: [i32; 12],
-    step: [i32; 12],
+    bank: [i32; 13],
+    size: [i32; 13],
+    step: [i32; 13],
     delete_saved: bool,
     quantize: bool,
     locked: bool,
@@ -107,9 +110,9 @@ impl Default for Pads {
             page: Page::HotCues,
             split: None,
             favorites: false,
-            bank: [0; 12],
-            size: [0; 12],
-            step: [0; 12],
+            bank: [0; 13],
+            size: [0; 13],
+            step: [0; 13],
             delete_saved: false,
             quantize: true,
             locked: false,
@@ -130,6 +133,47 @@ fn pad_beats(page: Page, bank: i32, index: usize, alternate: bool) -> f64 {
         return [0.0625, 0.125, 0.25, 0.5, 0.75, 1., 2., 4.][index % 8];
     }
     2f64.powi((bank + index as i32 - if page == Page::Roll { 5 } else { 2 }).clamp(-5, 7))
+}
+
+// Absolute offsets from the unshifted track: centre pad restores its key.
+fn key_shift_pad(mode: i32, index: usize) -> f32 {
+    let degree = [-3i32, -2, -1, 0, 1, 2, 3, 7][index % 8];
+    match mode {
+        1 => (degree * 2).clamp(-12, 12) as f32,
+        2 | 3 => {
+            let scale = if mode == 2 {
+                [0, 2, 4, 5, 7, 9, 11]
+            } else {
+                [0, 2, 3, 5, 7, 8, 10]
+            };
+            (degree.div_euclid(7) * 12 + scale[degree.rem_euclid(7) as usize]) as f32
+        }
+        _ => degree as f32,
+    }
+}
+
+fn key_shift_step(mode: i32, current: f32, direction: i32) -> f32 {
+    if direction == 0 {
+        return current;
+    }
+    let scale = if mode == 2 {
+        [0, 2, 4, 5, 7, 9, 11]
+    } else {
+        [0, 2, 3, 5, 7, 8, 10]
+    };
+    let mut next = current.round() as i32;
+    loop {
+        next += direction.signum();
+        if !(-12..=12).contains(&next) {
+            return current;
+        }
+        if mode == 0
+            || (mode == 1 && next % 2 == 0)
+            || (mode >= 2 && scale.contains(&next.rem_euclid(12)))
+        {
+            return next as f32;
+        }
+    }
 }
 fn snapped(seconds: f64, grid: Option<TempoResult>, enabled: bool) -> f64 {
     if enabled {
@@ -224,7 +268,7 @@ impl Shell {
         if let Some(engine) = self.engine.as_mut() {
             engine.state();
         }
-        for deck in 0..2 {
+        for deck in 0..DECKS {
             let track = self.engine.as_ref().and_then(|e| e.track(deck)).cloned();
             let changed = match (&track, &self.pad_tracks[deck]) {
                 (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
@@ -318,7 +362,7 @@ impl Shell {
             .iter()
             .any(|p| p.held.is_some() || p.sample_hold.is_some())
         {
-            for deck in 0..2 {
+            for deck in 0..DECKS {
                 self.release_pad(deck);
             }
             cx.notify();
@@ -712,6 +756,14 @@ impl Shell {
         let loop_hold = self.pads[deck].loop_mode;
         match page {
             Page::Sampler => {}
+            Page::KeyShift => {
+                let semitones = if alternate {
+                    0.
+                } else {
+                    key_shift_pad(self.pads[deck].bank[page as usize], index)
+                };
+                self.pad_send(deck, DeckAction::SetKeyShift { semitones });
+            }
             Page::AutoScratch => {
                 if index < 8 {
                     self.pad_send(
@@ -1087,6 +1139,21 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match page {
+            Page::KeyShift => {
+                if parameter == 0 {
+                    self.pads[deck].bank[page as usize] =
+                        (self.pads[deck].bank[page as usize] + direction).rem_euclid(4);
+                } else {
+                    if let Some(state) = self.pad_state(deck) {
+                        let semitones = key_shift_step(
+                            self.pads[deck].bank[page as usize],
+                            state.key_shift,
+                            direction,
+                        );
+                        self.pad_send(deck, DeckAction::SetKeyShift { semitones });
+                    }
+                }
+            }
             Page::Sampler => {
                 if parameter == 0 {
                     self.pads[deck].bank[page as usize] =
@@ -1192,6 +1259,18 @@ impl Shell {
             .as_ref()
             .is_some_and(|h| h.page == page && h.index == index);
         match page {
+            Page::KeyShift => {
+                let shift = key_shift_pad(self.pads[deck].bank[page as usize], index);
+                (
+                    if shift == 0. {
+                        "Reset".into()
+                    } else {
+                        format!("{shift:+.0} st")
+                    },
+                    (state.key_shift - shift).abs() < 0.01,
+                    loaded,
+                )
+            }
             Page::Sampler => (
                 if state.sample_loading[index] {
                     format!("{} · Loading…", index + 1)
@@ -1393,11 +1472,7 @@ impl Shell {
         let page = self.pads[deck].page;
         let sixteen = self.effect_view[deck] == 4;
         let split = if sixteen { None } else { self.pads[deck].split };
-        let accent = if deck == 0 {
-            rgb(0xc8ff38)
-        } else {
-            rgb(0x3864e8)
-        };
+        let accent = deck_colour(deck);
         let mut panel = div()
             .flex()
             .flex_col()
@@ -1514,6 +1589,19 @@ impl Shell {
                 };
                 let parameter = if split.is_some() { 0 } else { param };
                 let label = match param_page {
+                    Page::KeyShift => {
+                        if parameter == 0 {
+                            [
+                                "Semitones",
+                                "Whole tones",
+                                "Major scale",
+                                "Natural minor scale",
+                            ][self.pads[deck].bank[param_page as usize] as usize]
+                                .into()
+                        } else {
+                            format!("Shift {:+.0} st", state.key_shift)
+                        }
+                    }
                     Page::Sampler => {
                         if parameter == 0 {
                             ["Trigger", "Hold", "Retrigger"]
@@ -1633,7 +1721,10 @@ impl Shell {
                 parameters = parameters.child(control);
             }
             header = header.child(parameters);
-            if !matches!(page, Page::BeatJump | Page::Stems | Page::Fx) {
+            if !matches!(
+                page,
+                Page::BeatJump | Page::Stems | Page::Fx | Page::KeyShift
+            ) {
                 header = header.child(self.pad_menu(deck, cx));
             }
         }
@@ -1809,6 +1900,11 @@ impl Shell {
             panel = panel.child(pads);
         }
         if !upper {
+            if page == Page::KeyShift || split == Some(Page::KeyShift) {
+                panel = panel.child(div().text_size(px(10.)).child(
+                    "Latched offsets from the original key · Reset restores 0 · Scale pads follow major or natural minor intervals · Key Lock keeps tempo changes from altering pitch"
+                ));
+            }
             if page == Page::Sampler || split == Some(Page::Sampler) {
                 let message=state.sample_errors.iter().enumerate().find_map(|(i,e)|e.as_ref().map(|e|format!("Slot {}: {e}",i+1))).unwrap_or_else(||"Drop a library track onto a pad · Options → Load from disk · Bank saved automatically".into());
                 panel = panel.child(div().text_size(px(10.)).child(message));
@@ -1829,6 +1925,32 @@ impl Shell {
 mod tests {
     use super::{Page, hot_cue_position, pad_beats, sample_capture_region, snapped};
     use djcraft_library::TempoResult;
+
+    #[test]
+    fn key_shift_pads_use_signed_scale_intervals() {
+        use super::key_shift_pad;
+        assert_eq!(key_shift_pad(0, 0), -3.);
+        assert_eq!(key_shift_pad(1, 0), -6.);
+        assert_eq!(key_shift_pad(2, 0), -5.);
+        assert_eq!(key_shift_pad(3, 0), -5.);
+        assert_eq!(key_shift_pad(2, 5), 4.);
+        assert_eq!(key_shift_pad(3, 5), 3.);
+        for mode in 0..4 {
+            assert_eq!(key_shift_pad(mode, 3), 0.);
+            for pad in 0..16 {
+                assert!((-12.0..=12.0).contains(&key_shift_pad(mode, pad)));
+            }
+        }
+        use super::key_shift_step;
+        assert_eq!(key_shift_step(0, 0., -1), -1.);
+        assert_eq!(key_shift_step(1, 0., 1), 2.);
+        assert_eq!(key_shift_step(2, 2., 1), 4.);
+        assert_eq!(key_shift_step(3, 2., 1), 3.);
+        assert_eq!(key_shift_step(3, 0., -1), -2.);
+        assert_eq!(key_shift_step(2, -12., -1), -12.);
+        assert_eq!(key_shift_step(0, 12., 1), 12.);
+        assert_eq!(key_shift_step(2, 3., 0), 3.);
+    }
     #[core::prelude::v1::test]
     fn pad_banks_jump_pairs_and_quantization() {
         assert_eq!(pad_beats(Page::Roll, 0, 0, false), 1. / 32.);
