@@ -597,7 +597,7 @@
       "binding": {
         "type": "host_button",
         "press": {
-          "command": "select_deck",
+          "command": "toggle_headphone_cue",
           "deck": 0
         },
         "release": null,
@@ -752,7 +752,7 @@
       "binding": {
         "type": "host_button",
         "press": {
-          "command": "select_deck",
+          "command": "toggle_headphone_cue",
           "deck": 1
         },
         "release": null,

@@ -97,12 +97,10 @@ impl Engine {
                 if self.automix.state.enabled {
                     return Ok(());
                 }
-                if self.decks.iter().any(|d| d.loading.is_some()) {
+                if self.decks[..2].iter().any(|d| d.loading.is_some()) {
                     return Err(Rejection::Busy);
                 }
-                let playing: Vec<_> = self
-                    .shared
-                    .decks
+                let playing: Vec<_> = self.shared.decks[..2]
                     .iter()
                     .enumerate()
                     .filter(|(_, d)| d.playing())
@@ -175,9 +173,7 @@ impl Engine {
             return;
         }
         if self.automix.waiting_for_deck {
-            let playing: Vec<_> = self
-                .shared
-                .decks
+            let playing: Vec<_> = self.shared.decks[..2]
                 .iter()
                 .enumerate()
                 .filter(|(_, d)| d.playing())

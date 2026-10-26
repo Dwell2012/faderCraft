@@ -340,6 +340,32 @@ fn live_load_warning_follows_the_complete_master_signal_route() {
 }
 
 #[test]
+fn micro_loops_wrap_at_eighth_and_sixteenth_beats() {
+    for beats in [0.125, 0.0625] {
+        let (mut engine, mut mixer) = engine_with(ramp(2.));
+        let start = 0.5;
+        let end = start + beats * 60. / 140.;
+        engine
+            .apply(Role::Host, deck(DeckAction::SetLoop { start, end }))
+            .unwrap();
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        let audio = render(&mut mixer, 0.5);
+        assert!(
+            audio[32..]
+                .iter()
+                .all(|sample| *sample >= 0.249 && *sample <= end as f32 / 2. + 0.001)
+        );
+        let state = engine.state().decks[0].clone();
+        assert!(state.playing && (start..end).contains(&state.position_seconds));
+        engine
+            .apply(Role::Host, deck(DeckAction::ClearLoop))
+            .unwrap();
+        render(&mut mixer, 0.1);
+        assert!(engine.state().decks[0].position_seconds > end);
+    }
+}
+
+#[test]
 fn loops_wrap_audio_and_exit_without_stopping() {
     let (mut engine, mut mixer) = engine_with(ramp(2.));
     engine
@@ -497,6 +523,68 @@ fn key_lock_changes_tempo_but_keeps_pitch() {
         .iter()
         .fold(0f32, |p, s| p.max(s.abs()));
     assert!((0.4..=0.6).contains(&peak), "peak {peak}");
+}
+
+#[test]
+fn key_shift_transposes_without_changing_transport_and_resets() {
+    for (lock, ratio, shift) in [(true, 1., 12.), (true, 1.25, -12.), (false, 1.25, 7.)] {
+        let (mut engine, mut mixer) = engine_with(sine(440., 8., RATE));
+        for action in [
+            DeckAction::SetKeyLock { on: lock },
+            DeckAction::SetTempo { ratio },
+            DeckAction::SetKeyShift { semitones: shift },
+            DeckAction::Play,
+        ] {
+            engine.apply(Role::Host, deck(action)).unwrap();
+        }
+        let out = render(&mut mixer, 2.);
+        let expected = 440. * 2f32.powf(shift / 12.) * if lock { 1. } else { ratio as f32 };
+        let pitch = frequency(&out[RATE as usize..]);
+        assert!(
+            (pitch - expected).abs() < 8.,
+            "pitch {pitch}, expected {expected}"
+        );
+        assert!((position(&mut engine) - 2. * ratio).abs() < 0.03);
+        assert_eq!(engine.state().decks[0].key_shift, shift);
+        engine
+            .apply(Role::Host, deck(DeckAction::SetKeyShift { semitones: 0. }))
+            .unwrap();
+        let out = render(&mut mixer, 1.);
+        let expected = 440. * if lock { 1. } else { ratio as f32 };
+        assert!((frequency(&out[RATE as usize / 2..]) - expected).abs() < 8.);
+    }
+}
+
+#[test]
+fn key_shift_rejects_invalid_values() {
+    let (mut engine, _) = Engine::headless(RATE);
+    for semitones in [f32::NAN, f32::INFINITY, -12.1, 12.1] {
+        assert_eq!(
+            engine.apply(Role::Host, deck(DeckAction::SetKeyShift { semitones })),
+            Err(Rejection::InvalidValue)
+        );
+    }
+}
+
+#[test]
+fn changing_key_shift_mid_playback_preserves_the_audible_position() {
+    let (mut engine, mut mixer) = engine_with(sine(440., 8., RATE));
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    render(&mut mixer, 1.);
+    for shift in [7., -5., 0.] {
+        let before = position(&mut engine);
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::SetKeyShift { semitones: shift }),
+            )
+            .unwrap();
+        let audio = render(&mut mixer, 0.5);
+        assert!((position(&mut engine) - before - 0.5).abs() < 0.003);
+        let expected = 440. * 2f32.powf(shift / 12.);
+        assert!((frequency(&audio[RATE as usize / 4..]) - expected).abs() < 8.);
+        assert!(engine.state().decks[0].playing);
+    }
 }
 
 #[test]
@@ -2083,7 +2171,8 @@ fn automix_stop_during_fade_leaves_decks_for_manual_control() {
     let state = engine.state();
     assert!(!state.automix.enabled);
     assert!(state.crossfader > 0.2 && state.crossfader < 0.5);
-    assert!(state.decks.iter().all(|d| d.playing));
+    assert!(state.decks[..2].iter().all(|d| d.playing));
+    assert!(state.decks[2..].iter().all(|d| !d.playing));
     std::fs::remove_file(a).unwrap();
     std::fs::remove_file(b).unwrap();
 }

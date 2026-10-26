@@ -23,6 +23,65 @@ fn monitor(engine: &mut Engine, value: MonitorState) -> Result<(), Rejection> {
 }
 
 #[test]
+fn independent_cue_toggles_sum_only_selected_decks_and_allow_all_off() {
+    let (mut engine, mut mixer) = Engine::headless(48000);
+    let levels = [0.05, 0.1, 0.15, 0.2];
+    for (index, level) in levels.into_iter().enumerate() {
+        engine
+            .load_track(
+                index,
+                Arc::new(Track::from_samples("cue", 48000, vec![level; 48000])),
+            )
+            .unwrap();
+        deck(&mut engine, index as u8, DeckAction::Play);
+    }
+    let mut master = [0.; 2048];
+    let mut cue = [0.; 2048];
+    let gains = djcraft_engine::crossfader_gains(0.5, Default::default());
+    let master_expected = (levels[0] + levels[2]) * gains[0] + (levels[1] + levels[3]) * gains[1];
+    for mask in [0, 1, 5, 13, 0, 10, 15, 2, 0] {
+        monitor(
+            &mut engine,
+            MonitorState {
+                cue_decks: Some(mask),
+                gain: 1.,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        mixer.render_with_monitor(&mut master, Some(&mut cue));
+        mixer.render_with_monitor(&mut master, Some(&mut cue));
+        let expected: f32 = levels
+            .iter()
+            .enumerate()
+            .filter(|(deck, _)| mask & (1 << deck) != 0)
+            .map(|(_, level)| level)
+            .sum();
+        assert!(
+            cue[1024..]
+                .iter()
+                .all(|sample| (*sample - expected).abs() < 1e-4),
+            "cue mask {mask}: {} vs {expected}",
+            cue[2046]
+        );
+        assert!((master[2046] - master_expected).abs() < 1e-4);
+        assert!(cue.windows(2).all(|s| (s[1] - s[0]).abs() < 0.01));
+    }
+    let before = engine.state().monitor;
+    assert_eq!(
+        monitor(
+            &mut engine,
+            MonitorState {
+                cue_decks: Some(0b10000),
+                ..before
+            }
+        ),
+        Err(Rejection::InvalidValue)
+    );
+    assert_eq!(engine.state().monitor, before);
+}
+
+#[test]
 fn cue_is_independent_of_faders_and_switches_decks_without_advancing_twice() {
     let (mut engine, mut mixer) = Engine::headless(48000);
     for (index, level) in [(0, 0.2), (1, 0.6)] {
@@ -114,7 +173,16 @@ fn headphone_blend_and_level_leave_master_unchanged() {
         (1., 0.25, 0.15),
         (0., 0., 0.),
     ] {
-        monitor(&mut engine, MonitorState { deck: 0, mix, gain }).unwrap();
+        monitor(
+            &mut engine,
+            MonitorState {
+                deck: 0,
+                mix,
+                gain,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         mixer.render_with_monitor(&mut master, Some(&mut cue));
         assert!(
             (cue[2046] - expected).abs() < 1e-4,
@@ -214,7 +282,7 @@ fn invalid_monitor_values_and_remote_mixer_control_are_rejected() {
         monitor(
             &mut engine,
             MonitorState {
-                deck: 2,
+                deck: djcraft_protocol::DECKS as u8,
                 ..Default::default()
             }
         ),

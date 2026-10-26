@@ -41,6 +41,38 @@ fn state() -> SessionState {
         ..Default::default()
     }
 }
+
+#[test]
+fn custom_mappings_control_extra_decks_independently() {
+    let (mut engine, _) = djcraft_engine::Engine::headless(48000);
+    for target in [2, 3] {
+        let mut bridge = Bridge::new(profile(Binding::Parameter {
+            parameter: Parameter::Volume { deck: target },
+            min: 0.,
+            max: 1.,
+            center: None,
+            step: 0.1,
+            encoding: Encoding::Absolute,
+            pickup: false,
+        }))
+        .unwrap();
+        let actions = bridge.process("Numark", event(0), &engine.state());
+        assert_eq!(
+            actions,
+            vec![Action::Deck {
+                deck: target,
+                action: DeckAction::SetVolume { level: 0. },
+            }]
+        );
+        for action in actions {
+            engine.apply(Role::Host, action).unwrap();
+        }
+        let state = engine.state();
+        assert_eq!(state.decks[target as usize].volume, 0.);
+        assert_eq!(state.decks[0].volume, 1.);
+        assert_eq!(state.decks[1].volume, 1.);
+    }
+}
 fn profile(binding: Binding) -> Profile {
     Profile {
         version: PROFILE_VERSION,

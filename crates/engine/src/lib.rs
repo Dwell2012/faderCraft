@@ -23,14 +23,15 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use djcraft_protocol::{
-    Action, CrossfaderCurve, DeckAction, DeckState, EqMode, MixerAction, Rejection, Role,
-    SessionState, TrackInfo,
+    Action, CrossfaderCurve, CrossfaderRouting, DeckAction, DeckState, EqMode, MixerAction,
+    Rejection, Role, SessionState, TrackInfo,
 };
 
 use mixer::{Command, Shared};
 
 pub use mixer::crossfader_gains;
 pub use mixer::cue_mix_gains;
+pub use mixer::routed_crossfader_gain;
 pub use mixer::{DECKS, MAX_SCRATCH_SPEED, MAX_TEMPO, MIN_TEMPO, Mixer};
 pub use output::OutputRouting;
 pub use output::output_devices;
@@ -76,6 +77,7 @@ struct DeckControl {
     error: Option<String>,
     tempo: f64,
     key_lock: bool,
+    key_shift: f32,
     volume: f32,
     trim_db: f32,
     eq: [f32; 3],
@@ -86,7 +88,7 @@ struct DeckControl {
 impl DeckControl {
     fn loudness(&self) -> Option<djcraft_protocol::LoudnessInfo> {
         let mut report = self.track.as_ref()?.loudness()??;
-        if self.key_lock && (self.tempo - 1.).abs() > 1e-3 {
+        if self.key_shift == 0. && self.key_lock && (self.tempo - 1.).abs() > 1e-3 {
             if let Some((ratio, peak)) = self.processed_peak {
                 if ratio == self.tempo {
                     report.peak_db = peak;
@@ -124,6 +126,7 @@ pub struct Engine {
     monitor: djcraft_protocol::MonitorState,
     crossfader: f32,
     crossfader_curve: CrossfaderCurve,
+    crossfader_routing: CrossfaderRouting,
     next_load_id: u64,
     cache_dir: Option<PathBuf>,
     loaded_tx: mpsc::Sender<Loaded>,
@@ -247,6 +250,7 @@ impl Engine {
                 error: None,
                 tempo: 1.0,
                 key_lock: false,
+                key_shift: 0.,
                 volume: 1.0,
                 trim_db: 0.,
                 eq: [1.; 3],
@@ -263,6 +267,7 @@ impl Engine {
             monitor: Default::default(),
             crossfader: 0.5,
             crossfader_curve: CrossfaderCurve::default(),
+            crossfader_routing: CrossfaderRouting::default(),
             next_load_id: 0,
             cache_dir: None,
             loaded_tx,
@@ -332,7 +337,11 @@ impl Engine {
             && channel.track.is_some()
             && channel.volume > 0.
             && state.master_gain > 0.
-            && mixer::crossfader_gains(state.crossfader, state.crossfader_curve)[deck] > 1e-6
+            && mixer::routed_crossfader_gain(
+                deck,
+                state.crossfader_routing,
+                mixer::crossfader_gains(state.crossfader, state.crossfader_curve),
+            ) > 1e-6
             && if channel.effect_tail
                 || channel.peak > 0.00001
                 || channel
@@ -448,6 +457,19 @@ impl Engine {
                 Ok(())
             }
             Action::Mixer {
+                action: MixerAction::SetCrossfaderRouting { routing },
+            } => {
+                if (routing.left | routing.right) & !0b1111 != 0 {
+                    return Err(Rejection::InvalidValue);
+                }
+                if self.automix.state.enabled {
+                    self.stop_automix("Manual crossfader routing · automix stopped")?;
+                }
+                self.send(Command::CrossfaderRouting { routing })?;
+                self.crossfader_routing = routing;
+                Ok(())
+            }
+            Action::Mixer {
                 action: MixerAction::SetCrossfaderCurve { curve },
             } => {
                 if self.automix.state.enabled {
@@ -478,6 +500,12 @@ impl Engine {
             } => {
                 if monitor.deck as usize >= DECKS {
                     return Err(Rejection::UnknownDeck);
+                }
+                if monitor
+                    .cue_decks
+                    .is_some_and(|mask| mask & !((1 << DECKS) - 1) != 0)
+                {
+                    return Err(Rejection::InvalidValue);
                 }
                 unit_level(monitor.mix)?;
                 unit_level(monitor.gain)?;
@@ -891,6 +919,15 @@ impl Engine {
                 self.decks[deck].tempo = ratio;
                 Ok(())
             }
+            DeckAction::SetKeyShift { semitones } => {
+                if !(-12.0..=12.0).contains(&semitones) {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::KeyShift { deck, semitones })?;
+                self.decks[deck].key_shift = semitones;
+                self.decks[deck].processed_peak = None;
+                Ok(())
+            }
             DeckAction::SetKeyLock { on } => {
                 self.send(Command::KeyLock { deck, on })?;
                 if self.decks[deck].key_lock != on {
@@ -1155,6 +1192,7 @@ impl Engine {
                     position_seconds: shared.position() / sample_rate,
                     tempo: control.tempo,
                     key_lock: control.key_lock,
+                    key_shift: control.key_shift,
                     volume: control.volume,
                     trim_db: control.trim_db,
                     eq: control.eq,
@@ -1172,6 +1210,7 @@ impl Engine {
             monitor: self.monitor,
             crossfader: self.crossfader,
             crossfader_curve: self.crossfader_curve,
+            crossfader_routing: self.crossfader_routing,
             master_peak: self.shared.master_peak(),
             master_stereo_peak: self.shared.master_stereo_peak(),
         }

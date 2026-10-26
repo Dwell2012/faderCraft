@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::eq::Eq;
-use djcraft_protocol::{CrossfaderCurve, EqMode};
+use djcraft_protocol::{CrossfaderCurve, CrossfaderRouting, EqMode};
 use signalsmith_stretch::Stretch;
 
 use crate::track::{CHANNELS, Track};
 
-pub const DECKS: usize = 2;
+pub use djcraft_protocol::DECKS;
 
 /// Cue stays at unity through the left half; master stays at unity through the right.
 pub fn cue_mix_gains(position: f32) -> [f32; 2] {
@@ -157,6 +157,10 @@ pub(crate) enum Command {
         deck: usize,
         on: bool,
     },
+    KeyShift {
+        deck: usize,
+        semitones: f32,
+    },
     Volume {
         deck: usize,
         level: f32,
@@ -183,6 +187,9 @@ pub(crate) enum Command {
     },
     CrossfaderCurve {
         curve: CrossfaderCurve,
+    },
+    CrossfaderRouting {
+        routing: CrossfaderRouting,
     },
     MasterGain {
         level: f32,
@@ -272,6 +279,16 @@ pub fn crossfader_gains(position: f32, curve: CrossfaderCurve) -> [f32; 2] {
     }
 }
 
+pub fn routed_crossfader_gain(deck: usize, routing: CrossfaderRouting, gains: [f32; 2]) -> f32 {
+    let left = routing.left & (1 << deck) != 0;
+    let right = routing.right & (1 << deck) != 0;
+    if !left && !right {
+        1.
+    } else {
+        ((if left { gains[0] } else { 0. }) + (if right { gains[1] } else { 0. })).min(1.)
+    }
+}
+
 struct Deck {
     auto: Option<AutoScratch>,
     loop_armed: bool,
@@ -286,6 +303,7 @@ struct Deck {
     nudge_frames: f64,
     nudge_timeout: Option<usize>,
     key_lock: bool,
+    key_shift: f32,
     volume: f32,
     eq: Eq,
     effect_bpm: Option<f64>,
@@ -342,6 +360,7 @@ impl Deck {
             nudge_frames: 0.,
             nudge_timeout: None,
             key_lock: false,
+            key_shift: 0.,
             volume: 1.0,
             eq: Eq::new(sample_rate),
             effect_bpm: None,
@@ -380,6 +399,10 @@ impl Deck {
             return;
         };
         self.stretch.reset();
+        self.stretch.set_transpose_factor(
+            2f32.powf(self.key_shift / 12.) * if self.key_lock { 1. } else { self.tempo as f32 },
+            None,
+        );
         let available = track.decoded_frames();
         let needed = self.position
             + self.stretch_input_latency
@@ -451,10 +474,10 @@ impl Deck {
             }
             return false;
         }
-        let use_stretch = self.key_lock
+        let use_stretch = (self.key_lock || self.key_shift != 0.)
             && self.scratch.is_none()
             && self.auto.is_none()
-            && (self.tempo - 1.).abs() > 1e-3;
+            && ((self.tempo - 1.).abs() > 1e-3 || self.key_shift != 0.);
         if use_stretch && !self.stretching && (self.playing || self.speed == 0.) {
             self.prepare_stretch();
             if self.playing && self.prepared_at.is_some() {
@@ -555,10 +578,10 @@ impl Deck {
                 *position = (*position + frames as f64 * effective_tempo).min(available as f64);
             }
         }
-        let stretch = self.key_lock
+        let stretch = (self.key_lock || self.key_shift != 0.)
             && self.scratch.is_none()
             && self.playing
-            && (self.tempo - 1.0).abs() > 1e-3;
+            && ((self.tempo - 1.0).abs() > 1e-3 || self.key_shift != 0.);
         if stretch {
             if !self.stretching {
                 self.stretch.reset();
@@ -591,6 +614,11 @@ impl Deck {
                     self.position = self.position.min(available as f64);
                 }
             }
+            self.stretch.set_transpose_factor(
+                2f32.powf(self.key_shift / 12.)
+                    * if self.key_lock { 1. } else { self.tempo as f32 },
+                None,
+            );
             self.stretch.process(&*input, &mut *out);
             self.speed = effective_tempo;
         } else {
@@ -910,7 +938,7 @@ pub struct Mixer {
     monitor_gain: f32,
     monitor_mix: f32,
     monitor: djcraft_protocol::MonitorState,
-    cue_gain: f32,
+    cue_gains: [f32; DECKS],
     monitor_buffer: Box<[f32]>,
     pending_mix: Option<PendingMix>,
     fade: Option<MixFade>,
@@ -923,6 +951,7 @@ pub struct Mixer {
     current_master: f32,
     crossfader: f32,
     curve: CrossfaderCurve,
+    routing: CrossfaderRouting,
     sample_rate: u32,
     deck_buffer: Box<[f32]>,
 }
@@ -942,7 +971,7 @@ impl Mixer {
             sampler_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
             monitor_gain: 0.5,
             monitor_mix: 0.,
-            cue_gain: 1.,
+            cue_gains: [1., 0., 0., 0.],
             monitor_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
             fade: None,
             pending_mix: None,
@@ -955,6 +984,7 @@ impl Mixer {
             current_master: 1.,
             crossfader: 0.5,
             curve: CrossfaderCurve::default(),
+            routing: CrossfaderRouting::default(),
             sample_rate,
             deck_buffer: vec![0.0; BLOCK * CHANNELS].into_boxed_slice(),
         }
@@ -1365,7 +1395,10 @@ impl Mixer {
                 }
             }
             Command::Tempo { deck, ratio } => {
-                if self.decks[deck].stretching && (ratio - 1.).abs() <= 1e-3 {
+                if self.decks[deck].stretching
+                    && (ratio - 1.).abs() <= 1e-3
+                    && self.decks[deck].key_shift == 0.
+                {
                     self.decks[deck].position = self.decks[deck].audible_position();
                     self.decks[deck].stretching = false;
                 }
@@ -1402,10 +1435,10 @@ impl Mixer {
                 } else {
                     0.
                 };
-                let new_latency = if deck.key_lock
+                let new_latency = if (deck.key_lock || deck.key_shift != 0.)
                     && deck.playing
                     && deck.scratch.is_none()
-                    && (ratio - 1.).abs() > 1e-3
+                    && ((ratio - 1.).abs() > 1e-3 || deck.key_shift != 0.)
                 {
                     deck.stretch_input_latency + deck.stretch_output_latency * ratio
                 } else {
@@ -1426,9 +1459,20 @@ impl Mixer {
                 deck.nudge_frames = frames + latency_change;
                 deck.nudge_timeout = None;
             }
+            Command::KeyShift { deck, semitones } => {
+                let deck = &mut self.decks[deck];
+                if deck.key_shift != semitones {
+                    if deck.stretching {
+                        deck.position = deck.audible_position();
+                        deck.stretching = false;
+                    }
+                    deck.key_shift = semitones;
+                    deck.prepared_at = None;
+                }
+            }
             Command::KeyLock { deck, on } => {
                 let deck = &mut self.decks[deck];
-                if deck.stretching && !on {
+                if deck.stretching && !on && deck.key_shift == 0. {
                     deck.position = deck.audible_position();
                     deck.stretching = false;
                 }
@@ -1488,6 +1532,7 @@ impl Mixer {
             Command::Eq { deck, band, gain } => self.decks[deck].eq.gains[band] = gain,
             Command::Crossfader { position } => self.crossfader = position,
             Command::CrossfaderCurve { curve } => self.curve = curve,
+            Command::CrossfaderRouting { routing } => self.routing = routing,
             Command::MasterGain { level } => self.master_gain = level,
             Command::SamplerGain { level } => self.sampler_gain = level,
             Command::Monitor { monitor } => self.monitor = monitor,
@@ -1568,18 +1613,16 @@ impl Mixer {
                     effect.clock(bpm, source_running);
                 }
                 let step = (target - deck.gain) / frames as f32;
-                let cue_target = if self.monitor.deck as usize == index {
+                let cue_target = if self.monitor.cue_enabled(index) {
                     1.
                 } else {
                     0.
                 };
-                let mut cue_gain = if index == 0 {
-                    self.cue_gain
-                } else {
-                    1. - self.cue_gain
-                };
+                let mut cue_gain = self.cue_gains[index];
                 let cue_step = (cue_target - cue_gain) / frames as f32;
-                let cross_step = (cross[index] - deck.cross_gain) / frames as f32;
+                let cross_step = (routed_crossfader_gain(index, self.routing, cross)
+                    - deck.cross_gain)
+                    / frames as f32;
                 for ((out, input), cue) in block
                     .chunks_exact_mut(CHANNELS)
                     .zip(buffer.chunks_exact(CHANNELS))
@@ -1608,6 +1651,7 @@ impl Mixer {
                     }
                 }
                 deck.gain = target;
+                self.cue_gains[index] = cue_target;
                 self.shared.decks[index].protection_db.store(
                     self.deck_guards[index].reduction_db().to_bits(),
                     Ordering::Relaxed,
@@ -1643,7 +1687,6 @@ impl Mixer {
                 }
             }
             self.current_master = self.master_gain;
-            self.cue_gain = if self.monitor.deck == 0 { 1. } else { 0. };
             if let Some(cue_out) = headphones.as_deref_mut() {
                 let start = block_index * BLOCK * CHANNELS;
                 let gain_step = (self.monitor.gain - self.monitor_gain) / frames as f32;

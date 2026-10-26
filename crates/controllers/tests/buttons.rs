@@ -236,6 +236,22 @@ fn headphone_leds_follow_actual_monitor_selection_and_stay_on_after_release() {
     }
     assert!(profile.validate().is_err());
 }
+
+#[test]
+fn headphone_leds_support_multiple_cues_and_all_off() {
+    let b = bridge();
+    for mask in [0, 1, 2, 3] {
+        let feedback = b.feedback_monitor(
+            "MixTrack Pro II",
+            djcraft_protocol::MonitorState {
+                cue_decks: Some(mask),
+                ..Default::default()
+            },
+        );
+        assert!(feedback.contains(&[0x90, 0x51, if mask & 1 != 0 { 100 } else { 0 }]));
+        assert!(feedback.contains(&[0x90, 0x52, if mask & 2 != 0 { 100 } else { 0 }]));
+    }
+}
 fn state(playing: bool) -> SessionState {
     SessionState {
         decks: vec![
@@ -267,8 +283,8 @@ fn official_sync_headphone_and_stutter_buttons_resolve_to_correct_decks() {
     for (note, command) in [
         (0x40, HostCommand::Sync { deck: 0 }),
         (0x47, HostCommand::Sync { deck: 1 }),
-        (0x51, HostCommand::SelectDeck { deck: 0 }),
-        (0x52, HostCommand::SelectDeck { deck: 1 }),
+        (0x51, HostCommand::ToggleHeadphoneCue { deck: 0 }),
+        (0x52, HostCommand::ToggleHeadphoneCue { deck: 1 }),
         (0x4a, HostCommand::Stutter { deck: 0 }),
         (0x4c, HostCommand::Stutter { deck: 1 }),
     ] {

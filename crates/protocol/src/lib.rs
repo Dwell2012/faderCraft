@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Zero-based deck index.
+/// Number of independently playable decks (A, B, C and D).
+pub const DECKS: usize = 4;
+
+/// Zero-based deck index (0 = A, 1 = B, 2 = C, 3 = D).
 pub type DeckId = u8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,6 +333,10 @@ pub enum DeckAction {
     SetKeyLock {
         on: bool,
     },
+    /// Transpose independently of tempo, from -12 to +12 semitones.
+    SetKeyShift {
+        semitones: f32,
+    },
     SetVolume {
         level: f32,
     },
@@ -403,6 +410,26 @@ pub enum MixerAction {
     SetCrossfaderCurve {
         curve: CrossfaderCurve,
     },
+    SetCrossfaderRouting {
+        routing: CrossfaderRouting,
+    },
+}
+
+/// A–D bitmasks for each crossfader side. Neither side bypasses the crossfader;
+/// both sides sum their gains, capped at unity.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CrossfaderRouting {
+    pub left: u8,
+    pub right: u8,
+}
+
+impl Default for CrossfaderRouting {
+    fn default() -> Self {
+        Self {
+            left: 0b0101,
+            right: 0b1010,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -581,14 +608,21 @@ pub struct SessionState {
     pub master_gain: f32,
     pub crossfader: f32,
     pub crossfader_curve: CrossfaderCurve,
+    #[serde(default)]
+    pub crossfader_routing: CrossfaderRouting,
     pub master_peak: f32,
     pub master_stereo_peak: [f32; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MonitorState {
+    /// Legacy single cue deck, used when cue_decks is absent.
     pub deck: u8,
-    /// 0 = selected deck, 1 = master.
+    /// Explicit cue selection: bits 0–3 select A–D. Zero switches deck cue off.
+    /// Absent preserves the single-deck behaviour of older protocol clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue_decks: Option<u8>,
+    /// 0 = cue bus, 1 = master.
     pub mix: f32,
     pub gain: f32,
 }
@@ -599,9 +633,26 @@ impl Default for MonitorState {
     fn default() -> Self {
         Self {
             deck: 0,
+            cue_decks: None,
             mix: 0.,
             gain: 0.5,
         }
+    }
+}
+
+impl MonitorState {
+    pub fn cue_mask(self) -> u8 {
+        self.cue_decks.unwrap_or_else(|| {
+            if (self.deck as usize) < DECKS {
+                1 << self.deck
+            } else {
+                0
+            }
+        })
+    }
+
+    pub fn cue_enabled(self, deck: usize) -> bool {
+        deck < DECKS && self.cue_mask() & (1 << deck) != 0
     }
 }
 
@@ -648,6 +699,8 @@ pub struct DeckState {
     pub position_seconds: f64,
     pub tempo: f64,
     pub key_lock: bool,
+    #[serde(default)]
+    pub key_shift: f32,
     pub volume: f32,
     pub trim_db: f32,
     pub eq: [f32; 3],

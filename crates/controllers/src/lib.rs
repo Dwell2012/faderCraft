@@ -21,6 +21,7 @@ pub enum HostCommand {
     Sync { deck: u8 },
     Cue { deck: u8, pressed: bool },
     SelectDeck { deck: u8 },
+    ToggleHeadphoneCue { deck: u8 },
     Stutter { deck: u8 },
     LoopPad { deck: u8, pad: u8, alternate: bool },
     SamplePad { deck: u8, slot: u8, stop: bool },
@@ -31,6 +32,7 @@ impl HostCommand {
             Self::Sync { deck }
             | Self::Cue { deck, .. }
             | Self::SelectDeck { deck }
+            | Self::ToggleHeadphoneCue { deck }
             | Self::Stutter { deck }
             | Self::LoopPad { deck, .. }
             | Self::SamplePad { deck, .. } => deck,
@@ -325,10 +327,13 @@ impl Profile {
             } = &m.binding
                 && (!led.valid()
                     || !matches!(led, Source::Note { .. })
-                    || !matches!(press, HostCommand::SelectDeck { .. }))
+                    || !matches!(
+                        press,
+                        HostCommand::SelectDeck { .. } | HostCommand::ToggleHeadphoneCue { .. }
+                    ))
             {
                 return Err(format!(
-                    "{}: LED requires a note and SelectDeck command",
+                    "{}: LED requires a note and deck selection or headphone cue command",
                     m.id
                 ));
             }
@@ -477,13 +482,27 @@ impl Bridge {
 
     /// LEDs follow actual monitor selection, including changes from other clients.
     pub fn feedback(&self, port: &str, monitor_deck: u8) -> Vec<[u8; 3]> {
+        self.feedback_monitor(
+            port,
+            djcraft_protocol::MonitorState {
+                deck: monitor_deck,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn feedback_monitor(
+        &self,
+        port: &str,
+        monitor: djcraft_protocol::MonitorState,
+    ) -> Vec<[u8; 3]> {
         let mut messages = self.jog_feedback(port);
         for mapping in &self.profile.mappings {
             if mapping.port != port {
                 continue;
             }
             if let Binding::HostButton {
-                press: HostCommand::SelectDeck { deck },
+                press: HostCommand::SelectDeck { deck } | HostCommand::ToggleHeadphoneCue { deck },
                 led: Some(Source::Note { channel, number }),
                 ..
             } = &mapping.binding
@@ -491,7 +510,11 @@ impl Bridge {
                 messages.push([
                     0x90 | channel,
                     *number,
-                    if *deck == monitor_deck { 100 } else { 0 },
+                    if monitor.cue_enabled(*deck as usize) {
+                        100
+                    } else {
+                        0
+                    },
                 ]);
             }
         }
@@ -663,7 +686,10 @@ impl Bridge {
                         None
                     };
                     if let Some(command) = command {
-                        if !matches!(command, HostCommand::SelectDeck { .. }) {
+                        if !matches!(
+                            command,
+                            HostCommand::SelectDeck { .. } | HostCommand::ToggleHeadphoneCue { .. }
+                        ) {
                             takeovers.insert(command.deck());
                         }
                         self.commands.push(command);

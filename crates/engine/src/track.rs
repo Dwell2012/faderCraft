@@ -31,6 +31,7 @@ pub struct Track {
     /// Interleaved stereo, as `f32` bits.
     samples: Box<[AtomicU32]>,
     stems: OnceLock<[Box<[f32]>; 4]>,
+    stem_waveforms: OnceLock<[Box<[f32]>; 4]>,
     vocal_regions: OnceLock<Vec<[f64; 2]>>,
     loudness: OnceLock<Option<djcraft_protocol::LoudnessInfo>>,
     /// Peak amplitude of each block of `FRAMES_PER_PEAK` frames, as `f32` bits.
@@ -81,6 +82,7 @@ impl Track {
             sample_rate,
             samples: zeroed(capacity * CHANNELS),
             stems: OnceLock::new(),
+            stem_waveforms: OnceLock::new(),
             vocal_regions: OnceLock::new(),
             loudness: OnceLock::new(),
             peaks: zeroed(capacity.div_ceil(FRAMES_PER_PEAK)),
@@ -244,9 +246,34 @@ impl Track {
                 return Err("Stem reconstruction exceeds the audio range".into());
             }
         }
+        // Build display summaries on the attaching worker, never by scanning
+        // full-resolution stem audio during drawing or on the audio thread.
+        let waveforms = std::array::from_fn(|stem| {
+            stems[stem]
+                .chunks(FRAMES_PER_PEAK * CHANNELS)
+                .map(|block| {
+                    (block
+                        .iter()
+                        .map(|sample| f64::from(*sample).powi(2))
+                        .sum::<f64>()
+                        / block.len() as f64)
+                        .sqrt() as f32
+                })
+                .collect::<Box<[_]>>()
+        });
         self.stems
             .set(stems)
-            .map_err(|_| "Stems already attached".into())
+            .map_err(|_| "Stems already attached".to_string())?;
+        let _ = self.stem_waveforms.set(waveforms);
+        Ok(())
+    }
+
+    /// Stereo-safe RMS envelopes ordered vocals/instruments/bass/drums.
+    /// Published after attachment, with the same block spacing as mixed peaks.
+    pub fn stem_levels(&self, peak: usize) -> Option<[f32; 4]> {
+        self.stem_waveforms
+            .get()
+            .map(|stems| std::array::from_fn(|stem| stems[stem].get(peak).copied().unwrap_or(0.)))
     }
 
     pub fn export_stereo(&self) -> Vec<f32> {

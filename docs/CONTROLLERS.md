@@ -202,8 +202,11 @@ is subject to the existing transport limitation below.
   need analysed grids. It does not invent BPM for unanalysed audio.
 - Transport Cue holds an anchored preview; releasing stops and returns to it.
   Disconnect also releases the preview. This is separate from headphone Cue.
-- Headphone Cue selects that deck as active and monitors it, preserving the
-  existing cue gain/blend. The current engine monitors one active deck.
+- Headphone Cue toggles that deck in the headphone bus, independently of the
+  active deck, preserving gain/blend and other cued decks. Multiple decks or
+  no decks may be cued. LEDs follow the cue mask. Bundled headphone buttons use
+  ToggleHeadphoneCue; named legacy headphone-cue mappings are upgraded in memory.
+  SelectDeck now activates keyboard controls without changing headphones.
 - Stutter jumps to the retained transport-Cue anchor and plays, or starts at
   zero when no anchor has been set. Repeated presses keep that same anchor.
 - Pitch -/+ bends by 3% while held without rewriting the pitch fader.
