@@ -187,7 +187,16 @@
         "channel": 0,
         "number": 112
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "hot_cue",
         "deck": 0,
@@ -379,7 +388,16 @@
         "channel": 0,
         "number": 116
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "hot_cue",
         "deck": 1,
@@ -862,7 +880,16 @@
         "channel": 0,
         "number": 89
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 0,
@@ -877,7 +904,16 @@
         "channel": 0,
         "number": 90
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 0,
@@ -892,7 +928,16 @@
         "channel": 0,
         "number": 91
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 0,
@@ -1387,7 +1432,16 @@
         "channel": 0,
         "number": 93
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 1,
@@ -1402,7 +1456,16 @@
         "channel": 0,
         "number": 94
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 1,
@@ -1417,7 +1480,16 @@
         "channel": 0,
         "number": 95
       },
-      "modifiers": [],
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": false
+        }
+      ],
       "binding": {
         "type": "toggle_effect",
         "deck": 1,
@@ -2046,6 +2118,1084 @@
         "encoding": "twos_complement",
         "step": 0.01,
         "pickup": false
+      }
+    },
+    {
+      "id": "shift-auto-loop-0-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 89
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 0,
+          "beats": 1
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-0-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 90
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 0,
+          "beats": 2
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-0-4",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 91
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 0,
+          "beats": 4
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-0-16",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 92
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 0,
+          "beats": 16
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "cue-delete-mode-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 112
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "hot_cue_delete_mode",
+        "deck": 0
+      }
+    },
+    {
+      "id": "led-play-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 59
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-stutter-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 74
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-cue-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 51
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-pitch-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 40
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "pitch_center",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-loop-0-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 83
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop_in",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-0-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 109
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-sample-0-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 101
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 0,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-fx-0-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 89
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 0,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-loop-0-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-0-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 110
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-sample-0-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 102
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 0,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-fx-0-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 90
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 0,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-loop-0-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 85
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-0-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 111
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-sample-0-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 103
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 0,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-fx-0-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 91
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 0,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-loop-0-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 99
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-0-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 112
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "led-sample-0-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 104
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 0,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "shift-auto-loop-1-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 93
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 1,
+          "beats": 1
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-1-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 94
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 1,
+          "beats": 2
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-1-4",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 95
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 1,
+          "beats": 4
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "shift-auto-loop-1-16",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 96
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "auto_loop",
+          "deck": 1,
+          "beats": 16
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "cue-delete-mode-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 116
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "hot_cue_delete_mode",
+        "deck": 1
+      }
+    },
+    {
+      "id": "led-play-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 66
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-stutter-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 76
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-cue-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 60
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-pitch-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 41
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "pitch_center",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-loop-1-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 86
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop_in",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-1-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 113
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-sample-1-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 105
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 1,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-fx-1-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 93
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 1,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "led-loop-1-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 87
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-1-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 114
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-sample-1-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 106
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 1,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-fx-1-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 94
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 1,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "led-loop-1-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 88
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-1-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 115
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-sample-1-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 107
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 1,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-fx-1-2",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 95
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "effect",
+          "deck": 1,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "led-loop-1-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 100
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loop",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "led-hotcue-1-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 116
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "led-sample-1-3",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 108
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "sample",
+          "deck": 1,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "led-sync-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 64
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "pressed",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "led-sync-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 71
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "pressed",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "browse",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "cc",
+        "channel": 0,
+        "number": 26
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "browse",
+        "encoding": "twos_complement"
+      }
+    },
+    {
+      "id": "browse-back",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 119
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "browse_back"
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "load-a",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 75
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 0
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "load-b",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 52
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 1
+        },
+        "release": null,
+        "led": null
+      }
+    },
+    {
+      "id": "led-file",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 75
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "browser_led",
+        "folders": false
+      }
+    },
+    {
+      "id": "led-folder",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 52
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "browser_led",
+        "folders": true
       }
     }
   ]

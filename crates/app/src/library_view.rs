@@ -177,6 +177,17 @@ const COLUMNS: [(Field, &str, f32); 10] = [
     (Field::Source, "Source", 110.),
 ];
 
+fn controller_row(current: Option<usize>, len: usize, steps: i32) -> Option<usize> {
+    if len == 0 || steps == 0 {
+        return current.filter(|i| *i < len);
+    }
+    let start = current
+        .filter(|i| *i < len)
+        .map(|i| i as i64)
+        .unwrap_or(if steps > 0 { -1 } else { len as i64 });
+    Some((start + i64::from(steps)).clamp(0, len as i64 - 1) as usize)
+}
+
 /// What the library asks the rest of the app to do.
 pub enum LibraryEvent {
     NewSet,
@@ -695,6 +706,7 @@ pub struct LibraryView {
     notice: Option<SharedString>,
     /// The small browser under the decks, not the full Library tab.
     compact: bool,
+    controller_folders: bool,
     /// Whether a compact browser offers the Camelot wheel, from a button
     /// beside its track count.
     wheel_in_browser: bool,
@@ -826,6 +838,7 @@ impl LibraryView {
             notice: None,
             compact,
             wheel_in_browser: false,
+            controller_folders: false,
             wheel_open: false,
             wheel_dismissed: None,
             history_set: None,
@@ -2054,6 +2067,76 @@ impl LibraryView {
         self.selected = source;
         self.group = None;
         self.reload(cx);
+    }
+
+    pub fn controller_folders(&self) -> bool {
+        self.controller_folders
+    }
+
+    pub fn controller_back(&mut self, cx: &mut Context<Self>) {
+        self.controller_folders = !self.controller_folders;
+        self.notice = Some(
+            if self.controller_folders {
+                "Controller: sources / playlists"
+            } else {
+                "Controller: tracks"
+            }
+            .into(),
+        );
+        cx.notify();
+    }
+
+    pub fn controller_browse(&mut self, steps: i32, cx: &mut Context<Self>) {
+        if !matches!(self.section, Section::Library | Section::Playlists) {
+            self.show_section(Section::Library, cx);
+        }
+        if self.controller_folders {
+            let mut choices = vec![(false, None)];
+            choices.extend(self.sources.iter().map(|s| (false, Some(s.id))));
+            choices.extend(self.playlists.iter().map(|p| (true, Some(p.id))));
+            let current = choices.iter().position(|(playlist, id)| {
+                if *playlist {
+                    self.section == Section::Playlists && self.playlist == *id
+                } else {
+                    self.section != Section::Playlists && self.selected == *id
+                }
+            });
+            if let Some(index) = controller_row(current, choices.len(), steps) {
+                let (playlist, id) = choices[index];
+                self.table.update(cx, |table, cx| table.clear_selection(cx));
+                if playlist {
+                    self.playlist = id;
+                    self.show_section(Section::Playlists, cx);
+                } else {
+                    self.select(id, cx);
+                }
+            }
+        } else {
+            let table = self.table.read(cx);
+            let index = controller_row(table.selected_row(), table.delegate().tracks.len(), steps);
+            if let Some(index) = index {
+                self.table
+                    .update(cx, |table, cx| table.set_selected_row(index, cx));
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn controller_load(&mut self, deck: usize, cx: &mut Context<Self>) {
+        let table = self.table.read(cx);
+        if let Some(track) = table
+            .selected_row()
+            .and_then(|row| table.delegate().tracks.get(row))
+        {
+            cx.emit(LibraryEvent::Load {
+                id: track.id,
+                path: track.path.clone(),
+                deck: Some(deck),
+            });
+        } else {
+            self.notice = Some("Select a track with Browse before loading.".into());
+            cx.notify();
+        }
     }
 
     fn select_group(&mut self, group: Group, cx: &mut Context<Self>) {
@@ -3811,5 +3894,22 @@ impl Render for LibraryView {
             .gap_3()
             .child(self.rail(cx))
             .child(content)
+    }
+}
+#[cfg(test)]
+mod controller_browse_tests {
+    use super::controller_row;
+    #[test]
+    fn navigation_handles_empty_filtered_lists_direction_and_bounds() {
+        assert_eq!(controller_row(None, 0, 1), None);
+        assert_eq!(controller_row(Some(5), 0, -1), None);
+        assert_eq!(controller_row(None, 5, 1), Some(0));
+        assert_eq!(controller_row(None, 5, -1), Some(4));
+        assert_eq!(controller_row(Some(2), 5, 2), Some(4));
+        assert_eq!(controller_row(Some(2), 5, -2), Some(0));
+        assert_eq!(controller_row(Some(0), 5, i32::MIN), Some(0));
+        assert_eq!(controller_row(Some(4), 5, i32::MAX), Some(4));
+        assert_eq!(controller_row(Some(99), 2, 1), Some(0));
+        assert_eq!(controller_row(Some(0), 2, 0), Some(0));
     }
 }

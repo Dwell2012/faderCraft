@@ -1080,7 +1080,13 @@ impl Shell {
         }
         if let Some(engine) = &mut self.engine {
             let state = engine.state();
-            for action in controllers.tick(&state) {
+            let view = if self.tab == Tab::Library {
+                &self.library
+            } else {
+                &self.browser
+            };
+            controllers.set_browser_folders(view.read(cx).controller_folders());
+            for action in controllers.tick(&state, &self.loop_in) {
                 self.controller_action(action, cx);
             }
         }
@@ -1126,6 +1132,43 @@ impl Shell {
             self.set_four_decks(true, cx);
         }
         match command {
+            HostCommand::Browse { .. }
+            | HostCommand::BrowseBack
+            | HostCommand::LoadSelected { .. } => {
+                if self.tab != Tab::Library && self.tab != Tab::Live {
+                    self.show(Tab::Live, cx);
+                }
+                let view = if self.tab == Tab::Library {
+                    &self.library
+                } else {
+                    &self.browser
+                };
+                view.update(cx, |view, cx| match command {
+                    HostCommand::Browse { steps } => view.controller_browse(steps, cx),
+                    HostCommand::BrowseBack => view.controller_back(cx),
+                    HostCommand::LoadSelected { deck } => {
+                        view.controller_load(usize::from(deck), cx)
+                    }
+                    _ => unreachable!(),
+                });
+            }
+            HostCommand::AutoLoop { beats, .. } => {
+                self.loop_size[deck] = match beats {
+                    1 => 0,
+                    2 => 1,
+                    4 => 2,
+                    16 => 4,
+                    _ => return,
+                };
+                let same_length = self.grids[deck].is_some_and(|grid| {
+                    self.loop_state(deck)
+                        .and_then(|s| s.loop_region)
+                        .is_some_and(|[a, b]| {
+                            ((b - a) / grid.beat_seconds() - f64::from(beats)).abs() < 0.01
+                        })
+                });
+                self.auto_loop(deck, same_length, cx);
+            }
             HostCommand::LoopPad { pad, alternate, .. } => {
                 self.controller_loop_pad(deck, pad, alternate, cx);
             }

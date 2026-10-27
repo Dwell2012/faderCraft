@@ -13,6 +13,9 @@ pub struct Controllers {
     failed: std::collections::BTreeSet<String>,
     trace_notes: usize,
     monitor: djcraft_protocol::MonitorState,
+    browser_folders: bool,
+    state_leds: std::collections::BTreeMap<String, Vec<[u8; 3]>>,
+    started: std::time::Instant,
     outputs: std::collections::BTreeMap<String, (Output, Vec<[u8; 3]>)>,
 }
 
@@ -46,6 +49,9 @@ impl Controllers {
                 .unwrap_or(0),
             outputs: Default::default(),
             monitor: Default::default(),
+            browser_folders: false,
+            state_leds: Default::default(),
+            started: std::time::Instant::now(),
         };
         controllers.rescan();
         Ok(Some(controllers))
@@ -123,7 +129,15 @@ impl Controllers {
         let connected: Vec<_> = self.inputs.iter().map(|(n, _)| n.clone()).collect();
         for name in connected {
             if self.outputs.contains_key(&name)
-                || self.bridge.feedback_monitor(&name, self.monitor).is_empty()
+                || (self.bridge.feedback_monitor(&name, self.monitor).is_empty()
+                    && !self.bridge.profile().mappings.iter().any(|m| {
+                        m.port == name
+                            && matches!(
+                                m.binding,
+                                djcraft_controllers::Binding::Led { .. }
+                                    | djcraft_controllers::Binding::BrowserLed { .. }
+                            )
+                    }))
             {
                 continue;
             }
@@ -144,7 +158,24 @@ impl Controllers {
     }
 
     fn sync_feedback(&mut self, port: &str, force: bool) {
-        let desired = self.bridge.feedback_monitor(port, self.monitor);
+        let mut desired = self.bridge.feedback_monitor(port, self.monitor);
+        desired.extend(self.state_leds.get(port).into_iter().flatten().copied());
+        for m in &self.bridge.profile().mappings {
+            if m.port == port
+                && let djcraft_controllers::Binding::BrowserLed { folders } = m.binding
+                && let djcraft_controllers::Source::Note { channel, number } = m.source
+            {
+                desired.push([
+                    0x90 | channel,
+                    number,
+                    if folders == self.browser_folders {
+                        100
+                    } else {
+                        0
+                    },
+                ]);
+            }
+        }
         let Some((output, previous)) = self.outputs.get_mut(port) else {
             return;
         };
@@ -152,6 +183,9 @@ impl Controllers {
             return;
         }
         for message in &desired {
+            if !force && previous.contains(message) {
+                continue;
+            }
             if let Err(error) = output.send(message) {
                 eprintln!("Controller LED send: {error}");
                 self.outputs.remove(port);
@@ -197,6 +231,16 @@ impl Controllers {
         self.monitor = state.monitor;
         let actions = self.bridge.process(port, event, state);
         let force = force
+            || matches!(event.source, djcraft_controllers::Source::Note { .. })
+                && self.bridge.profile().mappings.iter().any(|m| {
+                    m.port == port
+                        && m.source == event.source
+                        && matches!(
+                            m.binding,
+                            djcraft_controllers::Binding::Led { .. }
+                                | djcraft_controllers::Binding::BrowserLed { .. }
+                        )
+                })
             || self.bridge.profile().mappings.iter().any(|m| {
                 m.port == port
                     && m.source == event.source
@@ -209,11 +253,20 @@ impl Controllers {
         actions
     }
 
-    pub fn tick(&mut self, state: &SessionState) -> Vec<Action> {
+    pub fn tick(&mut self, state: &SessionState, loop_in: &[Option<f64>]) -> Vec<Action> {
         let actions = self.bridge.tick(state);
         self.monitor = state.monitor;
         let ports: Vec<_> = self.outputs.keys().cloned().collect();
         for port in ports {
+            self.state_leds.insert(
+                port.clone(),
+                self.bridge.state_feedback(
+                    &port,
+                    state,
+                    self.started.elapsed().as_millis() as u64,
+                    loop_in,
+                ),
+            );
             self.sync_feedback(&port, false);
         }
         actions
@@ -223,7 +276,23 @@ impl Controllers {
         self.bridge.take_commands()
     }
 
+    pub fn set_browser_folders(&mut self, folders: bool) {
+        self.browser_folders = folders;
+    }
+
     pub fn cancel_deck(&mut self, deck: u8) -> Vec<Action> {
         self.bridge.cancel_deck(deck)
+    }
+}
+
+impl Drop for Controllers {
+    fn drop(&mut self) {
+        for (output, leds) in self.outputs.values_mut() {
+            for message in leds {
+                let mut off = *message;
+                off[2] = 0;
+                let _ = output.send(&off);
+            }
+        }
     }
 }

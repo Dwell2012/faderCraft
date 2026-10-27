@@ -4,7 +4,7 @@ Stem model choice (26 October): stem_model defaults Fast for old settings; Detai
 
 Persistent stem worker (26 October): stdin JSON requests and stdout ready/progress/done/error messages replace per-track Python launches. Shell warms the worker on a background executor and shows a startup splash until ready (or failure). One model and device weights remain loaded; CPU/GPU preference is supplied per job. Rust serializes requests, bounds unresponsive waits, discards failed workers, and shuts down the process at app exit. Cache identity/output are unchanged.
 
-Updated 19 October 2026. Read this and `AGENTS.md` before changing code.
+Updated 27 October 2026. Read this and `AGENTS.md` before changing code.
 
 ## Four-deck performance foundation (24 October 2026)
 
@@ -246,6 +246,10 @@ prints full details for the top result of each configured provider for diagnosti
 Discogs live verification requires a personal token; fixtures cover its parser.
 
 ## Controller bridge checkpoint (current-machine work)
+
+Latest browser expansion: 140-entry profile wires Browse CC 0x1A, Back 0x77 and Load A/B 0x4B/0x34. Uses active full Library or compact browser, actual sorted/filtered TableState selection and auto-scroll. Back toggles tracks versus sources/playlists; source rotary opens All Tracks/source/playlist, then Back returns to tracks. Clears stale row selection on controller source changes. Explicit selected-track load uses existing LibraryEvent::Load -> load_from_library -> request_load output confirmation. Global browser commands do not cancel transport gestures. File/Folder LEDs reflect current host browser focus. Four new tests cover row bounds/empty filters, relative decoding/neutral packets, press-only button handling, transport isolation and invalid browse mappings. 279 workspace tests pass (one ignored); formatting and licence/source checks pass. Hardware retest pending.
+
+Latest LED/Shift expansion: 134-entry profile adds 40 output-only Led bindings, state-derived cue/sample/loop/FX/transport/pitch lamps, 250 ms blinking, diff-only sends and forced lamp restoration after note release. Loop In uses host loop markers; mouse changes update LEDs. Output disconnect/shutdown clears owned lamps. Sync acknowledges held press only; no persistent sync-lock state exists. Mode/browser LEDs intentionally remain untouched. Shift + FX1/2/3/Tap runs 1/2/4/16-beat loops (same length toggles off, another selects it). Shift + Hot Cue 4 toggles per-port/deck cue-delete mode, blinking populated cues; deletes persist via existing edit-locked cue store. Disconnect resets delete mode. Existing Shift sample-stop/loop-double kept. Scratch unchanged.
 
 FX rotary correction: user reported only Filter responded. Raw secondary parameter can be bypassed by beat sync; mapped EffectParameter now follows the first UI dial: Filter cutoff (and Mix=1, matching set_value), otherwise wet/dry Mix. Type/enabled/timing/feedback are preserved. Existing Echo regression first reproduced unchanged Mix; corrected target fixes it. Added all-20-effect-kind synced-state regression. Same 84 mappings; no profile rewrite needed.
 

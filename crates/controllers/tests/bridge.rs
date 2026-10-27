@@ -7,7 +7,7 @@ fn bundled_numark_profile_loads_with_pickup_and_dispatches_play() {
         "../../../profiles/numark-mixtrack-pro-ii.json"
     ))
     .unwrap();
-    assert_eq!(profile.mappings.len(), 84);
+    assert_eq!(profile.mappings.len(), 140);
     for mapping in &profile.mappings {
         if let Binding::Parameter {
             encoding, pickup, ..

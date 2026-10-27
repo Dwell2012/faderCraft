@@ -42,7 +42,7 @@ opens no MIDI ports. Profile edits take effect on app restart; the underlying
 
 The starter includes play/pause, channel volume, EQ, -50%/+100% pitch, master,
 crossfader, headphone level/blend, four existing hot-cue triggers per deck,
-and a jog mapping for each deck. The expanded profile has 84 bindings, including Loop/Sampler pads and FX1–3, plus
+and a jog mapping for each deck. The expanded profile has 140 bindings, including Loop/Sampler pads and FX1–3, plus
 Sync, transport Cue, headphone Cue, Stutter, pitch bend -/+ and Shift + Pitch-
 key lock on each deck.
 Pitch and EQ have exact neutral values at MIDI 64. All absolute controls use
@@ -247,7 +247,7 @@ events for diagnostics; continuous CC movement is not traced by this option.
 
 ## Remaining work
 
-Graphical mapping editor, on-screen MIDI Learn/monitor, LEDs beyond Scratch and
+Graphical mapping editor, on-screen MIDI Learn/monitor, browser/mode LED integration and
 device initialization, physical jog calibration, paired 14-bit CC assembly,
 effect selection/mix/beat encoders, and browser/load-selected-track commands are
 not implemented. VirtualDJ/Mixxx/Traktor scripts and presets are references, not
@@ -271,3 +271,13 @@ Scratch volume no longer depends on instantaneous speed. A regression reproduced
 The three FX encoders per deck now adjust the corresponding slot’s primary parameter in 1% relative steps (CC 0x1B–0x1D left, 0x1E–0x20 right). They preserve effect type, enabled state, mix, feedback and timing. Filter’s centre is neutral; enable its slot and turn away from centre to hear it. `Parameter::EffectParameter` exposes this through editable profiles; 0/64 are neutral packets and endpoints clamp to 0–1. Shift effect selection and the fourth Beats encoder remain pending.
 
 FX encoder correction: `EffectParameter` now follows the first app dial dynamically: Filter cutoff (also sets Mix to 100%, matching the UI), otherwise wet/dry Mix. The original raw secondary-parameter mapping was ineffective for beat-synced effects. Timing, feedback, type and enable state are preserved.
+
+## LED and Shift pad feedback
+
+The 134-entry profile includes 40 explicit output-only LED bindings. FX buttons reflect enabled slots; populated hot cues are lit; loaded samples are lit and playing samples blink at 250 ms intervals. Loop In lights when its marker is set (including mouse changes), and the other loop pads light with an active loop. Play/Stutter are steady during playback and blink when loaded/paused; Cue lights while held and blinks when paused. Pitch lamps show neutral tempo. Sync lamps acknowledge a held press; there is no persistent Sync-lock state. Scratch/headphone Cue feedback is retained. Feedback refreshes from host state, sends changed messages only, restores locally overwritten lamps after button releases, and clears owned LEDs on disconnect/shutdown. Mode LEDs stay controller-owned because mode changes are not separately reported; browser LEDs await browser control integration.
+
+Shift + FX1/2/3/Tap selects 1/2/4/16-beat auto loops using the app grid and loop options. Selecting the same active length exits; another length replaces the loop. Shift + Hot Cue 4 toggles per-deck cue-delete mode: populated cue pads blink, and pressing one deletes it through the normal cue persistence/edit-lock path. Toggle Shift + Hot Cue 4 again to exit. Disconnect also exits delete mode. Shift + Sample stops that slot; Shift + Loop Size doubles the loop as before.
+
+## Hardware browser
+
+Browse CC 0x1A moves the highlighted row in the active full Library table or compact browser under the decks. It uses the visible sorted/filtered rows, scrolls the selection into view and clamps at list ends. Back (note 0x77) switches between tracks and the source/playlist list. In source mode the encoder opens All Tracks, a source, or a playlist; Back returns to track browsing. Load A/B (notes 0x4B/0x34) load the selected row onto that deck through the existing confirmation when its output is open. No selection means no load. File/Folder LEDs show the encoder focus. Radio switches to Live when a browse command arrives. Browsing does not cancel a held Cue or scratch gesture. The profile now has 140 entries. Shift + Back and a browse push are not defined by this starter.

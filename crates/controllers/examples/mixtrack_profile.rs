@@ -33,7 +33,7 @@ fn main() -> Result<(), String> {
             (
                 "headphone-cue",
                 [0x51, 0x52][d],
-                HostCommand::SelectDeck { deck },
+                HostCommand::ToggleHeadphoneCue { deck },
                 None,
             ),
             (
@@ -52,7 +52,11 @@ fn main() -> Result<(), String> {
                 },
                 modifiers: vec![],
                 binding: Binding::HostButton {
-                    led: matches!(&press, HostCommand::SelectDeck { .. }).then_some(Source::Note {
+                    led: matches!(
+                        &press,
+                        HostCommand::SelectDeck { .. } | HostCommand::ToggleHeadphoneCue { .. }
+                    )
+                    .then_some(Source::Note {
                         channel: 0,
                         number: note,
                     }),
@@ -310,6 +314,164 @@ fn main() -> Result<(), String> {
                 step: 0.01,
                 pickup: true,
             },
+        });
+    }
+    for deck in 0..2u8 {
+        let shift = Source::Note {
+            channel: 0,
+            number: 0x61 + deck,
+        };
+        for m in &mut profile.mappings {
+            if matches!(m.binding, Binding::ToggleEffect { deck: d, .. } if d == deck)
+                || m.id == format!("hotcue-{deck}-3")
+            {
+                m.modifiers = vec![Modifier {
+                    source: shift,
+                    pressed: false,
+                }];
+            }
+        }
+        let mut add = |id: String, number, binding, modifiers| {
+            profile.mappings.push(Mapping {
+                id,
+                port: port.clone(),
+                source: Source::Note { channel: 0, number },
+                binding,
+                modifiers,
+            })
+        };
+        for (slot, beats) in [1, 2, 4, 16].into_iter().enumerate() {
+            add(
+                format!("shift-auto-loop-{deck}-{beats}"),
+                0x59 + deck * 4 + slot as u8,
+                Binding::HostButton {
+                    press: HostCommand::AutoLoop { deck, beats },
+                    release: None,
+                    led: None,
+                },
+                vec![Modifier {
+                    source: shift,
+                    pressed: true,
+                }],
+            );
+        }
+        add(
+            format!("cue-delete-mode-{deck}"),
+            0x70 + deck * 4,
+            Binding::HotCueDeleteMode { deck },
+            vec![Modifier {
+                source: shift,
+                pressed: true,
+            }],
+        );
+        for (name, number, feedback) in [
+            (
+                "play",
+                [0x3b, 0x42][usize::from(deck)],
+                LedFeedback::Playing { deck },
+            ),
+            (
+                "stutter",
+                [0x4a, 0x4c][usize::from(deck)],
+                LedFeedback::Playing { deck },
+            ),
+            (
+                "cue",
+                [0x33, 0x3c][usize::from(deck)],
+                LedFeedback::Cue { deck },
+            ),
+            ("pitch", 0x28 + deck, LedFeedback::PitchCenter { deck }),
+            (
+                "sync",
+                [0x40, 0x47][usize::from(deck)],
+                LedFeedback::Pressed { deck },
+            ),
+        ] {
+            add(
+                format!("led-{name}-{deck}"),
+                number,
+                Binding::Led { feedback },
+                vec![],
+            );
+        }
+        for slot in 0..4u8 {
+            for (name, number, feedback) in [
+                (
+                    "loop",
+                    [[0x53, 0x54, 0x55, 0x63], [0x56, 0x57, 0x58, 0x64]][usize::from(deck)]
+                        [usize::from(slot)],
+                    if slot == 0 {
+                        LedFeedback::LoopIn { deck }
+                    } else {
+                        LedFeedback::Loop { deck }
+                    },
+                ),
+                (
+                    "hotcue",
+                    0x6d + deck * 4 + slot,
+                    LedFeedback::HotCue { deck, slot },
+                ),
+                (
+                    "sample",
+                    0x65 + deck * 4 + slot,
+                    LedFeedback::Sample { deck, slot },
+                ),
+            ] {
+                add(
+                    format!("led-{name}-{deck}-{slot}"),
+                    number,
+                    Binding::Led { feedback },
+                    vec![],
+                );
+            }
+        }
+        for slot in 0..3u8 {
+            add(
+                format!("led-fx-{deck}-{slot}"),
+                0x59 + deck * 4 + slot,
+                Binding::Led {
+                    feedback: LedFeedback::Effect { deck, slot },
+                },
+                vec![],
+            );
+        }
+    }
+    profile.mappings.push(Mapping {
+        id: "browse".into(),
+        port: port.clone(),
+        source: Source::Cc {
+            channel: 0,
+            number: 0x1a,
+        },
+        modifiers: vec![],
+        binding: Binding::Browse {
+            encoding: Encoding::TwosComplement,
+        },
+    });
+    for (id, number, press) in [
+        ("browse-back", 0x77, HostCommand::BrowseBack),
+        ("load-a", 0x4b, HostCommand::LoadSelected { deck: 0 }),
+        ("load-b", 0x34, HostCommand::LoadSelected { deck: 1 }),
+    ] {
+        profile.mappings.push(Mapping {
+            id: id.into(),
+            port: port.clone(),
+            source: Source::Note { channel: 0, number },
+            modifiers: vec![],
+            binding: Binding::HostButton {
+                press,
+                release: None,
+                led: None,
+            },
+        });
+    }
+    for (id, number, folders) in [("led-file", 0x4b, false), ("led-folder", 0x34, true)] {
+        profile.mappings.push(Mapping {
+            id: id.into(),
+            port: port.clone(),
+            source: Source::Note { channel: 0, number },
+            modifiers: vec![],
+            binding: Binding::BrowserLed { folders },
         });
     }
     let json = profile.to_json()?;

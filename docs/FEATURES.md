@@ -728,3 +728,7 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Mixtrack Pro II FX1–3 encoders adjust each deck’s corresponding effect parameter [relative CC, preserves other FX settings; Shift selection/Beats encoder pending].
 
 - [x] FX encoders follow the first UI dial for every effect type: Filter cutoff, otherwise Mix, including synced FX.
+
+- [x] Controller pad/FX/transport LED state feedback and Shift auto-loop/cue-delete layers [134 profile entries; hardware LED retest pending; browser/mode lamps remain controller-owned].
+
+- [x] Mixtrack Pro II Browse/Back/Load A/B, source/playlist selection, visible track highlighting/scrolling, and File/Folder focus LEDs [hardware retest pending].

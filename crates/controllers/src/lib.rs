@@ -18,22 +18,29 @@ pub const PROFILE_VERSION: u32 = 1;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum HostCommand {
+    Browse { steps: i32 },
+    BrowseBack,
+    LoadSelected { deck: u8 },
     Sync { deck: u8 },
     Cue { deck: u8, pressed: bool },
     SelectDeck { deck: u8 },
     ToggleHeadphoneCue { deck: u8 },
     Stutter { deck: u8 },
+    AutoLoop { deck: u8, beats: u8 },
     LoopPad { deck: u8, pad: u8, alternate: bool },
     SamplePad { deck: u8, slot: u8, stop: bool },
 }
 impl HostCommand {
     pub fn deck(&self) -> u8 {
         match *self {
+            Self::Browse { .. } | Self::BrowseBack => 0,
+            Self::LoadSelected { deck } => deck,
             Self::Sync { deck }
             | Self::Cue { deck, .. }
             | Self::SelectDeck { deck }
             | Self::ToggleHeadphoneCue { deck }
             | Self::Stutter { deck }
+            | Self::AutoLoop { deck, .. }
             | Self::LoopPad { deck, .. }
             | Self::SamplePad { deck, .. } => deck,
         }
@@ -208,6 +215,18 @@ pub enum Encoding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
+    Browse {
+        encoding: Encoding,
+    },
+    BrowserLed {
+        folders: bool,
+    },
+    Led {
+        feedback: LedFeedback,
+    },
+    HotCueDeleteMode {
+        deck: u8,
+    },
     ToggleEffect {
         deck: u8,
         slot: u8,
@@ -278,6 +297,20 @@ pub struct Modifier {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum LedFeedback {
+    Pressed { deck: u8 },
+    LoopIn { deck: u8 },
+    Playing { deck: u8 },
+    Cue { deck: u8 },
+    PitchCenter { deck: u8 },
+    Loop { deck: u8 },
+    HotCue { deck: u8, slot: u8 },
+    Sample { deck: u8, slot: u8 },
+    Effect { deck: u8, slot: u8 },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub version: u32,
     pub name: String,
@@ -313,6 +346,39 @@ impl Profile {
                 }
                 Source::PitchBend { channel } => channel < 16,
             };
+            if matches!(
+                m.binding,
+                Binding::Browse {
+                    encoding: Encoding::Absolute
+                }
+            ) || matches!(m.binding, Binding::Browse { .. })
+                && !matches!(m.source, Source::Cc { .. })
+                || matches!(m.binding, Binding::BrowserLed { .. })
+                    && !matches!(m.source, Source::Note { .. })
+            {
+                return Err(format!("{}: invalid browser source/encoding", m.id));
+            }
+            if let Binding::Led { feedback } = &m.binding {
+                let valid_slot = match feedback {
+                    LedFeedback::HotCue { slot, .. } => {
+                        usize::from(*slot) < djcraft_protocol::HOT_CUES
+                    }
+                    LedFeedback::Sample { slot, .. } => *slot < 16,
+                    LedFeedback::Effect { slot, .. } => {
+                        usize::from(*slot) < djcraft_protocol::EFFECT_SLOTS
+                    }
+                    _ => true,
+                };
+                if !matches!(m.source, Source::Note { .. })
+                    || !valid_slot
+                    || !m.modifiers.is_empty()
+                {
+                    return Err(format!(
+                        "{}: LED requires a note, valid slot and no modifiers",
+                        m.id
+                    ));
+                }
+            }
             if !valid_source
                 || m.modifiers
                     .iter()
@@ -349,6 +415,7 @@ impl Profile {
             if let Binding::HostButton { press, release, .. } = &m.binding {
                 for command in std::iter::once(press).chain(release.iter()) {
                     if matches!(command, HostCommand::LoopPad { pad, .. } if *pad >= 4)
+                        || matches!(command, HostCommand::AutoLoop { beats, .. } if ![1,2,4,16].contains(beats))
                         || matches!(command, HostCommand::SamplePad { slot, .. } if *slot >= 16)
                     {
                         return Err(format!("{}: invalid pad index", m.id));
@@ -432,6 +499,7 @@ pub struct Bridge {
     held: BTreeMap<(String, Source), bool>,
     jogs: BTreeMap<String, jog::Jog>,
     commands: Vec<HostCommand>,
+    delete_modes: std::collections::BTreeSet<(String, u8)>,
 }
 
 impl Bridge {
@@ -443,6 +511,7 @@ impl Bridge {
             held: BTreeMap::new(),
             jogs: BTreeMap::new(),
             commands: Vec::new(),
+            delete_modes: Default::default(),
         })
     }
 
@@ -453,6 +522,86 @@ impl Bridge {
     /// Drain after process/tick/disconnect/replace, including cleanup releases.
     pub fn take_commands(&mut self) -> Vec<HostCommand> {
         std::mem::take(&mut self.commands)
+    }
+
+    /// State-only output bindings. Hosts supply an elapsed clock for blinking.
+    pub fn state_feedback(
+        &self,
+        port: &str,
+        state: &SessionState,
+        elapsed_ms: u64,
+        loop_in: &[Option<f64>],
+    ) -> Vec<[u8; 3]> {
+        let blink = elapsed_ms / 250 % 2 == 0;
+        self.profile
+            .mappings
+            .iter()
+            .filter_map(|m| {
+                if m.port != port {
+                    return None;
+                }
+                let Binding::Led { feedback } = &m.binding else {
+                    return None;
+                };
+                let Source::Note { channel, number } = m.source else {
+                    return None;
+                };
+                let (deck, slot) = match *feedback {
+                    LedFeedback::Pressed { deck }
+                    | LedFeedback::LoopIn { deck }
+                    | LedFeedback::Playing { deck }
+                    | LedFeedback::Cue { deck }
+                    | LedFeedback::PitchCenter { deck }
+                    | LedFeedback::Loop { deck } => (deck, 0),
+                    LedFeedback::HotCue { deck, slot }
+                    | LedFeedback::Sample { deck, slot }
+                    | LedFeedback::Effect { deck, slot } => (deck, usize::from(slot)),
+                };
+                let on = state
+                    .decks
+                    .get(usize::from(deck))
+                    .is_some_and(|s| match feedback {
+                        LedFeedback::Pressed { .. } => self
+                            .held
+                            .get(&(port.to_owned(), m.source))
+                            .copied()
+                            .unwrap_or(false),
+                        LedFeedback::LoopIn { .. } => {
+                            s.loop_region.is_some()
+                                || loop_in.get(usize::from(deck)).is_some_and(Option::is_some)
+                        }
+                        LedFeedback::Playing { .. } => s.track.is_some() && (s.playing || blink),
+                        LedFeedback::Cue { .. } => {
+                            s.track.is_some()
+                                && (self
+                                    .held
+                                    .get(&(port.to_owned(), m.source))
+                                    .copied()
+                                    .unwrap_or(false)
+                                    || !s.playing && blink)
+                        }
+                        LedFeedback::PitchCenter { .. } => (s.tempo - 1.).abs() < 0.001,
+                        LedFeedback::Loop { .. } => s.loop_region.is_some(),
+                        LedFeedback::HotCue { .. } => {
+                            let populated = s.hot_cues.get(slot).is_some_and(Option::is_some);
+                            if self.delete_modes.contains(&(port.to_owned(), deck)) {
+                                populated && blink
+                            } else {
+                                populated
+                            }
+                        }
+                        LedFeedback::Sample { .. } => match s.samples.get(slot) {
+                            Some(2) => blink,
+                            Some(1) => true,
+                            _ => false,
+                        },
+                        LedFeedback::Effect { .. } => {
+                            s.effects.get(slot).is_some_and(|fx| fx.enabled)
+                        }
+                    });
+                Some([0x90 | channel, number, if on { 100 } else { 0 }])
+            })
+            .collect()
     }
 
     /// Explicit profile-owned Scratch LEDs. Send again on button release when
@@ -568,6 +717,7 @@ impl Bridge {
     /// Reset pickup and button edges after disconnect/reconnect. Hosts must also
     /// release any held momentary actions before closing a connection.
     pub fn disconnect(&mut self, port: &str) -> Vec<Action> {
+        self.delete_modes.retain(|(p, _)| p != port);
         self.held.retain(|(name, _), _| name != port);
         let mut releases = Vec::new();
         for mapping in &self.profile.mappings {
@@ -664,6 +814,27 @@ impl Bridge {
             let falling = !down && memory.down;
             memory.down = down;
             let action = match &mapping.binding {
+                Binding::Browse { encoding } => {
+                    let raw = i32::from(event.value);
+                    let steps = match encoding {
+                        Encoding::TwosComplement if raw == 64 => 0,
+                        Encoding::TwosComplement if raw > 63 => raw - 128,
+                        Encoding::TwosComplement => raw,
+                        Encoding::Offset64 => raw - 64,
+                        Encoding::Absolute => 0,
+                    };
+                    if steps != 0 {
+                        self.commands.push(HostCommand::Browse { steps });
+                    }
+                    None
+                }
+                Binding::HotCueDeleteMode { deck } if rising => {
+                    let key = (port.to_owned(), *deck);
+                    if !self.delete_modes.remove(&key) {
+                        self.delete_modes.insert(key);
+                    }
+                    None
+                }
                 Binding::ToggleEffect { deck, slot } if rising => {
                     state.decks.get(usize::from(*deck)).map(|s| {
                         let mut effect = s.effects[usize::from(*slot)];
@@ -688,7 +859,11 @@ impl Bridge {
                     if let Some(command) = command {
                         if !matches!(
                             command,
-                            HostCommand::SelectDeck { .. } | HostCommand::ToggleHeadphoneCue { .. }
+                            HostCommand::SelectDeck { .. }
+                                | HostCommand::ToggleHeadphoneCue { .. }
+                                | HostCommand::Browse { .. }
+                                | HostCommand::BrowseBack
+                                | HostCommand::LoadSelected { .. }
                         ) {
                             takeovers.insert(command.deck());
                         }
@@ -728,7 +903,11 @@ impl Bridge {
                 Binding::HotCue { deck, slot } if rising => {
                     state.decks.get(usize::from(*deck)).and_then(|local| {
                         let cue = *local.hot_cues.get(usize::from(*slot))?;
-                        let action = if cue.is_some() {
+                        let action = if self.delete_modes.contains(&(port.to_owned(), *deck)) {
+                            let mut cues = local.hot_cues;
+                            cues[usize::from(*slot)] = None;
+                            DeckAction::SetHotCues { cues }
+                        } else if cue.is_some() {
                             DeckAction::TriggerHotCue {
                                 slot: *slot,
                                 play: true,
