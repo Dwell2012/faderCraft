@@ -30,6 +30,11 @@ pub struct TimedEvent {
 }
 
 pub struct Output(MidiOutputConnection);
+/// Official Mixtrack Pro II startup request. Hardware testing confirms it
+/// reports all fourteen absolute CC positions; it is not an LED-only init.
+pub const MIXTRACK_PRO_II_STARTUP: &[u8] = &[
+    0xf0, 0x00, 0x01, 0x3f, 0x7f, 0x4b, 0x60, 0x00, 0x04, 0x04, 0x01, 0x07, 0x03, 0xf7,
+];
 impl Output {
     pub fn open(name: &str) -> Result<Self, String> {
         let output = MidiOutput::new("faderCraft LEDs").map_err(|e| e.to_string())?;

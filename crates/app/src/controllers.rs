@@ -217,7 +217,17 @@ impl Controllers {
             }
             let error_key = format!("LED output {name}");
             match Output::open(&name) {
-                Ok(output) => {
+                Ok(mut output) => {
+                    if name == "MixTrack Pro II" {
+                        match output.send(djcraft_controllers::native::MIXTRACK_PRO_II_STARTUP) {
+                            Ok(()) => {
+                                self.bridge
+                                    .prepare_startup_snapshot(&name, std::time::Instant::now());
+                                eprintln!("Controller startup snapshot requested: {name}");
+                            }
+                            Err(error) => eprintln!("Controller startup snapshot: {error}"),
+                        }
+                    }
                     self.outputs.insert(name.clone(), (output, Vec::new()));
                     self.failed.remove(&error_key);
                     self.sync_feedback(&name, true);

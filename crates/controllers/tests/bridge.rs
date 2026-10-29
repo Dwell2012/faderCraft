@@ -117,6 +117,42 @@ fn volume(value: f32) -> Action {
 }
 
 #[test]
+fn startup_snapshot_adopts_once_but_live_playback_and_expired_dumps_keep_pickup() {
+    use std::time::{Duration, Instant};
+    let now = Instant::now();
+    let (mut engine, _mixer) = djcraft_engine::Engine::headless(48000);
+    let mut state = engine.state();
+    let mut bridge = Bridge::new(profile(parameter(Encoding::Absolute, true))).unwrap();
+    bridge.prepare_startup_snapshot("Numark", now);
+    assert_eq!(
+        bridge.process_at("Numark", event(0), &state, now),
+        vec![volume(0.)]
+    );
+    state.decks[0].volume = 0.;
+    assert_eq!(
+        bridge.process_at("Numark", event(10), &state, now),
+        vec![volume(10. / 127.)]
+    );
+    // An application change rearms pickup even during the snapshot window.
+    state.decks[0].volume = 1.;
+    assert!(
+        bridge
+            .process_at("Numark", event(20), &state, now)
+            .is_empty()
+    );
+    for (playing, elapsed) in [(true, Duration::ZERO), (false, Duration::from_secs(2))] {
+        let mut bridge = Bridge::new(profile(parameter(Encoding::Absolute, true))).unwrap();
+        bridge.prepare_startup_snapshot("Numark", now);
+        state.decks[1].playing = playing;
+        assert!(
+            bridge
+                .process_at("Numark", event(0), &state, now + elapsed)
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn parser_normalizes_release_and_keeps_channel_and_14_bit_pitch() {
     assert_eq!(Event::parse(&[0x81, 59, 64]), Event::parse(&[0x91, 59, 0]));
     assert_eq!(

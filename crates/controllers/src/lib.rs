@@ -515,6 +515,7 @@ impl Profile {
 
 #[derive(Default)]
 struct Memory {
+    startup_snapshot: Option<Instant>,
     tempo_range: Option<djcraft_protocol::TempoFaderRange>,
     down: bool,
     previous: Option<f64>,
@@ -549,6 +550,27 @@ impl Bridge {
 
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// Arm one absolute reading per mapping after a verified hardware dump
+    /// request. Playback always retains normal soft takeover.
+    pub fn prepare_startup_snapshot(&mut self, port: &str, now: Instant) {
+        for mapping in &self.profile.mappings {
+            if mapping.port == port
+                && matches!(
+                    mapping.binding,
+                    Binding::Parameter {
+                        encoding: Encoding::Absolute,
+                        ..
+                    }
+                )
+            {
+                self.memory
+                    .entry(mapping.id.clone())
+                    .or_default()
+                    .startup_snapshot = Some(now + std::time::Duration::from_secs(1));
+            }
+        }
     }
 
     /// Analysed base BPMs supplied by the host; unknown tracks disable snapping.
@@ -1082,6 +1104,11 @@ impl Bridge {
                             min + (max - min) * raw / full
                         };
                         if *pickup {
+                            let adopt_startup = memory
+                                .startup_snapshot
+                                .take()
+                                .is_some_and(|until| now <= until)
+                                && state.decks.iter().all(|deck| !deck.playing);
                             // UI/other controller changes re-arm pickup.
                             // Half a hardware step accommodates quantization
                             // without taking over a full step before an endpoint.
@@ -1104,7 +1131,8 @@ impl Bridge {
                                 .previous
                                 .is_some_and(|old| (old - current) * (value - current) <= 0.);
                             memory.previous = Some(value);
-                            memory.acquired |= crossed || (value - current).abs() <= tolerance;
+                            memory.acquired |=
+                                adopt_startup || crossed || (value - current).abs() <= tolerance;
                             if !memory.acquired {
                                 continue;
                             }

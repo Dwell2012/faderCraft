@@ -151,3 +151,6 @@ device model, capture real messages and verify transport, EQ/fader endpoints,
 relative encoder direction, jog release and LED feedback before enabling it
 as a tested factory profile. The archive's custom FX and pad behaviours are
 reference choices, not new user feature requirements.
+
+## Startup control snapshot confirmed (27 October 2026)
+The official VirtualDJ init SysEx F000013F7F4B60000404010703F7 was sent to the connected MixTrack Pro II in a standalone readback probe. Before the request only jog CC 0x18 arrived. After it, one reading each arrived for all fourteen absolute CCs: 07, 0A–0E, 10–17. This verifies the known init message requests/reports current physical control positions on this device; it is no longer merely speculative initialization. No third-party mapping code was incorporated. The diagnostic example startup_probe can repeat this test.

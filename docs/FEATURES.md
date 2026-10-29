@@ -743,3 +743,5 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Released scratch-surface jog gestures retain ownership during physical free spin in either direction; settle after 80 ms motion idle and restore transport [hardware retest pending].
 - [x] Timestamped MIDI jog velocity drives scratch playback and free-spin deceleration; bounded phase correction preserves platter alignment and stationary silence [hardware listening retest pending].
 - [x] Coalesce batched jog motion to latest per-deck measured velocity/position, preserving transport barriers so redundant scratch updates do not backlog the engine.
+
+- [x] Mixtrack startup requests all physical absolute control values and adopts them while stopped; playback reconnects retain pickup. Hardware readback verified for all 14 absolute CCs.
