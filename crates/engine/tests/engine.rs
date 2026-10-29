@@ -1331,7 +1331,7 @@ fn effects_validate_controls_and_filter_the_selected_deck() {
         engine.apply(
             Role::Host,
             deck(DeckAction::SetEffect {
-                slot: 0,
+                slot: 1,
                 effect: EffectState {
                     amount: f32::NAN,
                     ..effect
@@ -1341,10 +1341,10 @@ fn effects_validate_controls_and_filter_the_selected_deck() {
         Err(Rejection::InvalidValue)
     );
     engine
-        .apply(Role::Host, deck(DeckAction::SetEffect { slot: 0, effect }))
+        .apply(Role::Host, deck(DeckAction::SetEffect { slot: 1, effect }))
         .unwrap();
-    assert_eq!(engine.state().decks[0].effects[0], effect);
-    assert!(!engine.state().decks[1].effects[0].enabled);
+    assert_eq!(engine.state().decks[0].effects[1], effect);
+    assert!(!engine.state().decks[1].effects[1].enabled);
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
     let samples = render(&mut mixer, 0.5);
     assert!(samples[samples.len() / 2..].iter().all(|s| s.abs() < 0.02));
@@ -1352,7 +1352,7 @@ fn effects_validate_controls_and_filter_the_selected_deck() {
         .apply(
             Role::Host,
             deck(DeckAction::SetEffect {
-                slot: 0,
+                slot: 1,
                 effect: EffectState {
                     enabled: false,
                     ..effect
@@ -1373,7 +1373,7 @@ fn delayed_effects_keep_live_load_protection_after_eq_kill() {
         .apply(
             Role::Host,
             deck(DeckAction::SetEffect {
-                slot: 0,
+                slot: 1,
                 effect: EffectState {
                     kind: EffectKind::Echo,
                     enabled: true,
@@ -1508,7 +1508,8 @@ fn shared_effect_beats_are_deck_local_preserved_by_slot_edits_and_reach_audio() 
                 .collect::<Vec<_>>(),
             vec![EffectKind::Filter, EffectKind::Echo, EffectKind::Cut]
         );
-        assert!(deck.effects.iter().all(|fx| !fx.enabled));
+        assert!(deck.effects[0].enabled);
+        assert!(deck.effects[1..].iter().all(|fx| !fx.enabled));
     }
     for beats in [0., 0.0625, 8.01, f32::NAN, f32::INFINITY] {
         assert_eq!(
@@ -1585,7 +1586,7 @@ fn effects_render_budget() {
     for deck in 0..2 {
         engine.load_track(deck, track.clone()).unwrap();
         for (slot, kind) in [
-            K::Reverb,
+            K::Filter,
             K::Spiral,
             K::PitchShift,
             K::Phaser,
@@ -3670,6 +3671,69 @@ fn filter_resonance_is_validated_and_isolated_per_slot_and_deck() {
         .unwrap();
     let state = engine.state();
     assert_eq!(state.decks[0].effects[0].resonance, 0.8);
-    assert_eq!(state.decks[0].effects[1].resonance, 0.);
-    assert_eq!(state.decks[1].effects[0].resonance, 0.);
+    assert_eq!(state.decks[0].effects[1].resonance, 0.5);
+    assert_eq!(state.decks[1].effects[0].resonance, 0.5);
+}
+
+#[test]
+fn first_filter_slot_is_reserved_always_on_and_neutral_by_default() {
+    use djcraft_protocol::{EffectKind, EffectState};
+    let (mut engine, mut mixer) = engine_with(sine(1000., 3., RATE));
+    let initial = engine.state().decks[0].effects[0];
+    assert!(initial.enabled);
+    assert_eq!(initial.resonance, 0.5);
+    assert_eq!(initial.parameter, 0.5);
+    assert_eq!(initial.amount, 1.);
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            deck(DeckAction::SetEffect {
+                slot: 0,
+                effect: EffectState {
+                    kind: EffectKind::Echo,
+                    ..initial
+                }
+            })
+        ),
+        Err(Rejection::InvalidValue)
+    );
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    let neutral = render(&mut mixer, 0.3);
+    let power = |s: &[f32]| s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32;
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEffect {
+                slot: 0,
+                effect: EffectState {
+                    enabled: true,
+                    parameter: 0.,
+                    ..initial
+                },
+            }),
+        )
+        .unwrap();
+    assert!(engine.state().decks[0].effects[0].enabled);
+    render(&mut mixer, 0.2);
+    assert!(power(&render(&mut mixer, 0.3)) < power(&neutral) * 0.01);
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEffect {
+                slot: 0,
+                effect: EffectState {
+                    enabled: false,
+                    parameter: 0.,
+                    ..initial
+                },
+            }),
+        )
+        .unwrap();
+    let reset = engine.state().decks[0].effects[0];
+    assert_eq!(reset.parameter, 0.5);
+    assert_eq!(reset.resonance, initial.resonance);
+    assert!(!reset.active_in_slot(0));
+    assert!(reset.enabled);
+    render(&mut mixer, 0.2);
+    assert!((power(&render(&mut mixer, 0.3)) - power(&neutral)).abs() < 0.01);
 }

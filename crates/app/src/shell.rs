@@ -9,6 +9,8 @@ use djcraft_library::TempoResult;
 use djcraft_protocol::{Action, CrossfaderCurve, DeckAction, DeckState, EqMode, MixerAction, Role};
 #[path = "automix_controls.rs"]
 mod automix_controls;
+#[path = "deck_header.rs"]
+mod deck_header;
 #[path = "effect_controls.rs"]
 mod effect_controls;
 #[path = "loop_controls.rs"]
@@ -41,7 +43,7 @@ use crate::waveform::{VISIBLE_SECONDS, overview, waveform};
 const TOP_BAR_HEIGHT: Pixels = px(52.);
 const OVERVIEW_HEIGHT: f32 = 36.;
 
-fn deck_label(deck: usize) -> &'static str {
+pub(crate) fn deck_label(deck: usize) -> &'static str {
     ["A", "B", "C", "D"][deck]
 }
 
@@ -197,6 +199,9 @@ pub struct Shell {
     /// has been analysed.
     grids: Vec<Option<TempoResult>>,
     deck_keys: Vec<Option<djcraft_library::Camelot>>,
+    deck_metadata: Vec<Option<(String, String)>>,
+    deck_artwork: Vec<Option<Arc<Image>>>,
+    artwork_paths: Vec<Option<PathBuf>>,
     /// Where each deck's whole-track waveform is on screen, for seeking.
     overview_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     waveform_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
@@ -434,6 +439,9 @@ impl Shell {
             deck_paths: vec![None; DECKS],
             grids: vec![None; DECKS],
             deck_keys: vec![None; DECKS],
+            deck_metadata: vec![None; DECKS],
+            deck_artwork: vec![None; DECKS],
+            artwork_paths: vec![None; DECKS],
             overview_areas: (0..DECKS).map(|_| Rc::default()).collect(),
             waveform_areas: (0..DECKS).map(|_| Rc::default()).collect(),
             drag: None,
@@ -577,6 +585,11 @@ impl Shell {
     /// loaded last.
     fn refresh_grids(&mut self, cx: &mut Context<Self>) {
         let library = self.library.read(cx);
+        self.deck_metadata = self
+            .deck_paths
+            .iter()
+            .map(|p| p.as_deref().and_then(|p| library.deck_metadata(p)))
+            .collect();
         self.deck_keys = self
             .deck_paths
             .iter()
@@ -593,6 +606,7 @@ impl Shell {
             .and_then(|path| library.track_at(path));
         self.browser
             .update(cx, |view, cx| view.set_reference(reference, cx));
+        self.refresh_deck_artwork(cx);
         for deck in 0..DECKS {
             self.send(
                 deck,
@@ -1520,17 +1534,13 @@ impl Shell {
                 .items_center()
                 .gap_2()
                 .child(cue_button)
-                .child(sync_button)
                 .child(play_button)
+                .child(sync_button)
                 .child(load_button)
                 .child(stems_button)
         }
         .into_any_element();
-        let (display_controls, footer_controls) = if self.settings.four_decks {
-            (Some(controls), None)
-        } else {
-            (None, Some(controls))
-        };
+        let display_controls = Some(controls);
         let deck_select = Button::new(("select-deck", index))
             .outline()
             .w(px(40.))
@@ -1618,7 +1628,7 @@ impl Shell {
                             .bg(rgb(0x523a15))
                             .child(format!(
                                 "Deck {} is playing through the master. Replace it with {name}?",
-                                index + 1
+                                deck_label(index)
                             ))
                             .child(
                                 div()
@@ -1663,7 +1673,7 @@ impl Shell {
                 d.border_2().border_color(deck_accent).p(px(7.))
             })
             .rounded_lg()
-            .child(
+            .child(if self.settings.four_decks {
                 div()
                     .flex()
                     .items_center()
@@ -1703,48 +1713,68 @@ impl Shell {
                                 ),
                         )
                     })
-                    .child(div().text_sm().flex_shrink_0().child(time)),
-            )
+                    .child(div().text_sm().flex_shrink_0().child(time))
+            } else {
+                self.compact_deck_header(index, state, title.clone(), cx)
+            })
             .child(
                 div()
-                    .id(("overview", index))
-                    .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
-                        this.wheel_waveform(index, event, true, cx)
-                    }))
-                    .relative()
-                    .h(px(if self.settings.four_decks {
-                        28.
-                    } else {
-                        OVERVIEW_HEIGHT
-                    }))
-                    .flex_shrink_0()
-                    .rounded_md()
-                    .bg(theme.secondary.opacity(0.5))
-                    .overflow_hidden()
-                    .when_some(track, |this, track| {
-                        this.child(overview(
-                            track.clone(),
-                            state.position_seconds / duration,
-                            self.overview_cache[index].clone(),
-                            area.clone(),
-                            theme.foreground,
-                            state.hot_cues,
-                            state.cue_appearance.clone(),
-                            index,
-                            if state.eq_mode == EqMode::Classic {
-                                state.eq
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .id(("overview", index))
+                            .on_scroll_wheel(cx.listener(
+                                move |this, event: &ScrollWheelEvent, _, cx| {
+                                    this.wheel_waveform(index, event, true, cx)
+                                },
+                            ))
+                            .relative()
+                            .h(px(if self.settings.four_decks {
+                                28.
                             } else {
-                                [1.; 3]
-                            },
-                        ))
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            this.begin_waveform_drag(index, event.position.x.as_f32(), true, cx);
-                            cx.stop_propagation();
-                        }),
-                    ),
+                                OVERVIEW_HEIGHT
+                            }))
+                            .flex_shrink_0()
+                            .rounded_md()
+                            .bg(theme.secondary.opacity(0.5))
+                            .overflow_hidden()
+                            .when_some(track, |this, track| {
+                                this.child(overview(
+                                    track.clone(),
+                                    state.position_seconds / duration,
+                                    self.overview_cache[index].clone(),
+                                    area.clone(),
+                                    theme.foreground,
+                                    state.hot_cues,
+                                    state.cue_appearance.clone(),
+                                    index,
+                                    if state.eq_mode == EqMode::Classic {
+                                        state.eq
+                                    } else {
+                                        [1.; 3]
+                                    },
+                                ))
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    this.begin_waveform_drag(
+                                        index,
+                                        event.position.x.as_f32(),
+                                        true,
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                    )
+                    .when(!self.settings.four_decks, |row| {
+                        row.child(self.deck_header_times(state, cx))
+                    }),
             )
             .child(self.deck_display(index, state, display_controls, display_identity, cx))
             .child(
@@ -1797,7 +1827,6 @@ impl Shell {
                         ),
                     )
                     .child(div().flex_1())
-                    .children(footer_controls)
                     .child(div().w(px(10.)).flex_shrink_0())
                     .children(footer_identity),
             )
@@ -2136,6 +2165,7 @@ impl Render for Shell {
                             };
                     }
                     self.mixer_values[mixer_controls::channel_index(i) + 4] = deck.volume.sqrt();
+                    self.mixer_values[41 + i] = deck.effects[0].parameter;
                     self.mixer_peaks[i] = deck.peak;
                     self.mixer_values
                         [mixer_controls::stem_index(i)..mixer_controls::stem_index(i) + 4]

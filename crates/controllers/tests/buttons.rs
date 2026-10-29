@@ -27,6 +27,7 @@ fn fx_encoder_follows_the_first_ui_control_for_every_effect_kind() {
         )
         .unwrap();
     for kind in EffectKind::ALL {
+        let slot = if kind == EffectKind::Filter { 0 } else { 1 };
         let mut effect = djcraft_protocol::EffectState {
             kind,
             enabled: true,
@@ -41,13 +42,13 @@ fn fx_encoder_follows_the_first_ui_control_for_every_effect_kind() {
                 Role::Host,
                 Action::Deck {
                     deck: 0,
-                    action: DeckAction::SetEffect { slot: 0, effect },
+                    action: DeckAction::SetEffect { slot, effect },
                 },
             )
             .unwrap();
         for action in b.process(
             "MixTrack Pro II",
-            Event::parse(&[0xb0, 0x1b, 1]).unwrap(),
+            Event::parse(&[0xb0, 0x1b + slot, 1]).unwrap(),
             &engine.state(),
         ) {
             engine.apply(Role::Host, action).unwrap();
@@ -58,7 +59,11 @@ fn fx_encoder_follows_the_first_ui_control_for_every_effect_kind() {
         } else {
             effect.amount = 0.51;
         }
-        assert_eq!(engine.state().decks[0].effects[0], effect, "{kind:?}");
+        assert_eq!(
+            engine.state().decks[0].effects[slot as usize],
+            effect,
+            "{kind:?}"
+        );
     }
 }
 
@@ -67,7 +72,7 @@ fn fx_encoders_adjust_only_their_slot_and_preserve_effect_settings() {
     let (mut engine, _mixer) = djcraft_engine::Engine::headless(48000);
     let mut b = bridge();
     for deck in 0..2u8 {
-        for slot in 0..3u8 {
+        for slot in 1..3u8 {
             let mut effect = engine.state().decks[usize::from(deck)].effects[usize::from(slot)];
             effect.kind = djcraft_protocol::EffectKind::Echo;
             effect.enabled = true;
@@ -185,8 +190,13 @@ fn fx_pads_toggle_existing_slot_settings_through_the_engine_and_leave_tap_free()
         for slot in 0..3u8 {
             let note = 0x59 + deck * 4 + slot;
             let mut effect = engine.state().decks[usize::from(deck)].effects[usize::from(slot)];
-            effect.kind = EffectKind::Echo;
+            effect.kind = if slot == 0 {
+                EffectKind::Filter
+            } else {
+                EffectKind::Echo
+            };
             effect.amount = 0.37;
+            effect.parameter = 0.2;
             engine
                 .apply(
                     Role::Host,
@@ -204,7 +214,11 @@ fn fx_pads_toggle_existing_slot_settings_through_the_engine_and_leave_tap_free()
                     engine.apply(Role::Host, action).unwrap();
                 }
                 let actual = engine.state().decks[usize::from(deck)].effects[usize::from(slot)];
-                effect.enabled = enabled;
+                effect.enabled = slot == 0 || enabled;
+                if slot == 0 {
+                    effect.parameter = 0.5;
+                }
+                assert_eq!(actual.active_in_slot(slot as usize), slot != 0 && enabled);
                 assert_eq!(actual, effect);
                 assert!(button(&mut b, note, 127, &engine.state(), now).is_empty());
                 assert!(button(&mut b, note, 0, &engine.state(), now).is_empty());

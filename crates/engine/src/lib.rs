@@ -817,6 +817,15 @@ impl Engine {
                 {
                     return Err(Rejection::InvalidValue);
                 }
+                if slot == 0 {
+                    if effect.kind != djcraft_protocol::EffectKind::Filter {
+                        return Err(Rejection::InvalidValue);
+                    }
+                    if !effect.enabled {
+                        effect.parameter = 0.5;
+                    }
+                    effect.enabled = true;
+                }
                 effect.beats = self.decks[deck].effect_beats;
                 self.send(Command::Effect {
                     deck,

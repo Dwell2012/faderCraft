@@ -46,7 +46,10 @@ fn main() {
             Ok(_engine) => {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
-            Err(_) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("ASIO startup: {error}");
+                std::process::exit(1);
+            }
         }
         return;
     }

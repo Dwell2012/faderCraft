@@ -750,4 +750,22 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Mixtrack startup requests all physical absolute control values and adopts them while stopped; playback reconnects retain pickup. Hardware readback verified for all 14 absolute CCs.
 - [x] Coalesce batched jog motion to latest per-deck measured velocity/position, preserving transport barriers so redundant scratch updates do not backlog the engine.
 
-- [x] Filter slots expose smoothed resonance (Q 0.707–4), defaulting to zero for older snapshots; separate shaped LP/HP sweeps share cutoff mapping with the UI.
+- [x] Filter slots expose smoothed resonance (Q 0.707â€“4), defaulting to zero for older snapshots; separate shaped LP/HP sweeps share cutoff mapping with the UI.
+
+- [x] FX slot 1 is reserved for an always-on Filter, linked to each mixer channel FILTER knob. New effects default to 50% resonance; old snapshots retain their neutral resonance fallback.
+
+- [x] Reserved Filter toggles reset its sweep to neutral without changing resonance; UI active count and controller LED show OFF at neutral.
+
+- [x] Two-deck mixer Filter shortcuts sit below the sampler/cue controls, separated by rules and aligned with the bottom EQ controls; four-deck filters sit below the EQ/stem controls, above the volume faders.
+
+- [x] Library load menus and live-track replacement warnings use the shared A/B/C/D deck labels, matching the mixer and deck headers.
+
+- [x] Beat analysis anchors a clear kick entrance after quiet pre-roll before extending the grid backwards; kick references reject large strength jumps and comparable-strength sub-beat rolls while accepting one- and two-beat cadences. These are heuristics; syncopated/ambiguous music still needs grid review.
+
+- [x] Two-deck headers group artwork and library title/artist on the left, prominent tempo and key/master-tempo controls on the right, with elapsed/remaining time beside the seekable overview. Artwork loads off the UI thread and stale results are discarded.
+
+- [x] Two-deck performance view gives rhythm waveforms more height and uses finer display sampling; platters have a dedicated transport row and tempo strip, with track statistics consolidated in the header.
+
+- [x] Mixed waveforms retain maximum sample peaks separately from the smoothed frequency-band body, preserving attack spikes at each horizontal scale; peak rendering follows the displayed EQ gains.
+
+- [x] Negotiate an advertised sample rate before creating DSP when an ASIO driver reports zero Hz at startup (Realtek ASIO); reject unavailable rates cleanly.

@@ -8,7 +8,9 @@ use gpui_kit::*;
 
 /// Playback seconds visible across the full width of the waveform.
 pub const VISIBLE_SECONDS: f64 = 8.;
-const COLUMN_WIDTH: f32 = 2.;
+// One logical pixel per envelope sample keeps attacks defined; the symmetric
+// smoothing kernel removes jagged edges without shifting transient positions.
+const COLUMN_WIDTH: f32 = 1.;
 
 /// Low/mid/high: shadow, deck primary, highlight.
 pub(crate) fn deck_palette(deck: usize) -> [u32; 3] {
@@ -36,6 +38,7 @@ fn column_bands(track: &Track, range: std::ops::Range<usize>) -> [f32; 3] {
 #[derive(Clone, Copy, Default)]
 struct DisplayColumn {
     energy: [f32; 3],
+    peak: f32,
 }
 
 // Symmetric display-only filter: no temporal lag or shift of beat positions.
@@ -44,7 +47,10 @@ fn smooth_columns(raw: &[Option<DisplayColumn>]) -> Vec<Option<DisplayColumn>> {
     raw.windows(5)
         .map(|neighbours| {
             neighbours[2]?; // Never extend the waveform beyond available audio.
-            let mut result = DisplayColumn::default();
+            let mut result = DisplayColumn {
+                peak: neighbours[2]?.peak,
+                ..DisplayColumn::default()
+            };
             for (column, weight) in neighbours.iter().zip(WEIGHTS) {
                 if let Some(column) = column {
                     for (sum, energy) in result.energy.iter_mut().zip(column.energy) {
@@ -91,7 +97,13 @@ fn display_source_columns(
             } else {
                 column_bands(track, range.start as usize..range.end as usize)
             };
+            let peak = if stem.is_none() {
+                range.map(|i| track.peak(i as usize)).fold(0., f32::max)
+            } else {
+                0.
+            };
             Some(DisplayColumn {
+                peak,
                 energy: bands.map(|v| v * v / (end - start).max(1) as f32),
             })
         })
@@ -107,6 +119,9 @@ fn paint_columns(
     palette: [u32; 3],
     gains: [f32; 3],
 ) {
+    // Keep the actual peak silhouette separate from the smoothed RMS body.
+    // This preserves brief attacks instead of averaging their energy away.
+    paint_peaks(window, bounds, columns, shift, palette[1], gains);
     // Low sits behind mid and high; each keeps its own amplitude envelope.
     for (band, tint) in palette.into_iter().enumerate() {
         paint_band(
@@ -120,6 +135,67 @@ fn paint_columns(
             gains[band],
         );
     }
+}
+
+fn peak_height(column: DisplayColumn, gains: [f32; 3]) -> f32 {
+    let energy: f32 = column.energy.iter().sum();
+    let adjusted: f32 = column
+        .energy
+        .iter()
+        .zip(gains)
+        .map(|(e, g)| e * g * g)
+        .sum();
+    let gain = if energy > 1e-12 {
+        (adjusted / energy).sqrt()
+    } else {
+        gains.into_iter().fold(0., f32::max)
+    };
+    (column.peak * gain).clamp(0., 1.)
+}
+
+fn paint_peaks(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    columns: &[Option<DisplayColumn>],
+    shift: f32,
+    tint: u32,
+    gains: [f32; 3],
+) {
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let mut path = PathBuilder::fill();
+        let mut start = 0;
+        while start < columns.len() {
+            if columns[start].is_none() {
+                start += 1;
+                continue;
+            }
+            let mut end = start + 1;
+            while end < columns.len() && columns[end].is_some() {
+                end += 1;
+            }
+            let edge = |i: usize, bottom: bool| {
+                let half =
+                    peak_height(columns[i].unwrap(), gains) * bounds.size.height.as_f32() * 0.48;
+                bounds.origin
+                    + point(
+                        px(i as f32 * COLUMN_WIDTH - shift),
+                        bounds.size.height / 2. + px(if bottom { half } else { -half }),
+                    )
+            };
+            path.move_to(edge(start, false));
+            for i in start + 1..end {
+                path.line_to(edge(i, false));
+            }
+            for i in (start..end).rev() {
+                path.line_to(edge(i, true));
+            }
+            path.close();
+            start = end;
+        }
+        if let Ok(path) = path.build() {
+            window.paint_path(path, Hsla::from(rgb(tint)).opacity(0.55));
+        }
+    });
 }
 
 fn paint_band(
@@ -495,6 +571,21 @@ mod tests {
     use djcraft_library::TempoResult;
 
     #[test]
+    fn brief_transient_survives_column_aggregation_without_spreading() {
+        let mut audio = vec![0.; 256 * 2 * 12];
+        audio[256 * 2 * 5] = 1.;
+        let track = djcraft_engine::Track::from_samples("impulse", 48000, audio);
+        let detailed = super::display_columns(&track, 0, 10, 1.);
+        assert_eq!(detailed[5].unwrap().peak, 1.);
+        assert_eq!(detailed[4].unwrap().peak, 0.);
+        assert_eq!(detailed[6].unwrap().peak, 0.);
+        let zoomed_out = super::display_columns(&track, 0, 5, 2.);
+        assert_eq!(zoomed_out[2].unwrap().peak, 1.);
+        assert_eq!(zoomed_out[1].unwrap().peak, 0.);
+        assert_eq!(zoomed_out[3].unwrap().peak, 0.);
+    }
+
+    #[test]
     fn stem_view_samples_real_source_envelopes_without_moving_the_timeline() {
         let track = djcraft_engine::Track::from_samples("stems", 48000, vec![0.5; 256 * 2 * 8]);
         track
@@ -560,14 +651,22 @@ mod tests {
         let mut raw = vec![Some(DisplayColumn::default()); 9];
         raw[4] = Some(DisplayColumn {
             energy: [1., 0., 0.],
+            peak: 1.,
         });
         let smoothed = smooth_columns(&raw);
         let levels: Vec<_> = smoothed.iter().map(|c| c.unwrap().energy[0]).collect();
         assert_eq!(levels, vec![0.1, 0.2, 0.4, 0.2, 0.1]);
+        assert_eq!(
+            smoothed.iter().map(|c| c.unwrap().peak).collect::<Vec<_>>(),
+            vec![0., 0., 1., 0., 0.]
+        );
+        assert_eq!(super::peak_height(smoothed[2].unwrap(), [0.; 3]), 0.);
+        assert_eq!(super::peak_height(smoothed[2].unwrap(), [1.; 3]), 1.);
         assert!(smoothed.iter().all(|c| c.unwrap().energy[1..] == [0., 0.]));
         let constant = vec![
             Some(DisplayColumn {
-                energy: [0.1, 0.2, 0.3]
+                energy: [0.1, 0.2, 0.3],
+                peak: 0.7,
             });
             7
         ];

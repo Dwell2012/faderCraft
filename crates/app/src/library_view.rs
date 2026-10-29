@@ -508,20 +508,15 @@ impl TableDelegate for TrackTable {
                     .ok();
             })
         };
-        let mut menu = menu
-            .item(item("Load to Deck 1".into(), LibraryView::load_to_deck, 0))
-            .item(item("Load to Deck 2".into(), LibraryView::load_to_deck, 1))
-            .item(item(
-                "Load to Deck 3 (C)".into(),
+        let mut menu = menu;
+        for deck in 0..djcraft_protocol::DECKS {
+            menu = menu.item(item(
+                format!("Load to Deck {}", crate::shell::deck_label(deck)).into(),
                 LibraryView::load_to_deck,
-                2,
-            ))
-            .item(item(
-                "Load to Deck 4 (D)".into(),
-                LibraryView::load_to_deck,
-                3,
-            ))
-            .item(item("Add to Automix".into(), LibraryView::queue_track, 0));
+                deck as i64,
+            ));
+        }
+        menu = menu.item(item("Add to Automix".into(), LibraryView::queue_track, 0));
         if track.missing {
             menu = menu
                 .separator()
@@ -2163,6 +2158,26 @@ impl LibraryView {
     }
 
     /// The library track at a path, with its title, if there is one.
+    pub fn deck_artwork_path(&self, path: &Path) -> Option<PathBuf> {
+        let library = self.library.as_ref()?;
+        let id = library.track_at(path).ok()??;
+        let relative = library.saved_lookup(id).ok()??.details.artwork_file?;
+        djcraft_library::artwork::cached_path(&crate::settings::data_dir(), &relative)
+    }
+
+    pub fn deck_metadata(&self, path: &Path) -> Option<(String, String)> {
+        let library = self.library.as_ref()?;
+        let id = library.track_at(path).ok()??;
+        let track = library
+            .tracks(&TrackQuery {
+                id: Some(id),
+                ..Default::default()
+            })
+            .ok()?
+            .pop()?;
+        Some((track.title, track.artist))
+    }
+
     pub fn track_at(&self, path: &Path) -> Option<(i64, SharedString)> {
         let library = self.library.as_ref()?;
         let id = library.track_at(path).ok()??;

@@ -282,11 +282,7 @@ impl Shell {
                                 if synced {
                                     fx.beats = 0.5;
                                 } else {
-                                    let reset = if fx.kind == Kind::Filter && parameter == 2 {
-                                        0.
-                                    } else {
-                                        0.5
-                                    };
+                                    let reset = 0.5;
                                     set_value(fx, parameter, reset);
                                 }
                             },
@@ -318,7 +314,7 @@ impl Shell {
             .p_1()
             .rounded_md()
             .border_1()
-            .border_color(if fx.enabled {
+            .border_color(if fx.active_in_slot(slot) {
                 accent.into()
             } else {
                 cx.theme().border
@@ -335,8 +331,12 @@ impl Shell {
                     .outline()
                     .flex_1()
                     .min_w_0()
-                    .selected(fx.enabled)
-                    .tooltip("Enable or bypass this effect.")
+                    .selected(fx.active_in_slot(slot))
+                    .tooltip(if slot == 0 {
+                        "Reset the mixer filter to neutral (OFF)."
+                    } else {
+                        "Enable or bypass this effect."
+                    })
                     .label(format!("{} · {}", slot + 1, fx.kind.label()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.update_effect(deck, slot, |fx| fx.enabled = !fx.enabled, cx);
@@ -344,6 +344,7 @@ impl Shell {
             )
             .child(
                 Button::new(("fx-select", deck * 6 + slot))
+                    .disabled(slot == 0)
                     .tooltip("Choose the effect for this slot.")
                     .xsmall()
                     .outline()
@@ -501,9 +502,14 @@ impl Shell {
                     }),
             )
             .child(div().text_size(px(10.)).child(format!(
-                "PRE-FADER · {} active",
-                state.effects.iter().filter(|fx| fx.enabled).count()
-            )));
+                    "PRE-FADER · {} active",
+                    state
+                        .effects
+                        .iter()
+                        .enumerate()
+                        .filter(|(slot, fx)| fx.active_in_slot(*slot))
+                        .count()
+                )));
         if view == 1 {
             for slot in 0..EFFECT_SLOTS {
                 header = header.child(
@@ -686,6 +692,12 @@ mod tests {
         set_value(&mut fx, 2, 2.);
         assert_eq!(fx.resonance, 1.);
         set_value(&mut fx, 2, -1.);
-        assert_eq!(fx, before);
+        assert_eq!(
+            fx,
+            EffectState {
+                resonance: 0.,
+                ..before
+            }
+        );
     }
 }

@@ -180,6 +180,7 @@ pub struct EffectState {
     pub feedback: f32,
     /// Filter resonance, 0..=1: Butterworth Q through a resonant Q of 4.
     /// Defaults to zero for older effect snapshots.
+    #[serde(default)]
     pub resonance: f32,
     pub sync: bool,
     /// Snapshot mirror of the deck's shared timing. SetEffectBeats changes it;
@@ -195,7 +196,7 @@ impl Default for EffectState {
             amount: 0.5,
             parameter: 0.5,
             feedback: 0.45,
-            resonance: 0.,
+            resonance: 0.5,
             sync: true,
             beats: 0.5,
             tails: true,
@@ -210,6 +211,8 @@ pub fn default_effects() -> [EffectState; EFFECT_SLOTS] {
             2 => EffectKind::Cut,
             _ => EffectKind::Filter,
         },
+        enabled: slot == 0,
+        amount: if slot == 0 { 1. } else { 0.5 },
         ..EffectState::default()
     })
 }
@@ -961,6 +964,11 @@ mod resonance_compatibility_tests {
 }
 
 impl EffectState {
+    /// The reserved filter is displayed as off at its neutral centre.
+    pub fn active_in_slot(&self, slot: usize) -> bool {
+        self.enabled && (slot != 0 || (self.parameter - 0.5).abs() > 0.0001)
+    }
+
     /// Nominal cutoff shared by DSP and UI. Separate power curves ease into
     /// each logarithmic sweep from the neutral centre; DSP caps at 0.45 * rate.
     pub fn filter_cutoff(parameter: f32) -> f32 {

@@ -28,7 +28,7 @@ fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
 }
 
 // Preserve A/B and bus control IDs; C/D append their own independent controls.
-pub(super) const CONTROL_COUNT: usize = 41;
+pub(super) const CONTROL_COUNT: usize = 45;
 pub(super) fn channel_index(deck: usize) -> usize {
     if deck < 2 {
         deck * 5
@@ -49,20 +49,24 @@ fn control_deck(index: usize) -> Option<usize> {
         12..=19 => Some((index - 12) / 4),
         23..=32 => Some(2 + (index - 23) / 5),
         33..=40 => Some(2 + (index - 33) / 4),
+        41..=44 => Some(index - 41),
         _ => None,
     }
 }
 fn is_stem(index: usize) -> bool {
-    (12..20).contains(&index) || index >= 33
+    (12..20).contains(&index) || (33..41).contains(&index)
 }
 fn is_knob(index: usize) -> bool {
     if let Some(deck) = control_deck(index) {
-        is_stem(index) || index - channel_index(deck) < 4
+        index >= 41 || is_stem(index) || index - channel_index(deck) < 4
     } else {
         index >= 20
     }
 }
 fn opposite_deck_control(index: usize) -> Option<usize> {
+    if index >= 41 {
+        return None;
+    }
     let deck = control_deck(index)?;
     if is_stem(index) {
         Some(stem_index(deck ^ 1) + index - stem_index(deck))
@@ -118,6 +122,17 @@ fn control_action(index: usize, value: f32) -> Action {
     }
 }
 fn value_label(index: usize, value: f32) -> String {
+    if index >= 41 {
+        return if (value - 0.5).abs() < 0.0001 {
+            "Off".into()
+        } else {
+            format!(
+                "{} {:.0}%",
+                if value < 0.5 { "LP" } else { "HP" },
+                (value - 0.5).abs() * 200.
+            )
+        };
+    }
     if index == 22 {
         let [cue, master] = djcraft_engine::cue_mix_gains(value);
         return format!("{:.0}/{:.0}", cue * 100., master * 100.);
@@ -228,6 +243,19 @@ impl Shell {
             }
             Action::Mixer {
                 action: MixerAction::SetMonitor { monitor },
+            }
+        } else if index >= 41 {
+            let deck = index - 41;
+            let mut effect = self
+                .engine
+                .as_mut()
+                .map(|e| e.state().decks[deck].effects[0])
+                .unwrap_or(djcraft_protocol::default_effects()[0]);
+            effect.parameter = value;
+            effect.amount = 1.;
+            Action::Deck {
+                deck: deck as u8,
+                action: DeckAction::SetEffect { slot: 0, effect },
             }
         } else if is_stem(index) {
             let deck = control_deck(index).expect("stem control");
@@ -383,6 +411,7 @@ impl Shell {
                     _ => "Cue / master blend: centre is both at full volume; either end fades out the opposite source. Double-click resets to cue only.",
                 }).build(window, cx)
             }))
+            .when(index >= 41, |control| control.tooltip(|window, cx| Tooltip::new("Always-on FX slot 1 filter. Left: low-pass; right: high-pass. Double-click for neutral. Resonance is in FX settings.").build(window, cx)))
             .when(!enabled, |this| this.opacity(0.35))
             .when(!knob && !horizontal, |this| this.h_full().min_h_0())
             .flex()
@@ -391,8 +420,17 @@ impl Shell {
             .w_full()
             .child(
                 div()
+                    .w_full()
+                    .text_center()
                     .text_size(px(10.))
-                    .child(format!("{label} {}", value_label(index, value))),
+                    .when(index >= 41, |label_box| {
+                        label_box
+                            .child(div().child(label))
+                            .child(div().child(value_label(index, value)))
+                    })
+                    .when(index < 41, |label_box| {
+                        label_box.child(format!("{label} {}", value_label(index, value)))
+                    }),
             )
             .child(drawing)
             .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
@@ -529,6 +567,9 @@ impl Shell {
                             .map(|(i, &label)| self.mixer_control(stem_index(deck) + i, label, cx))
                             .collect()
                     }
+                })
+                .when(self.settings.four_decks, |column| {
+                    column.child(self.mixer_control(41 + deck, "FILTER", cx))
                 })
         };
         if self.settings.four_decks {
@@ -702,7 +743,17 @@ impl Shell {
                             .w(px(64.))
                             .gap_1()
                             .child(div().text_size(px(10.)).child("SAMPLER"))
-                            .child(self.mixer_control(20, "VOL", cx)),
+                            .child(self.mixer_control(20, "VOL", cx))
+                            .h_full()
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .w_full()
+                                    .border_t_1()
+                                    .border_color(cx.theme().border)
+                                    .pt_2()
+                                    .child(self.mixer_control(41, "FILTER", cx)),
+                            ),
                     )
                     .child(knobs(0, cx))
                     .child(
@@ -756,6 +807,16 @@ impl Shell {
                                     .text_size(px(8.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child("CUE / MASTER"),
+                            )
+                            .h_full()
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .w_full()
+                                    .border_t_1()
+                                    .border_color(cx.theme().border)
+                                    .pt_2()
+                                    .child(self.mixer_control(42, "FILTER", cx)),
                             ),
                     ),
             )
@@ -893,6 +954,15 @@ mod tests {
 
     #[core::prelude::v1::test]
     fn linked_controls_pair_matching_deck_eq_and_volume() {
+        for deck in 0..4 {
+            let index = 41 + deck;
+            assert_eq!(control_deck(index), Some(deck));
+            assert!(is_knob(index));
+            assert!(!is_stem(index));
+            assert_eq!(opposite_deck_control(index), None);
+            assert_eq!(initial_values()[index], 0.5);
+            assert_eq!(value_label(index, 0.5), "Off");
+        }
         for (left, right) in [
             (1, 6),
             (2, 7),

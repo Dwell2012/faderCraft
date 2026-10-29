@@ -238,6 +238,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     let period = 60.0 / bpm;
     let window_centre = FRAME as f64 / 2.0 / sample_rate as f64;
     let anchor = kick_anchor(&kicks, rate, bpm);
+    let mut kick_entrance = false;
     let (first_beat, opening) = if let Some(anchor) = anchor {
         let expected = anchor + window_centre + ONSET_LAG_SECONDS;
         // Refine only the confirmed kick run. The melodic intro must not move
@@ -249,8 +250,19 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
         let refined = opening_attack(&samples[from..to], sample_rate, expected - start, period)
             .map(|attack| start + attack)
             .unwrap_or(expected);
-        let first = project_kick_back(samples, sample_rate, refined, period);
-        (first, (refined - first < 2. * period).then_some(first))
+        // A confirmed kick entrance after a quiet lead-in anchors beat one.
+        // Keep the actual attack as origin; renderers can count backwards
+        // from it instead of treating quiet pre-roll as the first beat.
+        kick_entrance = quiet_before_kick(samples, sample_rate, refined, period);
+        let first = if kick_entrance {
+            refined
+        } else {
+            project_kick_back(samples, sample_rate, refined, period)
+        };
+        (
+            first,
+            (refined - first <= 2. * period + 0.025).then_some(refined),
+        )
     } else {
         let phase = beat_phase(&bass_fold, &strength_fold, &fold);
         let phase_beat = (phase * period + window_centre + ONSET_LAG_SECONDS).rem_euclid(period);
@@ -269,16 +281,25 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     );
     // With a clean percussive opening, equal kicks do not establish an
     // alternative bar phase. Prefer the first actual attack in that case.
-    if first_beat > 0.05 && opening.is_some() {
-        let intro_end = ((first_beat + 32. * period) * sample_rate as f64) as usize;
-        downbeat = downbeat_opening(
+    if let Some(opening) = opening.filter(|_| first_beat > 0.05) {
+        // A quiet lead-in can project the grid before the first actual kick.
+        // Score the opening from that confirmed attack, then translate its
+        // bar position back to the grid origin. Never score quiet pre-roll as
+        // if it were the start of the kick pattern.
+        let offset = ((opening - first_beat) / period).round().max(0.) as u8 % 4;
+        let intro_end = ((opening + 32. * period) * sample_rate as f64) as usize;
+        downbeat = (downbeat_opening(
             samples,
             sample_rate,
-            first_beat,
+            opening,
             period,
             intro_end.min(samples.len()),
-            downbeat,
-        );
+            (downbeat + 4 - offset) % 4,
+        ) + offset)
+            % 4;
+    }
+    if kick_entrance {
+        downbeat = 0;
     }
     Some(Tempo {
         bpm,
@@ -449,6 +470,23 @@ fn onset_envelopes(
     )
 }
 
+/// A sustained quiet lead-in followed by a confirmed kick run is an entrance,
+/// not evidence of a pickup or a louder backbeat later in the bar.
+fn quiet_before_kick(samples: &[f32], rate: u32, first: f64, period: f64) -> bool {
+    if first < 2. * period {
+        return false;
+    }
+    let power = |from: f64, to: f64| {
+        let start = (from.max(0.) * rate as f64) as usize;
+        let end = ((to * rate as f64) as usize).min(samples.len());
+        let part = &samples[start.min(end)..end];
+        part.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / part.len().max(1) as f64
+    };
+    let before = power(first - 2. * period, first - 0.025);
+    let kick = power(first, first + 0.08);
+    kick > 1e-6 && before < kick * 0.04
+}
+
 /// Project a confirmed kick through an intro without extending into silence.
 fn project_kick_back(samples: &[f32], sample_rate: u32, anchor: f64, period: f64) -> f64 {
     let hop = (sample_rate as usize / 200).max(1);
@@ -489,20 +527,52 @@ fn kick_anchor(kicks: &[f32], rate: f64, bpm: f64) -> Option<f64> {
     // Earliest confirmed run wins. A louder section later in the track must
     // not choose a different phase from the first clean kick entrance.
     for anchor in candidates {
-        let supported = (0..9)
-            .filter(|&beat| {
-                let at = anchor as f64 + beat as f64 * period * rate;
+        // Kick cadence is independent of the estimated beat tempo.
+        for cadence in [1., 2.] {
+            let strength_at = |beat: i32| {
+                let at = anchor as f64 + beat as f64 * period * cadence * rate;
                 if at < 0. || at >= kicks.len() as f64 {
-                    return false;
+                    return 0.;
                 }
                 let at = at.round() as usize;
                 kicks[at.saturating_sub(reach)..(at + reach + 1).min(kicks.len())]
                     .iter()
-                    .any(|&value| value > peak * 0.08)
-            })
-            .count();
-        if supported >= 8 {
-            return Some(anchor as f64 / rate);
+                    .copied()
+                    .fold(0., f32::max)
+            };
+            let levels: [f32; 9] = std::array::from_fn(|beat| strength_at(beat as i32));
+            if levels.iter().filter(|&&value| value > peak * 0.08).count() < 8 {
+                continue;
+            }
+            let mut sorted = levels;
+            sorted.sort_by(f32::total_cmp);
+            let typical = sorted[4];
+            let similar = |a: f32, b: f32| a.min(b) >= a.max(b) * 0.5;
+            // Reject large level changes on either side, including a loud final
+            // hit of a build. Silence before a clean entrance is allowed.
+            let previous = strength_at(-1);
+            if !similar(levels[0], typical)
+                || (previous > peak * 0.08 && !similar(previous, levels[0]))
+                || levels.windows(2).any(|pair| !similar(pair[0], pair[1]))
+            {
+                continue;
+            }
+            // A roll can also land on every expected beat. Check between beats
+            // for extra pitch-sweeping kicks of comparable strength. Weaker
+            // offbeat bass/ghost hits must not disqualify the kick pattern.
+            let spacing = period * cadence * rate;
+            let margin = (0.03 * rate).max(reach as f64);
+            let extra_kicks = (-1..8).any(|beat| {
+                let from = (anchor as f64 + beat as f64 * spacing + margin).max(1.) as usize;
+                let to = ((anchor as f64 + (beat + 1) as f64 * spacing - margin).max(0.) as usize)
+                    .min(kicks.len().saturating_sub(1));
+                (from..to).any(|i| {
+                    kicks[i] > typical * 0.8 && kicks[i] >= kicks[i - 1] && kicks[i] > kicks[i + 1]
+                })
+            });
+            if !extra_kicks {
+                return Some(anchor as f64 / rate);
+            }
         }
     }
     None
@@ -849,6 +919,77 @@ mod tests {
                 "{tempo:?}; expected {first}"
             );
         }
+    }
+
+    #[test]
+    fn kick_reference_rejects_intensity_builds_and_faster_rolls() {
+        let rate = 100.;
+        for rolling in [false, true] {
+            let mut kicks = vec![0.; 2000];
+            for i in (50..800).step_by(if rolling { 25 } else { 50 }) {
+                kicks[i] = if rolling {
+                    1.
+                } else if i % 100 == 0 {
+                    1.
+                } else {
+                    0.25
+                };
+            }
+            for i in (800..1950).step_by(50) {
+                kicks[i] = 1.;
+            }
+            let anchor = super::kick_anchor(&kicks, rate, 120.).unwrap();
+            assert!(
+                anchor >= 8. && anchor <= 8.5,
+                "roll={rolling}, anchor={anchor}"
+            );
+        }
+        let mut kicks = vec![0.; 1000];
+        for i in (50..950).step_by(50) {
+            kicks[i] = if i % 100 == 0 { 0.85 } else { 1. };
+        }
+        assert_eq!(super::kick_anchor(&kicks, rate, 120.), Some(0.5));
+        // Weaker regular offbeat bass must not turn a steady kick run into
+        // a supposed roll (the Better Off Alone opening has this pattern).
+        let mut offbeat_bass = kicks.clone();
+        for i in (75..925).step_by(50) {
+            offbeat_bass[i] = 0.6;
+        }
+        assert_eq!(super::kick_anchor(&offbeat_bass, rate, 120.), Some(0.5));
+        let mut half_time = vec![0.; 2000];
+        for i in (50..1950).step_by(100) {
+            half_time[i] = 1.;
+        }
+        assert_eq!(super::kick_anchor(&half_time, rate, 120.), Some(0.5));
+        let rolls: Vec<f32> = (0..1000)
+            .map(|i| if i > 0 && i % 25 == 0 { 1. } else { 0. })
+            .collect();
+        assert_eq!(super::kick_anchor(&rolls, rate, 120.), None);
+    }
+
+    #[test]
+    fn quiet_lead_in_does_not_move_bar_one_past_the_first_kick() {
+        let bpm = 137.;
+        let first = 1.94;
+        let mut samples = pattern(bpm, first, 60.);
+        // Quiet audio before a clean kick entrance can extend the grid back
+        // by two beats, but it is not the opening kick pattern itself.
+        for (i, sample) in samples.iter_mut().enumerate() {
+            let t = i as f64 / RATE as f64;
+            if t >= first - 2. * 60. / bpm && t < first {
+                *sample += 0.025 * (std::f32::consts::TAU * 330. * t as f32).sin();
+            }
+        }
+        let tempo = detect_tempo(&samples, RATE, TempoRange::default()).unwrap();
+        assert!((tempo.bpm - bpm).abs() < 0.02, "{tempo:?}");
+        assert!(
+            (tempo.first_beat_seconds - first).abs() < 0.015,
+            "{tempo:?}"
+        );
+        assert!(
+            (tempo.first_bar_seconds() - first).abs() < 0.015,
+            "{tempo:?}"
+        );
     }
 
     #[test]

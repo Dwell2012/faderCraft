@@ -60,7 +60,7 @@ impl Shell {
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .h(px(100.))
+            .h(px(if self.settings.four_decks { 100. } else { 168. }))
             .rounded_md()
             .border_1()
             .border_color(cx.theme().border)
@@ -211,8 +211,8 @@ impl Shell {
         let platter = div()
             .id(("platter", index))
             .relative()
-            .w(px(if self.settings.four_decks { 64. } else { 120. }))
-            .h(px(if self.settings.four_decks { 64. } else { 120. }))
+            .w(px(if self.settings.four_decks { 64. } else { 140. }))
+            .h(px(if self.settings.four_decks { 64. } else { 140. }))
             .flex_shrink_0()
             .rounded_full()
             .border_1()
@@ -243,18 +243,15 @@ impl Shell {
                         }
                         if loaded {
                             let angle = (position * 0.5555556 * std::f64::consts::TAU) as f32;
-                            for distance in (radius as usize).saturating_sub(10)..radius as usize {
-                                window.paint_quad(fill(
-                                    Bounds::new(
-                                        centre
-                                            + point(
-                                                px(angle.sin() * distance as f32 - 1.),
-                                                px(-angle.cos() * distance as f32 - 1.),
-                                            ),
-                                        size(px(2.), px(2.)),
-                                    ),
-                                    colour,
-                                ));
+                            let mut pointer = PathBuilder::stroke(px(2.5));
+                            let at = |distance: f32| {
+                                centre
+                                    + point(px(angle.sin() * distance), px(-angle.cos() * distance))
+                            };
+                            pointer.move_to(at(radius * 0.45));
+                            pointer.line_to(at(radius - 3.));
+                            if let Ok(path) = pointer.build() {
+                                window.paint_path(path, colour);
                             }
                         }
                     },
@@ -384,126 +381,52 @@ impl Shell {
         }
 
         div()
-            .relative()
             .flex()
-            .when(index % 2 == 1, |d| d.flex_row_reverse())
-            .h(px(if self.settings.four_decks { 104. } else { 150. }))
+            .flex_col()
+            .gap_2()
+            .h(px(198.))
             .flex_shrink_0()
-            .items_center()
-            .justify_end()
-            .when(index % 2 == 1, |row| row.justify_start())
-            .gap_4()
             .child(
                 div()
-                    .absolute()
-                    .inset_0()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_center()
+                    .gap_3()
+                    .when(index % 2 == 1, |row| row.flex_row_reverse())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_2()
+                            .child(platter)
+                            .child(div().flex().gap_2().children((0..4).map(|i| {
+                                div().w(px(22.)).h(px(3.)).rounded_sm().bg(
+                                    if loaded && beat == Some(i) {
+                                        colour.into()
+                                    } else {
+                                        ring
+                                    },
+                                )
+                            }))),
+                    )
+                    .child(self.pitch_control(index, state, cx)),
+            )
+            .child(
+                div()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(platter),
+                    .gap_2()
+                    .border_t_1()
+                    .border_color(ring)
+                    .pt_2()
+                    .children(controls),
             )
-            .when(loaded && !state.loading, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .w(relative(0.5))
-                        .top(px(40.))
-                        .when(index % 2 == 0, |d| {
-                            d.right(relative(0.5)).mr(px(72.)).w(px(130.))
-                        })
-                        .when(index % 2 == 1, |d| {
-                            d.left(relative(0.5)).ml(px(72.)).w(px(130.)).text_right()
-                        })
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(colour)
-                        .children(
-                            current_key_label(self.deck_keys[index], state)
-                                .split(" · ")
-                                .map(|line| div().child(line.to_owned()))
-                                .collect::<Vec<_>>(),
-                        ),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(90.))
-                    .flex_shrink_0()
-                    .when(index % 2 == 0, |d| d.items_end().text_right())
-                    .min_w_0()
-                    .gap_1()
-                    .child(
-                        div()
-                            .id(("tempo-display", index))
-                            .on_scroll_wheel(cx.listener(
-                                move |this, event: &ScrollWheelEvent, _, cx| {
-                                    this.wheel_tempo(index, event, cx)
-                                },
-                            ))
-                            .child(div().text_size(px(10.)).text_color(muted).child("BPM"))
-                            .child(
-                                div()
-                                    .text_size(px(26.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(colour)
-                                    .child(tempo_text),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .child(
-                                div()
-                                    .text_size(px(10.))
-                                    .text_color(muted)
-                                    .child("REMAINING"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(20.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(if loaded && remaining < 30. {
-                                        cx.theme().danger
-                                    } else {
-                                        cx.theme().foreground
-                                    })
-                                    .child(if loaded {
-                                        format!("−{}", clock(remaining / state.tempo))
-                                    } else {
-                                        "—:—".into()
-                                    }),
-                            ),
-                    )
-                    .child(
-                        div().flex().gap_2().children(
-                            (0..4)
-                                .map(|i| {
-                                    div().w(px(17.)).h(px(4.)).rounded_sm().bg(
-                                        if loaded && beat == Some(i) {
-                                            colour.into()
-                                        } else {
-                                            ring
-                                        },
-                                    )
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                    )
-                    .child(div().text_size(px(10.)).text_color(muted).child(if loaded {
-                        if position < 0. {
-                            format!("PRE-ROLL  −{}", clock(-position / state.tempo))
-                        } else {
-                            format!("ELAPSED  {}", clock(position / state.tempo))
-                        }
-                    } else {
-                        "Load or drop a track".into()
-                    })),
-            )
-            .child(self.pitch_control(index, state, cx))
     }
 }
 

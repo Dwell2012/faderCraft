@@ -17,7 +17,9 @@ use djcraft_library::{Camelot, CuePoint, KeyResult, Library, TempoResult};
 // Version 8 retains a strong first kick with modest attack-shape variation.
 // Version 9 anchors phase on repeated pitch-sweeping kicks before bass fallback.
 // Version 10 uses the first confirmed run and refines it locally, not the intro.
-const ANALYSIS_VERSION: i64 = 10;
+// Version 11 anchors quiet-lead-in bar starts on the confirmed kick entrance,
+// rejects unstable/rolling references and accepts half-time kick cadence.
+const ANALYSIS_VERSION: i64 = 11;
 /// Tempo and key do not need treble, and a lower rate is quicker to decode.
 const ANALYSIS_RATE: u32 = 22_050;
 const MAX_WORKERS: usize = 4;

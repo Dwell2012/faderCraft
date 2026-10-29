@@ -121,6 +121,16 @@ pub(crate) fn device(
         .default_output_config()
         .map_err(|e| EngineError::Device(e.to_string()))?;
     let required = routing.required_channels()?;
+    // Some ASIO drivers report an unknown (zero) rate until a stream is opened.
+    // Never construct DSP at zero Hz; negotiate a rate the device advertises.
+    if config.sample_rate() == 0 {
+        config = known_rate_config(
+            device
+                .supported_output_configs()
+                .map_err(|e| EngineError::Device(e.to_string()))?,
+            config.channels().max(required),
+        )?;
+    }
     if config.channels() < required
         && !(config.channels() == 1 && routing.master == 0 && routing.cue.is_none())
     {
@@ -132,6 +142,52 @@ pub(crate) fn device(
             .ok_or_else(|| EngineError::Device(format!("Selected routing needs {required} output channels at {rate} Hz. Choose a multichannel device/ASIO driver or disable headphone routing.")))?;
     }
     Ok((device, config))
+}
+
+fn known_rate_config(
+    configs: impl IntoIterator<Item = cpal::SupportedStreamConfigRange>,
+    channels: u16,
+) -> Result<SupportedStreamConfig, EngineError> {
+    configs.into_iter()
+        .filter(|c| c.channels() == channels && c.min_sample_rate() > 0 && c.max_sample_rate() >= c.min_sample_rate())
+        .map(|c| { let rate = 48_000u32.clamp(c.min_sample_rate(), c.max_sample_rate()); c.with_sample_rate(rate) })
+        .min_by_key(|c| c.sample_rate().abs_diff(48_000))
+        .ok_or_else(|| EngineError::Device("Audio driver reported an unknown sample rate and no supported rate for the selected channels.".into()))
+}
+
+#[cfg(test)]
+mod rate_tests {
+    use super::*;
+    fn range(channels: u16, rate: u32) -> cpal::SupportedStreamConfigRange {
+        cpal::SupportedStreamConfigRange::new(
+            channels,
+            rate,
+            rate,
+            cpal::SupportedBufferSize::Unknown,
+            SampleFormat::F32,
+        )
+    }
+    #[test]
+    fn unknown_rate_uses_supported_rate_and_preserves_channels() {
+        let selected = known_rate_config(
+            [
+                range(2, 48000),
+                range(8, 0),
+                range(8, 44100),
+                range(8, 48000),
+            ],
+            8,
+        )
+        .unwrap();
+        assert_eq!((selected.channels(), selected.sample_rate()), (8, 48000));
+        assert_eq!(
+            known_rate_config([range(8, 44100)], 8)
+                .unwrap()
+                .sample_rate(),
+            44100
+        );
+        assert!(known_rate_config([range(8, 0), range(2, 48000)], 8).is_err());
+    }
 }
 
 pub(crate) fn start(

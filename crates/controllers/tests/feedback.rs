@@ -36,6 +36,8 @@ fn leds_follow_host_cues_samples_loops_and_fx_with_port_and_deck_isolation() {
     );
     assert_eq!(lamp(&b, &s, 0x59, 0), 0);
     s.decks[0].effects[0].enabled = true;
+    assert_eq!(lamp(&b, &s, 0x59, 0), 0);
+    s.decks[0].effects[0].parameter = 0.2;
     s.decks[1].hot_cues[2] = Some(HotCue {
         seconds: 2.,
         loop_end: None,
@@ -44,6 +46,8 @@ fn leds_follow_host_cues_samples_loops_and_fx_with_port_and_deck_isolation() {
     s.decks[0].samples[1] = 2;
     s.decks[1].loop_region = Some([1., 3.]);
     assert_eq!(lamp(&b, &s, 0x59, 0), 100);
+    s.decks[0].effects[0].parameter = 0.5;
+    assert_eq!(lamp(&b, &s, 0x59, 0), 0);
     assert_eq!(lamp(&b, &s, 0x5d, 0), 0);
     assert_eq!(lamp(&b, &s, 0x73, 0), 100);
     assert_eq!(lamp(&b, &s, 0x6f, 0), 0);

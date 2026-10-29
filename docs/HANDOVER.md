@@ -1,5 +1,7 @@
 # Codex handover
 
+Latest session: [29 October UI, waveform, key investigation and ASIO handover](SESSION-2026-10-29.md).
+
 Stem model choice (26 October): stem_model defaults Fast for old settings; Detailed selects htdemucs_ft. Settings has background download/verify buttons and local availability markers. Both models stay on disk; the worker keeps only the current model loaded, switches on a queued request, and preloads the selected model at startup. Cache keys include model name, preserving existing htdemucs-v1 entries. Already attached stems require a deck reload to change model. Worker heartbeats cover first-use downloads, with absolute startup/job limits. Lost-GPU CPU fallback reloads the correct model. No library schema or engine/audio change.
 
 Persistent stem worker (26 October): stdin JSON requests and stdout ready/progress/done/error messages replace per-track Python launches. Shell warms the worker on a background executor and shows a startup splash until ready (or failure). One model and device weights remain loaded; CPU/GPU preference is supplied per job. Rust serializes requests, bounds unresponsive waits, discards failed workers, and shuts down the process at app exit. Cache identity/output are unchanged.

@@ -3,7 +3,11 @@
 Reference: https://virtualdj.com/manuals/virtualdj/interface/decks/decksadvanced/effects.html
 
 Six persistent serial effect slots per deck, after EQ/stems and before the volume
-fader/crossfader. Click the effect name to toggle it; use the adjacent arrow to
+fader/crossfader. Slot 1 is reserved for the always-on Filter, with a linked FILTER
+knob in each mixer channel. Centre is neutral; double-click the mixer knob to
+return to centre. The FX button and controller toggle also reset it to centre,
+shown as OFF in the UI and controller LED; turning the sweep engages it again.
+Resonance is preserved when resetting. Slots 2–6 remain assignable. Click their effect name to toggle; use the adjacent arrow to
 select an effect. FX x3 shows three slots with mix dials, FX x1 shows the selected
 slot with two dials, FX x3 Full shows three with two dials each, and FX x6 shows all
 six in two columns. Switch views using the FX label or its view dropdown. Hidden
@@ -76,7 +80,7 @@ Echo, Delay, Ping Pong, Low Cut Echo, Spiral and Reverb add their return to the 
 
 Filter also has a per-slot Resonance dial (inline in expanded views and in slot
 details). It ranges from 0% (Butterworth Q = 0.707) to 100% (Q = 4);
-double-click resets resonance to zero. Higher resonance emphasizes frequencies
+New effects start at 50% resonance; double-click resets resonance to 50%. Higher resonance emphasizes frequencies
 around the cutoff and increases peak level, so allow some gain headroom. Older
 snapshots default to zero resonance. Changes use the existing 10 ms smoothing.
 

@@ -655,9 +655,10 @@ impl Bridge {
                             Some(1) => true,
                             _ => false,
                         },
-                        LedFeedback::Effect { .. } => {
-                            s.effects.get(slot).is_some_and(|fx| fx.enabled)
-                        }
+                        LedFeedback::Effect { .. } => s
+                            .effects
+                            .get(slot)
+                            .is_some_and(|fx| fx.active_in_slot(slot)),
                     });
                 Some([0x90 | channel, number, if on { 100 } else { 0 }])
             })
@@ -933,7 +934,7 @@ impl Bridge {
                 Binding::ToggleEffect { deck, slot } if rising => {
                     state.decks.get(usize::from(*deck)).map(|s| {
                         let mut effect = s.effects[usize::from(*slot)];
-                        effect.enabled = !effect.enabled;
+                        effect.enabled = *slot != 0 && !effect.enabled;
                         Action::Deck {
                             deck: *deck,
                             action: DeckAction::SetEffect {
