@@ -61,7 +61,7 @@ Before designing everything from scratch, I would examine several existing proje
 |---|---|---|
 | [Mixxx](https://github.com/mixxxdj/mixxx) | Open-source DJ software | Reference audio engine and controller implementations |
 | [pyrekordbox](https://github.com/dylanljones/pyrekordbox) | rekordbox library parsing | Reference for database formats |
-| [libdjinterop](https://github.com/Deep-Symmetry/libdjinterop) | DJ library interoperability | Reference for Engine DJ and other database handling |
+| [libdjinterop](https://github.com/xsco/libdjinterop) | DJ library interoperability | Reference for Engine DJ and other database handling |
 | [libdjay](https://github.com/Deep-Symmetry/libdjay) | DJ-related interoperability research | Evaluate relevant protocol support |
 | [CPAL](https://github.com/RustAudio/cpal) | Rust audio I/O | Cross-platform audio backend |
 | [Symphonia](https://github.com/pdeljanov/Symphonia) | Rust audio decoding | Music decoding |
