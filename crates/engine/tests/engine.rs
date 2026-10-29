@@ -3545,3 +3545,99 @@ fn tempo_fader_range_is_per_deck_role_gated_and_preserves_playing_tempo() {
     assert!(state.decks[0].playing);
     assert_eq!(state.decks[1].tempo_range, TempoFaderRange::Low);
 }
+#[test]
+fn jog_audio_tracks_measured_speed_and_decays_only_when_the_physical_target_stops() {
+    for speed in [-2., -1., -0.25, 0.25, 1., 2.] {
+        let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 16 * 2]);
+        engine
+            .apply(Role::Host, deck(DeckAction::Seek { seconds: 8. }))
+            .unwrap();
+        let mut target = 8.;
+        let mut block = vec![0.; CALLBACK * 2];
+        let mut start = 0.;
+        let mut min_gain = 1f32;
+        for packet in 0..140 {
+            target += speed * 0.01;
+            engine
+                .apply(
+                    Role::Host,
+                    deck(DeckAction::JogScratch {
+                        seconds: target,
+                        speed,
+                        interval_seconds: 0.01,
+                    }),
+                )
+                .unwrap();
+            mixer.render(&mut block);
+            if packet == 79 {
+                start = engine.state().decks[0].position_seconds;
+            }
+            if packet >= 80 {
+                min_gain = block.iter().fold(min_gain, |a, v| a.min(v.abs()));
+            }
+        }
+        let measured = (engine.state().decks[0].position_seconds - start) / 0.6;
+        assert!(
+            (measured - speed).abs() < 0.025,
+            "platter {speed}, audio {measured}"
+        );
+        assert!(
+            min_gain > 0.38,
+            "moving platter pumped the volume: {min_gain}"
+        );
+        for _ in 0..40 {
+            mixer.render(&mut block);
+        }
+        assert!((engine.state().decks[0].position_seconds - target).abs() < 1e-4);
+        assert!(block.iter().all(|v| v.abs() < 0.001));
+        for (bad_speed, bad_interval) in
+            [(f64::NAN, 0.01), (1., 0.), (1., f64::INFINITY), (9., 0.01)]
+        {
+            assert_eq!(
+                engine.apply(
+                    Role::Host,
+                    deck(DeckAction::JogScratch {
+                        seconds: target,
+                        speed: bad_speed,
+                        interval_seconds: bad_interval
+                    })
+                ),
+                Err(Rejection::InvalidValue)
+            );
+        }
+    }
+}
+#[test]
+fn jog_audio_follows_a_platter_slowing_through_multiple_speeds() {
+    let (mut engine, mut mixer) = engine_with(vec![0.3; RATE as usize * 16 * 2]);
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 5. }))
+        .unwrap();
+    let mut target = 5.;
+    let mut block = vec![0.; CALLBACK * 2];
+    for speed in [2., 1., 0.5, 0.25] {
+        let mut start = 0.;
+        for packet in 0..100 {
+            target += speed * 0.01;
+            engine
+                .apply(
+                    Role::Host,
+                    deck(DeckAction::JogScratch {
+                        seconds: target,
+                        speed,
+                        interval_seconds: 0.01,
+                    }),
+                )
+                .unwrap();
+            mixer.render(&mut block);
+            if packet == 69 {
+                start = engine.state().decks[0].position_seconds;
+            }
+        }
+        let actual = (engine.state().decks[0].position_seconds - start) / 0.3;
+        assert!(
+            (actual - speed).abs() < 0.025,
+            "coasting platter {speed}, audio {actual}"
+        );
+    }
+}

@@ -1063,6 +1063,31 @@ impl Engine {
                 self.send(Command::ScratchTo {
                     deck,
                     frame: seconds * self.sample_rate as f64,
+                    velocity: None,
+                })?;
+                self.decks[deck].loop_region =
+                    mixer::loop_at(self.decks[deck].loop_region, seconds);
+                Ok(())
+            }
+            DeckAction::JogScratch {
+                seconds,
+                speed,
+                interval_seconds,
+            } => {
+                if !seconds.is_finite()
+                    || !speed.is_finite()
+                    || !(-MAX_SCRATCH_SPEED..=MAX_SCRATCH_SPEED).contains(&speed)
+                    || !(0.001..=0.08).contains(&interval_seconds)
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::ScratchTo {
+                    deck,
+                    frame: seconds.max(0.) * self.sample_rate as f64,
+                    velocity: Some((
+                        speed,
+                        (interval_seconds * 1.5).max(0.015) * self.sample_rate as f64,
+                    )),
                 })?;
                 self.decks[deck].loop_region =
                     mixer::loop_at(self.decks[deck].loop_region, seconds);

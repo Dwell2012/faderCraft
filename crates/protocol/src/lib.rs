@@ -387,6 +387,13 @@ pub enum DeckAction {
     ScratchTo {
         seconds: f64,
     },
+    /// Timestamped physical jog movement: position plus measured source-seconds
+    /// per output-second. Interval supplies a packet-sized following buffer.
+    JogScratch {
+        seconds: f64,
+        speed: f64,
+        interval_seconds: f64,
+    },
     /// Drive playback from an external speed signal (jog wheel, timecode).
     /// `Some(speed)` overrides the transport, with 1.0 as normal forward
     /// speed and negative values as reverse. `None` hands control back.

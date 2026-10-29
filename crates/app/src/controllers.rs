@@ -5,6 +5,77 @@ use djcraft_controllers::{
 };
 use djcraft_protocol::{Action, SessionState};
 
+/// Keep the latest measured velocity/position per deck in a drained MIDI batch.
+/// Transport and other actions are barriers, so releases and seeks keep order.
+#[derive(Default)]
+pub(super) struct JogBatch {
+    pending: [Option<Action>; djcraft_protocol::DECKS],
+}
+impl JogBatch {
+    pub fn push(&mut self, action: Action) -> Vec<Action> {
+        if let Action::Deck {
+            deck,
+            action: djcraft_protocol::DeckAction::JogScratch { .. },
+        } = &action
+            && let Some(pending) = self.pending.get_mut(usize::from(*deck))
+        {
+            *pending = Some(action);
+            Vec::new()
+        } else {
+            let mut actions = self.flush();
+            actions.push(action);
+            actions
+        }
+    }
+    pub fn flush(&mut self) -> Vec<Action> {
+        self.pending.iter_mut().filter_map(Option::take).collect()
+    }
+}
+
+#[cfg(test)]
+mod jog_batch_tests {
+    use super::*;
+    use djcraft_protocol::DeckAction;
+
+    fn motion(deck: u8, seconds: f64, speed: f64) -> Action {
+        Action::Deck {
+            deck,
+            action: DeckAction::JogScratch {
+                seconds,
+                speed,
+                interval_seconds: 0.01,
+            },
+        }
+    }
+    #[test]
+    fn delayed_batches_keep_latest_velocity_and_transport_order() {
+        let mut batch = JogBatch::default();
+        for count in 0..100 {
+            assert!(
+                batch
+                    .push(motion(0, 8. + count as f64 * 0.003, 0.3))
+                    .is_empty()
+            );
+        }
+        assert!(batch.push(motion(1, 4., -0.5)).is_empty());
+        assert!(batch.push(motion(0, 8.25, -0.1)).is_empty());
+        let release = Action::Deck {
+            deck: 0,
+            action: DeckAction::Scratch { speed: None },
+        };
+        assert_eq!(
+            batch.push(release.clone()),
+            vec![motion(0, 8.25, -0.1), motion(1, 4., -0.5), release]
+        );
+        assert!(batch.flush().is_empty());
+        let seek = Action::Deck {
+            deck: 0,
+            action: DeckAction::Seek { seconds: 8.25 },
+        };
+        assert_eq!(batch.push(seek.clone()), vec![seek]);
+    }
+}
+
 pub struct Controllers {
     bridge: Bridge,
     inputs: Vec<(String, Input)>,
@@ -198,20 +269,21 @@ impl Controllers {
         *previous = desired;
     }
 
-    pub fn drain(&mut self) -> Vec<(String, Vec<djcraft_controllers::Event>)> {
+    pub fn drain(&mut self) -> Vec<(String, Vec<djcraft_controllers::native::TimedEvent>)> {
         self.rescan();
         let mut events = Vec::new();
-        self.inputs.retain(|(name, input)| match input.drain() {
-            Ok(batch) => {
-                events.push((name.clone(), batch));
-                true
-            }
-            Err(error) => {
-                eprintln!("{name}: {error}");
-                self.releases.extend(self.bridge.disconnect(name));
-                false
-            }
-        });
+        self.inputs
+            .retain(|(name, input)| match input.drain_timed() {
+                Ok(batch) => {
+                    events.push((name.clone(), batch));
+                    true
+                }
+                Err(error) => {
+                    eprintln!("{name}: {error}");
+                    self.releases.extend(self.bridge.disconnect(name));
+                    false
+                }
+            });
         events
     }
 
@@ -222,9 +294,10 @@ impl Controllers {
     pub fn process(
         &mut self,
         port: &str,
-        event: djcraft_controllers::Event,
+        timed: djcraft_controllers::native::TimedEvent,
         state: &SessionState,
     ) -> Vec<Action> {
+        let event = timed.event;
         if self.trace_notes > 0 && matches!(event.source, djcraft_controllers::Source::Note { .. })
         {
             eprintln!("MIDI note {port:?}: {event:?}");
@@ -232,7 +305,7 @@ impl Controllers {
         }
         let force = self.bridge.profile().mappings.iter().any(|m| m.port == port && matches!(&m.binding, djcraft_controllers::Binding::Jog { config } if config.scratch_toggle == Some(event.source)));
         self.monitor = state.monitor;
-        let actions = self.bridge.process(port, event, state);
+        let actions = self.bridge.process_at(port, event, state, timed.at);
         let force = force
             || matches!(event.source, djcraft_controllers::Source::Note { .. })
                 && self.bridge.profile().mappings.iter().any(|m| {

@@ -80,7 +80,10 @@ fn position(actions: &[Action]) -> f64 {
         .rev()
         .find_map(|a| match a {
             Action::Deck {
-                action: DeckAction::ScratchTo { seconds } | DeckAction::Seek { seconds },
+                action:
+                    DeckAction::ScratchTo { seconds }
+                    | DeckAction::JogScratch { seconds, .. }
+                    | DeckAction::Seek { seconds },
                 ..
             } => Some(*seconds),
             _ => None,
@@ -119,8 +122,8 @@ fn contact_pulses_during_motion_do_not_release_seek_or_reanchor_the_scratch() {
             assert!(run(&mut b, 0x90, touch, 0, &s, at).is_empty());
             assert!(b.tick_at(&s, at + Duration::from_millis(4)).is_empty());
         }
-        assert!(b.tick_at(&s, now + Duration::from_millis(224)).is_empty());
-        let release = b.tick_at(&s, now + Duration::from_millis(225));
+        assert!(b.tick_at(&s, now + Duration::from_millis(274)).is_empty());
+        let release = b.tick_at(&s, now + Duration::from_millis(275));
         assert!(released(&release));
         assert!((position(&release) - target).abs() < 1e-9);
         assert!(b.tick_at(&s, now + Duration::from_secs(1)).is_empty());
@@ -262,7 +265,7 @@ fn numark_scratch_mode_latches_on_press_and_release_does_not_change_it() {
             assert!(matches!(
                 off[0],
                 Action::Deck {
-                    action: DeckAction::ScratchTo { .. },
+                    action: DeckAction::JogScratch { .. },
                     ..
                 }
             ));
@@ -476,7 +479,7 @@ fn hardware_jog_actions_are_audible_in_both_directions_and_resume_playing_or_pau
             assert!(forward.iter().any(|v| v.abs() > 0.01));
             let s = engine.state();
             apply(&mut engine, run(&mut b, 0x90, 0x4d, 0, &s, now));
-            apply(&mut engine, b.tick_at(&s, now + Duration::from_millis(30)));
+            apply(&mut engine, b.tick_at(&s, now + Duration::from_millis(80)));
             render(&mut mixer, 0.2);
             let local = engine.state().decks[0].clone();
             assert_eq!(local.playing, playing);
@@ -519,8 +522,184 @@ fn a_complete_touch_burst_before_one_audio_callback_keeps_its_final_position() {
     ] {
         apply(&mut engine, run(&mut b, status, number, value, &s, now));
     }
-    apply(&mut engine, b.tick_at(&s, now + Duration::from_millis(30)));
+    apply(&mut engine, b.tick_at(&s, now + Duration::from_millis(80)));
     render(&mut mixer, 0.1);
     assert!((engine.state().decks[0].position_seconds - 1.06).abs() < 0.0001);
     assert!(!engine.state().decks[0].playing);
+}
+#[test]
+fn platter_free_spin_keeps_scratch_surface_ownership_until_movement_stops() {
+    let now = Instant::now();
+    for playing in [false, true] {
+        for (touch, movement) in [(0x4d, 0x19), (0x4e, 0x18)] {
+            for (raw, sign) in [(1, 1.), (127, -1.)] {
+                let mut b = bridge();
+                let s = state(playing);
+                let mut target = 5.;
+                run(&mut b, 0x90, touch, 127, &s, now);
+                let first = run(&mut b, 0xb0, movement, raw, &s, now);
+                target += sign * 0.003;
+                assert!((position(&first) - target).abs() < 1e-9);
+                assert!(run(&mut b, 0x90, touch, 0, &s, now + Duration::from_millis(1)).is_empty());
+                for packet in 1..=20 {
+                    let at = now + Duration::from_millis(packet * 40);
+                    assert!(b.tick_at(&s, at - Duration::from_millis(1)).is_empty());
+                    let actions = run(&mut b, 0xb0, movement, raw, &s, at);
+                    target += sign * 0.003;
+                    assert!(!released(&actions));
+                    assert!((position(&actions) - target).abs() < 1e-9);
+                    assert!(!actions.iter().any(|a| matches!(
+                        a,
+                        Action::Deck {
+                            action: DeckAction::PitchBend { .. },
+                            ..
+                        }
+                    )));
+                }
+                assert!(b.tick_at(&s, now + Duration::from_millis(879)).is_empty());
+                let end = b.tick_at(&s, now + Duration::from_millis(880));
+                assert!(released(&end));
+                assert!((position(&end) - target).abs() < 1e-9);
+                assert!(b.tick_at(&s, now + Duration::from_millis(900)).is_empty());
+                if playing {
+                    let rim = run(
+                        &mut b,
+                        0xb0,
+                        movement,
+                        raw,
+                        &s,
+                        now + Duration::from_millis(910),
+                    );
+                    assert!(matches!(
+                        rim.as_slice(),
+                        [Action::Deck {
+                            action: DeckAction::PitchBend { .. },
+                            ..
+                        }]
+                    ));
+                }
+            }
+        }
+    }
+}
+#[test]
+fn disabling_scratch_during_free_spin_clears_the_released_contact() {
+    let mut b = bridge();
+    let s = state(true);
+    let now = Instant::now();
+    run(&mut b, 0x90, 0x4d, 127, &s, now);
+    run(&mut b, 0xb0, 0x19, 127, &s, now);
+    run(&mut b, 0x90, 0x4d, 0, &s, now);
+    assert!(released(&run(
+        &mut b,
+        0x90,
+        0x48,
+        127,
+        &s,
+        now + Duration::from_millis(5)
+    )));
+    run(&mut b, 0x90, 0x48, 0, &s, now + Duration::from_millis(6));
+    assert!(run(&mut b, 0x90, 0x48, 127, &s, now + Duration::from_millis(7)).is_empty());
+    let rim = run(&mut b, 0xb0, 0x19, 1, &s, now + Duration::from_millis(8));
+    assert!(matches!(
+        rim.as_slice(),
+        [Action::Deck {
+            action: DeckAction::PitchBend { .. },
+            ..
+        }]
+    ));
+}
+#[test]
+fn released_platter_spin_remains_audible_and_tracks_both_directions_before_resuming() {
+    for playing in [false, true] {
+        for key_lock in [false, true] {
+            for (raw, sign) in [(1, 1.), (127, -1.)] {
+                let (mut engine, mut mixer) = Engine::headless(48000);
+                let samples = (0..48000 * 4)
+                    .flat_map(|i| {
+                        [(i as f32 * std::f32::consts::TAU * 440. / 48000.).sin() * 0.4; 2]
+                    })
+                    .collect();
+                engine
+                    .load_track(0, Arc::new(Track::from_samples("spin", 48000, samples)))
+                    .unwrap();
+                for action in [
+                    DeckAction::Seek { seconds: 1. },
+                    DeckAction::SetKeyLock { on: key_lock },
+                    DeckAction::SetTempo { ratio: 1.08 },
+                ] {
+                    apply(&mut engine, vec![Action::Deck { deck: 0, action }]);
+                }
+                if playing {
+                    apply(
+                        &mut engine,
+                        vec![Action::Deck {
+                            deck: 0,
+                            action: DeckAction::Play,
+                        }],
+                    );
+                }
+                render(&mut mixer, 0.1);
+                let s = engine.state();
+                let anchor = s.decks[0].position_seconds;
+                let mut b = bridge();
+                let now = Instant::now();
+                apply(&mut engine, run(&mut b, 0x90, 0x4d, 127, &s, now));
+                apply(&mut engine, run(&mut b, 0xb0, 0x19, raw, &s, now));
+                apply(
+                    &mut engine,
+                    run(&mut b, 0x90, 0x4d, 0, &s, now + Duration::from_millis(1)),
+                );
+                for packet in 1..=12 {
+                    let at = now + Duration::from_millis(packet * 40);
+                    let s = engine.state();
+                    let actions = run(&mut b, 0xb0, 0x19, raw, &s, at);
+                    assert!(!released(&actions));
+                    apply(&mut engine, actions);
+                    let audio = render(&mut mixer, 0.04);
+                    assert!(audio.iter().any(|v| v.abs() > 0.01));
+                }
+                let s = engine.state();
+                assert!((s.decks[0].position_seconds - anchor) * sign > 0.03);
+                assert_eq!(s.decks[0].tempo, 1.08);
+                assert_eq!(s.decks[0].key_lock, key_lock);
+                assert_eq!(s.decks[0].playing, playing);
+                let release = b.tick_at(&s, now + Duration::from_millis(560));
+                assert!(released(&release));
+                apply(&mut engine, release);
+                render(&mut mixer, 0.1);
+                let end = engine.state();
+                let target = anchor + 13. * 0.003 * sign;
+                if playing {
+                    assert!(end.decks[0].position_seconds > target + 0.08);
+                } else {
+                    assert!((end.decks[0].position_seconds - target).abs() < 1e-4);
+                }
+            }
+        }
+    }
+}
+#[test]
+fn jog_speed_uses_packet_timing_and_slows_after_surface_release_even_when_replayed_in_a_batch() {
+    let mut b = bridge();
+    let s = state(true);
+    let now = Instant::now();
+    run(&mut b, 0x90, 0x4d, 127, &s, now);
+    run(&mut b, 0xb0, 0x19, 10, &s, now);
+    // These packets can be drained together later; their recorded times, not
+    // the UI's loop time, determine the platter velocity.
+    for (ms, raw, expected) in [
+        (20, 10, 1.5),
+        (60, 5, 0.375),
+        (100, 123, -0.375),
+        (160, 127, -0.05),
+    ] {
+        if ms == 60 {
+            run(&mut b, 0x90, 0x4d, 0, &s, now + Duration::from_millis(21));
+        }
+        let actions = run(&mut b, 0xb0, 0x19, raw, &s, now + Duration::from_millis(ms));
+        assert!(
+            matches!(actions.as_slice(),[Action::Deck{action:DeckAction::JogScratch{speed,..},..}]if(*speed-expected).abs()<1e-9)
+        );
+    }
 }

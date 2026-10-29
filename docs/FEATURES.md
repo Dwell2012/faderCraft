@@ -739,3 +739,7 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Per-deck Low/Medium/High/Wide tempo fader ranges (±8/16/32/48%), default Low, full hardware/app travel and soft takeover after range changes.
 - [x] Transport Cue returns to the retained playback start; control changes preserve it and playing Cue pauses at that position.
 - [x] Hardware ranged tempo faders land exactly on the opposite deck's effective BPM at the nearest physical step [requires known BPMs and an in-range target; hardware retest pending].
+
+- [x] Released scratch-surface jog gestures retain ownership during physical free spin in either direction; settle after 80 ms motion idle and restore transport [hardware retest pending].
+- [x] Timestamped MIDI jog velocity drives scratch playback and free-spin deceleration; bounded phase correction preserves platter alignment and stationary silence [hardware listening retest pending].
+- [x] Coalesce batched jog motion to latest per-deck measured velocity/position, preserving transport barriers so redundant scratch updates do not backlog the engine.

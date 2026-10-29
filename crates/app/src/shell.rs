@@ -979,6 +979,7 @@ impl Shell {
                 | DeckAction::Sync { .. }
                 | DeckAction::Scratch { .. }
                 | DeckAction::ScratchTo { .. }
+                | DeckAction::JogScratch { .. }
         ) && let Some(controllers) = &mut self.controllers
         {
             for release in controllers.cancel_deck(deck as u8) {
@@ -1073,17 +1074,29 @@ impl Shell {
             self.controller_command(command, cx);
         }
         for (port, events) in batches {
+            let mut jog_batch = crate::controllers::JogBatch::default();
             for event in events {
                 let Some(engine) = &mut self.engine else {
                     break;
                 };
                 let state = engine.state();
                 for action in controllers.process(&port, event, &state) {
-                    self.controller_action(action, cx);
+                    for action in jog_batch.push(action) {
+                        self.controller_action(action, cx);
+                    }
                 }
-                for command in controllers.take_commands() {
+                let commands = controllers.take_commands();
+                if !commands.is_empty() {
+                    for action in jog_batch.flush() {
+                        self.controller_action(action, cx);
+                    }
+                }
+                for command in commands {
                     self.controller_command(command, cx);
                 }
+            }
+            for action in jog_batch.flush() {
+                self.controller_action(action, cx);
             }
         }
         if let Some(engine) = &mut self.engine {

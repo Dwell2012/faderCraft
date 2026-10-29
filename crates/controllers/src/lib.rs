@@ -1183,7 +1183,8 @@ impl Bridge {
                         | DeckAction::AutoScratch { .. }
                         | DeckAction::Sync { .. }
                         | DeckAction::Scratch { .. }
-                        | DeckAction::ScratchTo { .. },
+                        | DeckAction::ScratchTo { .. }
+                        | DeckAction::JogScratch { .. },
                 } = &action
                 {
                     takeovers.insert(*deck);

@@ -176,6 +176,7 @@ pub(crate) enum Command {
     ScratchTo {
         deck: usize,
         frame: f64,
+        velocity: Option<(f64, f64)>,
     },
     Trim {
         deck: usize,
@@ -317,6 +318,7 @@ struct Deck {
     cross_gain: f32,
     scratch: Option<f64>,
     scratch_position: Option<f64>,
+    scratch_velocity: Option<(f64, f64)>,
     scratch_follow_frames: f64,
     scratch_gain: f64,
     /// Current speed on the varispeed path; follows the target smoothly.
@@ -378,6 +380,7 @@ impl Deck {
             cross_gain: 1.,
             scratch: None,
             scratch_position: None,
+            scratch_velocity: None,
             scratch_follow_frames: sample_rate as f64 * 0.015,
             scratch_gain: 0.,
             speed: 0.0,
@@ -647,7 +650,22 @@ impl Deck {
                     } else {
                         // Ease velocity between coarse MIDI targets, without
                         // jumping the read head or overshooting the hand.
-                        let desired = (distance / self.scratch_follow_frames)
+                        let desired =
+                            if let Some((velocity, follow_frames)) = self.scratch_velocity {
+                                if velocity.signum() == distance.signum() {
+                                    // Feed forward measured platter speed; a small
+                                    // phase correction keeps the hand and audio aligned.
+                                    let correction = ((distance - velocity * follow_frames)
+                                        / follow_frames
+                                        * 0.1)
+                                        .clamp(-velocity.abs() * 0.25, velocity.abs() * 0.25);
+                                    velocity + correction
+                                } else {
+                                    distance / self.scratch_follow_frames
+                                }
+                            } else {
+                                distance / self.scratch_follow_frames
+                            }
                             .clamp(-MAX_SCRATCH_SPEED, MAX_SCRATCH_SPEED);
                         self.speed += (desired - self.speed) * self.speed_smoothing;
                         if self.speed.signum() == distance.signum() {
@@ -1388,6 +1406,9 @@ impl Mixer {
             }
             Command::Seek { deck, frame } => {
                 let deck = &mut self.decks[deck];
+                if !deck.playing && deck.scratch.is_none() {
+                    deck.speed = 0.;
+                }
                 deck.loop_region = loop_at(deck.loop_region, frame);
                 if deck.loop_region.is_none() {
                     deck.loop_armed = false;
@@ -1499,9 +1520,15 @@ impl Mixer {
                 self.decks[deck].nudge_frames = 0.;
                 self.decks[deck].scratch = speed;
                 self.decks[deck].scratch_position = None;
+                self.decks[deck].scratch_velocity = None;
             }
-            Command::ScratchTo { deck, frame } => {
+            Command::ScratchTo {
+                deck,
+                frame,
+                velocity,
+            } => {
                 let deck = &mut self.decks[deck];
+                deck.scratch_velocity = velocity;
                 if let Some(track) = &deck.track {
                     if deck.scratch_position.is_none() {
                         deck.scratch_gain = if deck.playing { 1. } else { 0. };

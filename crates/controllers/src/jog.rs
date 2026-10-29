@@ -66,6 +66,7 @@ pub(crate) struct Jog {
     transient: bool,
     target: Option<f64>,
     last_motion: Option<Instant>,
+    motion_interval: f64,
     track: Option<(Option<String>, String)>,
     bending: bool,
     bend_at: Option<Instant>,
@@ -85,6 +86,7 @@ impl Jog {
             transient: false,
             target: None,
             last_motion: None,
+            motion_interval: 0.01,
             track: None,
             bending: false,
             bend_at: None,
@@ -152,6 +154,7 @@ impl Jog {
         self.transient = false;
         self.target = None;
         self.last_motion = None;
+        self.motion_interval = 0.01;
         actions
     }
 
@@ -191,9 +194,14 @@ impl Jog {
         {
             return self.cancel(config.deck);
         }
+        // The last scratch-surface contact owns a still-moving platter. Use
+        // actual wheel packets for free spin; do not invent velocity after idle.
         if self
             .contact_release
             .is_some_and(|last| now.saturating_duration_since(last) >= CONTACT_RELEASE)
+            && self
+                .last_motion
+                .is_none_or(|last| now.saturating_duration_since(last) >= SCRUB_IDLE)
         {
             self.contact_release = None;
             self.touched = false;
@@ -232,6 +240,9 @@ impl Jog {
             if down && !self.mode_down {
                 self.enabled = !self.enabled;
                 if !self.enabled {
+                    if self.contact_release.is_some() {
+                        self.touched = false;
+                    }
                     actions.extend(self.finish(config.deck, true));
                 } else if self.touched
                     && let Some(local) = Self::loaded(config, state)
@@ -288,8 +299,23 @@ impl Jog {
             self.target = Some(seconds);
             self.active = true;
             self.transient = !vinyl || config.touch.is_none();
+            let interval = self
+                .last_motion
+                .map(|last| now.saturating_duration_since(last).as_secs_f64())
+                .filter(|dt| *dt >= 0.001)
+                .unwrap_or(self.motion_interval)
+                .clamp(0.001, 0.08);
+            self.motion_interval = interval;
             self.last_motion = Some(now);
-            actions.push(Self::action(config.deck, DeckAction::ScratchTo { seconds }));
+            let speed = (f64::from(ticks) * config.seconds_per_tick / interval).clamp(-4., 4.);
+            actions.push(Self::action(
+                config.deck,
+                DeckAction::JogScratch {
+                    seconds,
+                    speed,
+                    interval_seconds: interval,
+                },
+            ));
         } else if local.playing {
             self.bending = true;
             self.bend_at = Some(now);
