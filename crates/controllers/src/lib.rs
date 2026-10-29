@@ -112,6 +112,9 @@ impl Event {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "control", rename_all = "snake_case")]
 pub enum Parameter {
+    RangedTempo {
+        deck: u8,
+    },
     Volume {
         deck: u8,
     },
@@ -142,7 +145,7 @@ impl Parameter {
         let deck = |id: u8| state.decks.get(usize::from(id));
         Some(match self {
             Self::Volume { deck: id } => f64::from(deck(id)?.volume),
-            Self::Tempo { deck: id } => deck(id)?.tempo,
+            Self::Tempo { deck: id } | Self::RangedTempo { deck: id } => deck(id)?.tempo,
             Self::Trim { deck: id } => f64::from(deck(id)?.trim_db),
             Self::Eq { deck: id, band } => f64::from(*deck(id)?.eq.get(usize::from(band))?),
             Self::EffectParameter { deck: id, slot } => {
@@ -165,7 +168,9 @@ impl Parameter {
         let v = value as f32;
         let (deck, action) = match self {
             Self::Volume { deck } => (deck, DeckAction::SetVolume { level: v }),
-            Self::Tempo { deck } => (deck, DeckAction::SetTempo { ratio: value }),
+            Self::Tempo { deck } | Self::RangedTempo { deck } => {
+                (deck, DeckAction::SetTempo { ratio: value })
+            }
             Self::Trim { deck } => (deck, DeckAction::SetTrim { db: v }),
             Self::Eq { deck, band } => (deck, DeckAction::SetEq { band, gain: v }),
             Self::EffectParameter { deck, slot } => {
@@ -218,6 +223,9 @@ pub enum Binding {
     EffectBeats {
         deck: u8,
         encoding: Encoding,
+    },
+    CycleTempoRange {
+        deck: u8,
     },
     Browse {
         encoding: Encoding,
@@ -407,6 +415,11 @@ impl Profile {
                     m.id
                 ));
             }
+            if matches!(m.binding, Binding::CycleTempoRange { .. })
+                && !matches!(m.source, Source::Note { .. })
+            {
+                return Err(format!("{}: range cycle requires a note", m.id));
+            }
             if let Binding::EffectBeats { deck, encoding } = m.binding
                 && (usize::from(deck) >= djcraft_protocol::DECKS
                     || encoding == Encoding::Absolute
@@ -488,6 +501,8 @@ impl Profile {
                     || (pickup && encoding != Encoding::Absolute)
                     || (encoding != Encoding::Absolute && !matches!(m.source, Source::Cc { .. }))
                     || matches!(parameter, Parameter::Eq { band, .. } if band >= 3)
+                    || matches!(parameter, Parameter::RangedTempo { .. })
+                        && encoding != Encoding::Absolute
                     || matches!(parameter, Parameter::EffectParameter { slot, .. } if usize::from(slot) >= djcraft_protocol::EFFECT_SLOTS)
                 {
                     return Err(format!("{}: invalid parameter range/encoding", m.id));
@@ -500,6 +515,7 @@ impl Profile {
 
 #[derive(Default)]
 struct Memory {
+    tempo_range: Option<djcraft_protocol::TempoFaderRange>,
     down: bool,
     previous: Option<f64>,
     acquired: bool,
@@ -508,6 +524,7 @@ struct Memory {
 }
 
 pub struct Bridge {
+    tempo_bpms: Vec<Option<f64>>,
     profile: Profile,
     memory: BTreeMap<String, Memory>,
     held: BTreeMap<(String, Source), bool>,
@@ -520,6 +537,7 @@ impl Bridge {
     pub fn new(profile: Profile) -> Result<Self, String> {
         profile.validate()?;
         Ok(Self {
+            tempo_bpms: Vec::new(),
             profile,
             memory: BTreeMap::new(),
             held: BTreeMap::new(),
@@ -531,6 +549,12 @@ impl Bridge {
 
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// Analysed base BPMs supplied by the host; unknown tracks disable snapping.
+    pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
+        self.tempo_bpms.clear();
+        self.tempo_bpms.extend_from_slice(bpms);
     }
 
     /// Drain after process/tick/disconnect/replace, including cleanup releases.
@@ -855,6 +879,14 @@ impl Bridge {
                         }
                     })
                 }
+                Binding::CycleTempoRange { deck } if rising => {
+                    state.decks.get(usize::from(*deck)).map(|s| Action::Deck {
+                        deck: *deck,
+                        action: DeckAction::SetTempoRange {
+                            range: s.tempo_range.next(),
+                        },
+                    })
+                }
                 Binding::Browse { encoding } => {
                     let raw = i32::from(event.value);
                     let steps = match encoding {
@@ -1012,6 +1044,26 @@ impl Bridge {
                     let Some(current) = parameter.value(state).filter(|v| v.is_finite()) else {
                         continue;
                     };
+                    let ranged = if let Parameter::RangedTempo { deck } = parameter {
+                        let range = state.decks[usize::from(*deck)].tempo_range;
+                        if memory.tempo_range != Some(range) {
+                            memory.acquired = false;
+                            memory.previous = None;
+                            memory.last_sent = None;
+                            memory.tempo_range = Some(range);
+                        }
+                        let extent = range.extent();
+                        Some(if min > max {
+                            (1. + extent, 1. - extent)
+                        } else {
+                            (1. - extent, 1. + extent)
+                        })
+                    } else {
+                        None
+                    };
+                    let (min, max) = ranged.as_ref().map_or((min, max), |(a, b)| (a, b));
+                    let neutral = Some(1.);
+                    let center = if ranged.is_some() { &neutral } else { center };
                     let value = if *encoding == Encoding::Absolute {
                         let full = if matches!(event.source, Source::PitchBend { .. }) {
                             16383.
@@ -1057,7 +1109,46 @@ impl Bridge {
                                 continue;
                             }
                         }
-                        value
+                        // Assign the nearest physical fader position to the exact
+                        // opposite-deck tempo, without changing pickup detection.
+                        if let Parameter::RangedTempo { deck } = parameter {
+                            let deck = usize::from(*deck);
+                            let opposite = deck ^ 1;
+                            let target = self
+                                .tempo_bpms
+                                .get(deck)
+                                .copied()
+                                .flatten()
+                                .zip(self.tempo_bpms.get(opposite).copied().flatten())
+                                .zip(state.decks.get(opposite))
+                                .and_then(|((own, other), reference)| {
+                                    (own.is_finite() && own > 0. && other.is_finite() && other > 0.)
+                                        .then_some(other * reference.tempo / own)
+                                });
+                            if let Some(target) = target.filter(|target| {
+                                target.is_finite()
+                                    && *target >= min.min(*max)
+                                    && *target <= min.max(*max)
+                            }) {
+                                // Round in hardware coordinates so exactly one
+                                // position wins, including near the neutral point.
+                                let center = center.unwrap_or((min + max) / 2.);
+                                let target_raw = if (target - min) * (target - center) <= 0. {
+                                    (target - min) / (center - min) * half
+                                } else {
+                                    half + (target - center) / (max - center) * (full - half)
+                                };
+                                if raw == target_raw.round() {
+                                    target
+                                } else {
+                                    value
+                                }
+                            } else {
+                                value
+                            }
+                        } else {
+                            value
+                        }
                     } else {
                         let raw = i32::from(event.value);
                         let delta = match encoding {

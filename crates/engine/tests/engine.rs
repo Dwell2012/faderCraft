@@ -3519,3 +3519,29 @@ fn waveform_scrubbing_can_enter_and_leave_negative_timeline() {
     mixer.render(&mut block);
     assert_eq!(engine.state().decks[0].position_seconds, -2.);
 }
+#[test]
+fn tempo_fader_range_is_per_deck_role_gated_and_preserves_playing_tempo() {
+    use djcraft_protocol::TempoFaderRange;
+    let (mut engine, mut mixer) = engine_with(sine(440., 2., RATE));
+    engine
+        .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.2 }))
+        .unwrap();
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    let mut block = vec![0.; CALLBACK * 2];
+    mixer.render(&mut block);
+    let action = deck(DeckAction::SetTempoRange {
+        range: TempoFaderRange::Wide,
+    });
+    assert_eq!(
+        engine.apply(Role::Viewer, action.clone()),
+        Err(Rejection::NotPermitted)
+    );
+    assert_eq!(engine.state().decks[0].tempo_range, TempoFaderRange::Low);
+    engine.apply(Role::CoDj, action).unwrap();
+    mixer.render(&mut block);
+    let state = engine.state();
+    assert_eq!(state.decks[0].tempo_range, TempoFaderRange::Wide);
+    assert_eq!(state.decks[0].tempo, 1.2);
+    assert!(state.decks[0].playing);
+    assert_eq!(state.decks[1].tempo_range, TempoFaderRange::Low);
+}

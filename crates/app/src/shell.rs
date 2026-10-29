@@ -859,8 +859,10 @@ impl Shell {
             .as_mut()
             .and_then(|engine| engine.state().decks.get(deck).cloned())
         {
-            let ratio = (state.tempo + crate::wheel::steps(event) as f64 * 0.001)
-                .clamp(MIN_TEMPO, MAX_TEMPO);
+            let ratio = (state.tempo + crate::wheel::steps(event) as f64 * 0.001).clamp(
+                1. - state.tempo_range.extent(),
+                1. + state.tempo_range.extent(),
+            );
             self.send(deck, DeckAction::SetTempo { ratio });
             cx.notify();
         }
@@ -960,6 +962,7 @@ impl Shell {
 
     /// Sends a deck action to the engine as the session host.
     fn send(&mut self, deck: usize, action: DeckAction) {
+        let cue_anchor = self.transport_anchor_for(deck, &action);
         if matches!(action, DeckAction::Load { .. } | DeckAction::Pause) {
             self.sync_playback[deck] = SyncPlayback::default();
         }
@@ -983,9 +986,6 @@ impl Shell {
                     let _ = engine.apply(Role::Host, release);
                 }
             }
-        }
-        if !matches!(action, DeckAction::CuePreview { .. }) {
-            self.cue_anchor[deck] = None;
         }
         if matches!(action, DeckAction::Load { .. }) {
             self.release_pad(deck);
@@ -1045,11 +1045,12 @@ impl Shell {
         );
         match engine.apply(Role::Host, action) {
             Ok(()) if loading => {
+                self.cue_anchor[deck] = cue_anchor;
                 self.active_deck = deck;
                 self.focus_loaded_deck = true;
             }
             Err(reason) => eprintln!("action rejected: {reason:?}"),
-            _ => {}
+            Ok(()) => self.cue_anchor[deck] = cue_anchor,
         }
     }
 
@@ -1058,6 +1059,13 @@ impl Shell {
             return;
         };
         let batches = controllers.drain();
+        controllers.set_tempo_bpms(
+            &self
+                .grids
+                .iter()
+                .map(|grid| grid.map(|g| g.bpm))
+                .collect::<Vec<_>>(),
+        );
         for action in controllers.take_releases() {
             self.controller_action(action, cx);
         }

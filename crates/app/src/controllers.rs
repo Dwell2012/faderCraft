@@ -20,6 +20,9 @@ pub struct Controllers {
 }
 
 impl Controllers {
+    pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
+        self.bridge.set_tempo_bpms(bpms);
+    }
     pub fn load() -> Result<Option<Self>, String> {
         let Some(path) = std::env::var_os("DJCRAFT_CONTROLLER_MAP") else {
             return Ok(None);

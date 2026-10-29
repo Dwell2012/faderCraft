@@ -58,6 +58,7 @@ impl fmt::Display for EngineError {
 impl std::error::Error for EngineError {}
 
 struct DeckControl {
+    tempo_range: djcraft_protocol::TempoFaderRange,
     auto_trim: bool,
     loudness_applied: bool,
     processed_peak: Option<(f64, f32)>,
@@ -251,6 +252,7 @@ impl Engine {
                 error: None,
                 tempo: 1.0,
                 key_lock: false,
+                tempo_range: Default::default(),
                 key_shift: 0.,
                 volume: 1.0,
                 trim_db: 0.,
@@ -432,6 +434,7 @@ impl Engine {
                     && !matches!(
                         action,
                         DeckAction::SetBeatGrid { .. }
+                            | DeckAction::SetTempoRange { .. }
                             | DeckAction::EndNudge
                             | DeckAction::SetHotCues { .. }
                             | DeckAction::SetCueAppearance { .. }
@@ -942,6 +945,10 @@ impl Engine {
                 self.decks[deck].processed_peak = None;
                 Ok(())
             }
+            DeckAction::SetTempoRange { range } => {
+                self.decks[deck].tempo_range = range;
+                Ok(())
+            }
             DeckAction::SetKeyLock { on } => {
                 self.send(Command::KeyLock { deck, on })?;
                 if self.decks[deck].key_lock != on {
@@ -1207,6 +1214,7 @@ impl Engine {
                     position_seconds: shared.position() / sample_rate,
                     tempo: control.tempo,
                     key_lock: control.key_lock,
+                    tempo_range: control.tempo_range,
                     key_shift: control.key_shift,
                     volume: control.volume,
                     trim_db: control.trim_db,

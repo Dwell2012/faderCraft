@@ -51,11 +51,11 @@
       "binding": {
         "type": "parameter",
         "parameter": {
-          "control": "tempo",
+          "control": "ranged_tempo",
           "deck": 0
         },
-        "min": 2,
-        "max": 0.5,
+        "min": 1.08,
+        "max": 0.92,
         "center": 1,
         "encoding": "absolute",
         "step": 0.01,
@@ -252,11 +252,11 @@
       "binding": {
         "type": "parameter",
         "parameter": {
-          "control": "tempo",
+          "control": "ranged_tempo",
           "deck": 1
         },
-        "min": 2,
-        "max": 0.5,
+        "min": 1.08,
+        "max": 0.92,
         "center": 1,
         "encoding": "absolute",
         "step": 0.01,
@@ -3196,6 +3196,52 @@
       "binding": {
         "type": "browser_led",
         "folders": true
+      }
+    },
+    {
+      "id": "pitch-range-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 68
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 97
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "cycle_tempo_range",
+        "deck": 0
+      }
+    },
+    {
+      "id": "pitch-range-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 70
+      },
+      "modifiers": [
+        {
+          "source": {
+            "kind": "note",
+            "channel": 0,
+            "number": 98
+          },
+          "pressed": true
+        }
+      ],
+      "binding": {
+        "type": "cycle_tempo_range",
+        "deck": 1
       }
     },
     {

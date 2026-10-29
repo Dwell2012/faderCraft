@@ -234,6 +234,10 @@ pub struct HotCue {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum DeckAction {
+    /// Fader scaling only: changing range preserves the current playback ratio.
+    SetTempoRange {
+        range: TempoFaderRange,
+    },
     /// Background analysis result for the current key-locked tempo.
     SetProcessedPeak {
         ratio: f64,
@@ -679,8 +683,41 @@ impl MonitorState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TempoFaderRange {
+    #[default]
+    Low,
+    Medium,
+    High,
+    Wide,
+}
+impl TempoFaderRange {
+    pub fn percent(self) -> u8 {
+        match self {
+            Self::Low => 8,
+            Self::Medium => 16,
+            Self::High => 32,
+            Self::Wide => 48,
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Wide,
+            Self::Wide => Self::Low,
+        }
+    }
+    pub fn extent(self) -> f64 {
+        f64::from(self.percent()) / 100.
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeckState {
+    #[serde(default)]
+    pub tempo_range: TempoFaderRange,
     /// Negative dB applied by the key-lock peak protector; zero when inactive.
     #[serde(default)]
     pub key_lock_protection_db: f32,
@@ -857,5 +894,23 @@ mod tempo_range_tests {
             serde_json::from_str::<Action>(&serde_json::to_string(&action).unwrap()).unwrap(),
             action
         );
+    }
+    #[test]
+    fn legacy_deck_state_defaults_to_low_and_range_wire_values_are_bounded() {
+        let mut old = serde_json::to_value(DeckState::default()).unwrap();
+        old.as_object_mut().unwrap().remove("tempo_range");
+        assert_eq!(
+            serde_json::from_value::<DeckState>(old)
+                .unwrap()
+                .tempo_range,
+            TempoFaderRange::Low
+        );
+        assert!(serde_json::from_str::<TempoFaderRange>("\"100\"").is_err());
+        let mut range = TempoFaderRange::default();
+        for percent in [8, 16, 32, 48] {
+            assert_eq!(range.percent(), percent);
+            range = range.next();
+        }
+        assert_eq!(range, TempoFaderRange::Low);
     }
 }

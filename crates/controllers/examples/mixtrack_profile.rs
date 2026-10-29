@@ -229,9 +229,9 @@ fn main() -> Result<(), String> {
             (
                 "pitch",
                 [0x0d, 0x0e],
-                Parameter::Tempo { deck },
-                2.0,
-                0.5,
+                Parameter::RangedTempo { deck },
+                1.08,
+                0.92,
                 Some(1.),
             ),
             (
@@ -472,6 +472,24 @@ fn main() -> Result<(), String> {
             source: Source::Note { channel: 0, number },
             modifiers: vec![],
             binding: Binding::BrowserLed { folders },
+        });
+    }
+    for deck in 0..2u8 {
+        profile.mappings.push(Mapping {
+            id: format!("pitch-range-{deck}"),
+            port: port.clone(),
+            source: Source::Note {
+                channel: 0,
+                number: [0x44, 0x46][usize::from(deck)],
+            },
+            modifiers: vec![Modifier {
+                source: Source::Note {
+                    channel: 0,
+                    number: 0x61 + deck,
+                },
+                pressed: true,
+            }],
+            binding: Binding::CycleTempoRange { deck },
         });
     }
     for deck in 0..2u8 {

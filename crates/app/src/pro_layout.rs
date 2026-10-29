@@ -29,6 +29,31 @@ pub(super) fn current_key_label(
 }
 
 impl Shell {
+    pub(super) fn transport_anchor_for(
+        &mut self,
+        deck: usize,
+        action: &DeckAction,
+    ) -> Option<(f64, Option<String>)> {
+        if !matches!(
+            action,
+            DeckAction::Play
+                | DeckAction::Load { .. }
+                | DeckAction::Seek { .. }
+                | DeckAction::TriggerHotCue { .. }
+                | DeckAction::StartPadLoop { .. }
+        ) {
+            return self.cue_anchor[deck].clone();
+        }
+        let state = self.engine.as_mut()?.state().decks[deck].clone();
+        playback_anchor(
+            &state,
+            action,
+            self.pending_seeks[deck]
+                .filter(|(_, at)| at.elapsed().as_millis() < 200)
+                .map(|(s, _)| s),
+            self.cue_anchor[deck].clone(),
+        )
+    }
     /// Both decks share the same width and centre playhead for beat comparison.
     pub(super) fn rhythm_panel(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
         div()
@@ -496,18 +521,23 @@ impl Shell {
             .filter(|(_, path)| *path == state.path)
             .map_or_else(
                 || {
+                    if state.playing {
+                        return 0.;
+                    }
                     self.pending_seeks[deck]
                         .map_or(state.position_seconds, |(position, _)| position)
                 },
                 |(position, _)| *position,
             );
         self.cue_anchor[deck] = Some((seconds, state.path.clone()));
-        self.cue_preview = Some((deck, seconds, state.path));
+        if !state.playing {
+            self.cue_preview = Some((deck, seconds, state.path));
+        }
         self.send(
             deck,
             DeckAction::CuePreview {
                 seconds,
-                play: true,
+                play: !state.playing,
             },
         );
         cx.notify();
@@ -557,10 +587,15 @@ impl Shell {
         let fraction = ((y - bounds.origin.y.as_f32() - 5.)
             / (bounds.size.height.as_f32() - 10.).max(1.))
         .clamp(0., 1.);
+        let range = self
+            .engine
+            .as_mut()
+            .map(|e| e.state().decks[deck].tempo_range)
+            .unwrap_or_default();
         self.send(
             deck,
             DeckAction::SetTempo {
-                ratio: pitch_ratio(fraction as f64),
+                ratio: pitch_ratio(fraction as f64, range),
             },
         );
         cx.notify();
@@ -570,6 +605,7 @@ impl Shell {
         let colour = deck_colour(deck);
         let tempo = state.tempo;
         let key_lock = state.key_lock;
+        let range = state.tempo_range;
         div()
             .flex()
             .flex_col()
@@ -577,6 +613,22 @@ impl Shell {
             .w(px(80.))
             .h_full()
             .gap_1()
+            .child(
+                Button::new(("pitch-range", deck))
+                    .outline()
+                    .xsmall()
+                    .label(format!("±{}%", range.percent()))
+                    .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.send(
+                            deck,
+                            DeckAction::SetTempoRange {
+                                range: range.next(),
+                            },
+                        );
+                        cx.notify();
+                    })),
+            )
             .child(
                 Button::new(("key-lock", deck))
                     .outline()
@@ -626,11 +678,7 @@ impl Shell {
                                         rgb(0x626b76),
                                     ));
                                 }
-                                let f = if tempo <= 1. {
-                                    (tempo - MIN_TEMPO) / (1. - MIN_TEMPO) * 0.5
-                                } else {
-                                    0.5 + (tempo - 1.) / (MAX_TEMPO - 1.) * 0.5
-                                };
+                                let f = ((tempo - 1.) / range.extent() * 0.5 + 0.5).clamp(0., 1.);
                                 window.paint_quad(fill(
                                     Bounds::new(
                                         point(x - px(13.), y + px(h * f as f32 - 3.)),
@@ -656,16 +704,98 @@ impl Shell {
             )
     }
 }
-fn pitch_ratio(fraction: f64) -> f64 {
-    if fraction <= 0.5 {
-        MIN_TEMPO + fraction * 2. * (1. - MIN_TEMPO)
-    } else {
-        1. + (fraction - 0.5) * 2. * (MAX_TEMPO - 1.)
+fn playback_anchor(
+    state: &DeckState,
+    action: &DeckAction,
+    pending: Option<f64>,
+    old: Option<(f64, Option<String>)>,
+) -> Option<(f64, Option<String>)> {
+    if matches!(action, DeckAction::Load { .. }) {
+        return None;
     }
+    if state.track.is_none() {
+        return old;
+    }
+    match action {
+        DeckAction::Play if !state.playing => Some((
+            pending.unwrap_or(state.position_seconds),
+            state.path.clone(),
+        )),
+        DeckAction::Seek { .. } if !state.playing => None,
+        DeckAction::TriggerHotCue {
+            slot, play: true, ..
+        } if !state.playing => state
+            .hot_cues
+            .get(usize::from(*slot))?
+            .map(|cue| (cue.seconds, state.path.clone()))
+            .or(old),
+        DeckAction::StartPadLoop { start, .. } if !state.playing => {
+            Some((*start, state.path.clone()))
+        }
+        _ => old,
+    }
+}
+
+fn pitch_ratio(fraction: f64, range: djcraft_protocol::TempoFaderRange) -> f64 {
+    1. + (fraction.clamp(0., 1.) * 2. - 1.) * range.extent()
 }
 
 #[cfg(test)]
 mod pitch_tests {
+    #[test]
+    fn transport_cue_keeps_the_play_start_through_controls_and_seeks_while_playing() {
+        use super::*;
+        let mut state = DeckState {
+            path: Some("track".into()),
+            position_seconds: 12.,
+            track: Some(djcraft_protocol::TrackInfo {
+                title: "track".into(),
+                duration_seconds: 100.,
+                loaded_seconds: 100.,
+                fully_loaded: true,
+            }),
+            ..Default::default()
+        };
+        let anchor = playback_anchor(&state, &DeckAction::Play, Some(10.), None);
+        assert_eq!(anchor, Some((10., state.path.clone())));
+        state.playing = true;
+        state.position_seconds = 45.;
+        for action in [
+            DeckAction::SetTempo { ratio: 1.1 },
+            DeckAction::Pause,
+            DeckAction::Seek { seconds: 70. },
+            DeckAction::Play,
+        ] {
+            assert_eq!(
+                playback_anchor(&state, &action, None, anchor.clone()),
+                anchor
+            );
+        }
+        state.playing = false;
+        state.position_seconds = 22.;
+        assert_eq!(
+            playback_anchor(
+                &state,
+                &DeckAction::Seek { seconds: 30. },
+                None,
+                anchor.clone()
+            ),
+            None
+        );
+        assert_eq!(
+            playback_anchor(&state, &DeckAction::Play, None, anchor.clone()),
+            Some((22., state.path.clone()))
+        );
+        assert_eq!(
+            playback_anchor(
+                &state,
+                &DeckAction::Load { path: "new".into() },
+                None,
+                anchor
+            ),
+            None
+        );
+    }
     #[test]
     fn current_key_follows_shift_and_unlocked_tempo() {
         use djcraft_library::Camelot;
@@ -693,10 +823,13 @@ mod pitch_tests {
     }
     #[test]
     fn pitch_fader_has_unity_at_centre_and_preserves_full_tempo_range() {
-        assert_eq!(super::pitch_ratio(0.), super::MIN_TEMPO);
-        assert_eq!(super::pitch_ratio(0.5), 1.);
-        assert_eq!(super::pitch_ratio(1.), super::MAX_TEMPO);
-        assert!(super::pitch_ratio(0.49) < 1.);
-        assert!(super::pitch_ratio(0.51) > 1.);
+        use djcraft_protocol::TempoFaderRange::*;
+        for range in [Low, Medium, High, Wide] {
+            assert_eq!(super::pitch_ratio(0., range), 1. - range.extent());
+            assert_eq!(super::pitch_ratio(0.5, range), 1.);
+            assert_eq!(super::pitch_ratio(1., range), 1. + range.extent());
+            assert!(super::pitch_ratio(0.49, range) < 1.);
+            assert!(super::pitch_ratio(0.51, range) > 1.);
+        }
     }
 }

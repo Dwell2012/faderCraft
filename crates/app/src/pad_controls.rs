@@ -241,6 +241,7 @@ impl Shell {
         self.engine.as_mut().map(|e| e.state().decks[deck].clone())
     }
     fn pad_send(&mut self, deck: usize, action: DeckAction) -> bool {
+        let cue_anchor = self.transport_anchor_for(deck, &action);
         let metadata = matches!(
             action,
             DeckAction::SetCueAppearance { .. } | DeckAction::SetHotCues { .. }
@@ -259,8 +260,10 @@ impl Shell {
             self.pads[deck].notice = "Action unavailable: check loaded audio and beat grid.".into();
         }
         if !metadata {
-            self.cue_anchor[deck] = None;
             self.display_positions[deck] = DisplayPosition::default();
+        }
+        if okay {
+            self.cue_anchor[deck] = cue_anchor;
         }
         okay
     }

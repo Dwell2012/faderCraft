@@ -7,7 +7,7 @@ fn bundled_numark_profile_loads_with_pickup_and_dispatches_play() {
         "../../../profiles/numark-mixtrack-pro-ii.json"
     ))
     .unwrap();
-    assert_eq!(profile.mappings.len(), 142);
+    assert_eq!(profile.mappings.len(), 144);
     for mapping in &profile.mappings {
         if let Binding::Parameter {
             encoding, pickup, ..
@@ -443,11 +443,7 @@ fn bundled_pitch_fader_matches_app_extremes_and_exact_neutral_with_pickup() {
     ))
     .unwrap();
     for (deck, cc) in [(0, 0x0d), (1, 0x0e)] {
-        for (raw, ratio) in [
-            (0, djcraft_engine::MAX_TEMPO),
-            (64, 1.),
-            (127, djcraft_engine::MIN_TEMPO),
-        ] {
+        for (raw, ratio) in [(0, 1.08), (64, 1.), (127, 0.92)] {
             let mut bridge = Bridge::new(profile.clone()).unwrap();
             let mut s = state();
             s.decks = vec![s.decks[0].clone(); 2];
