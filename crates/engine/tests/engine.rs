@@ -3641,3 +3641,35 @@ fn jog_audio_follows_a_platter_slowing_through_multiple_speeds() {
         );
     }
 }
+
+#[test]
+fn filter_resonance_is_validated_and_isolated_per_slot_and_deck() {
+    use djcraft_protocol::EffectState;
+    let (mut engine, _mixer) = Engine::headless(RATE);
+    for resonance in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+        assert_eq!(
+            engine.apply(
+                Role::Host,
+                deck(DeckAction::SetEffect {
+                    slot: 0,
+                    effect: EffectState {
+                        resonance,
+                        ..EffectState::default()
+                    }
+                })
+            ),
+            Err(Rejection::InvalidValue)
+        );
+    }
+    let effect = EffectState {
+        resonance: 0.8,
+        ..EffectState::default()
+    };
+    engine
+        .apply(Role::Host, deck(DeckAction::SetEffect { slot: 0, effect }))
+        .unwrap();
+    let state = engine.state();
+    assert_eq!(state.decks[0].effects[0].resonance, 0.8);
+    assert_eq!(state.decks[0].effects[1].resonance, 0.);
+    assert_eq!(state.decks[1].effects[0].resonance, 0.);
+}

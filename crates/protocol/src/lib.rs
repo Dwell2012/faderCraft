@@ -178,6 +178,9 @@ pub struct EffectState {
     pub amount: f32,
     pub parameter: f32,
     pub feedback: f32,
+    /// Filter resonance, 0..=1: Butterworth Q through a resonant Q of 4.
+    /// Defaults to zero for older effect snapshots.
+    pub resonance: f32,
     pub sync: bool,
     /// Snapshot mirror of the deck's shared timing. SetEffectBeats changes it;
     /// SetEffect preserves the deck timing when replacing a slot.
@@ -192,6 +195,7 @@ impl Default for EffectState {
             amount: 0.5,
             parameter: 0.5,
             feedback: 0.45,
+            resonance: 0.,
             sync: true,
             beats: 0.5,
             tails: true,
@@ -919,5 +923,53 @@ mod tempo_range_tests {
             range = range.next();
         }
         assert_eq!(range, TempoFaderRange::Low);
+    }
+}
+
+#[cfg(test)]
+mod resonance_compatibility_tests {
+    use super::*;
+    #[test]
+    fn shaped_sweeps_have_expected_endpoints_and_monotonic_travel() {
+        let cutoff = EffectState::filter_cutoff;
+        for (position, hz) in [(0., 20.), (0.49, 20_000.), (0.51, 20.), (1., 20_000.)] {
+            assert!((cutoff(position) - hz).abs() < 0.01);
+        }
+        assert!((cutoff(0.245) - 990.).abs() < 10.);
+        assert!((cutoff(0.755) - 274.).abs() < 2.);
+        for i in 0..1000 {
+            let x = i as f32 / 1000.;
+            let next = (i + 1) as f32 / 1000.;
+            assert!(cutoff(x * 0.49) <= cutoff(next * 0.49));
+            assert!(cutoff(0.51 + x * 0.49) <= cutoff(0.51 + next * 0.49));
+        }
+    }
+
+    #[test]
+    fn old_effect_snapshots_default_to_neutral_resonance_and_new_values_round_trip() {
+        let old: EffectState =
+            serde_json::from_str(r#"{"parameter":0.25,"feedback":0.6}"#).unwrap();
+        assert_eq!(old.resonance, 0.);
+        assert_eq!(old.feedback, 0.6);
+        let state = EffectState {
+            resonance: 0.75,
+            ..old
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        assert_eq!(serde_json::from_str::<EffectState>(&json).unwrap(), state);
+    }
+}
+
+impl EffectState {
+    /// Nominal cutoff shared by DSP and UI. Separate power curves ease into
+    /// each logarithmic sweep from the neutral centre; DSP caps at 0.45 * rate.
+    pub fn filter_cutoff(parameter: f32) -> f32 {
+        if parameter < 0.5 {
+            let travel = ((0.49 - parameter) / 0.49).clamp(0., 1.);
+            20_000. * 0.001f32.powf(travel.powf(1.2))
+        } else {
+            let travel = ((parameter - 0.51) / 0.49).clamp(0., 1.);
+            20. * 1000f32.powf(travel.powf(1.4))
+        }
     }
 }

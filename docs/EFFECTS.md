@@ -72,3 +72,18 @@ Loop Record continues to export original source audio without effects.
 The Filter's first knob is its sweep: 0–49% moves low-pass cutoff from 20 Hz to 20 kHz; 50% is neutral; 51–100% moves high-pass cutoff from 20 Hz to 20 kHz. Turning the sweep applies full filtering; the expanded Mix control can blend dry audio back in. Cutoff is limited below Nyquist at low sample rates.
 
 Echo, Delay, Ping Pong, Low Cut Echo, Spiral and Reverb add their return to the unchanged dry track. Their amount controls the return level rather than fading the dry track away. Echo Out, Brake and rhythmic gating retain their intentional fades/cuts.
+
+
+Filter also has a per-slot Resonance dial (inline in expanded views and in slot
+details). It ranges from 0% (Butterworth Q = 0.707) to 100% (Q = 4);
+double-click resets resonance to zero. Higher resonance emphasizes frequencies
+around the cutoff and increases peak level, so allow some gain headroom. Older
+snapshots default to zero resonance. Changes use the existing 10 ms smoothing.
+
+The two sweeps now have separate curves: normalized travel away from centre is
+raised to 1.2 for LP and 1.4 for HP before logarithmic frequency mapping. LP moves
+from 20 kHz down to 20 Hz; HP moves from 20 Hz up to 20 kHz. Halfway along each
+active sweep gives roughly 990 Hz LP and 274 Hz HP. This gives a gentle departure
+from centre and more HP travel for bass removal. The centre transition retains
+its dry blend, and the displayed nominal cutoff uses the same curve as the DSP.
+These are original tuning choices, not a reproduction of Beatport's code.

@@ -98,6 +98,7 @@ pub(crate) struct Effect {
     amount: f32,
     parameter: f32,
     feedback: f32,
+    resonance: f32,
     period: f32,
     target_period: f32,
     source_running: bool,
@@ -136,6 +137,7 @@ impl Effect {
             amount: 0.5,
             parameter: 0.5,
             feedback: 0.45,
+            resonance: 0.,
             period: 0.525,
             target_period: 0.525,
             source_running: true,
@@ -233,6 +235,7 @@ impl Effect {
         self.amount += (self.state.amount - self.amount) * self.smoothing;
         self.parameter += (self.state.parameter - self.parameter) * self.smoothing;
         self.feedback += (self.state.feedback - self.feedback) * self.smoothing;
+        self.resonance += (self.state.resonance - self.resonance) * self.smoothing;
         self.period += (self.target_period - self.period) * self.smoothing;
         if !self.state.enabled && self.wet < 0.00001 && self.tail_left == 0 {
             if !self.idle {
@@ -260,16 +263,16 @@ impl Effect {
         let mut effected = input;
         match kind {
             Kind::Filter => {
-                let cutoff = if p < 0.5 {
-                    20. * 1000f32.powf((p / 0.49).min(1.))
-                } else {
-                    20. * 1000f32.powf(((p - 0.51) / 0.49).max(0.))
-                };
-                // Topology-preserving two-pole Butterworth filter. Centre is bypass.
+                let cutoff = EffectState::filter_cutoff(p);
+                // Topology-preserving two-pole filter. Zero resonance retains
+                // Butterworth damping; the bounded Q peaks at 4. Centre is bypass.
                 let g = (PI * cutoff.min(self.rate * 0.45) / self.rate).tan();
-                let k = std::f32::consts::SQRT_2;
+                let q = std::f32::consts::FRAC_1_SQRT_2
+                    + self.resonance * (4. - std::f32::consts::FRAC_1_SQRT_2);
+                let k = 1. / q;
                 let a = 1. / (1. + g * (g + k));
-                let blend = ((p - 0.5).abs() / 0.01).min(1.);
+                // Tiny neutral plateau also absorbs f32 smoothing residue.
+                let blend = (((p - 0.5).abs() - 0.0001) / 0.0099).clamp(0., 1.);
                 for c in 0..2 {
                     let v1 = (self.previous[c] + g * (input[c] - self.low[c])) * a;
                     let v2 = self.low[c] + g * v1;
@@ -489,6 +492,69 @@ impl Effect {
 mod tests {
     use super::*;
     const RATE: u32 = 8000;
+    #[test]
+    fn resonance_emphasizes_cutoff_on_both_sides_and_keeps_stereo_separate() {
+        for rate in [8000, 44100, 48000, 96000] {
+            for parameter in [
+                0.49 * (1. - (1000f32 / 20_000.).log(0.001).powf(1. / 1.2)),
+                0.51 + 0.49 * 50f32.log(1000.).powf(1. / 1.4),
+            ] {
+                let response = |resonance| {
+                    let mut fx = Effect::new(rate);
+                    fx.set(EffectState {
+                        enabled: true,
+                        amount: 1.,
+                        parameter,
+                        resonance,
+                        ..EffectState::default()
+                    });
+                    let mut power = 0.;
+                    for frame in 0..rate {
+                        let input = 0.1 * (TAU * 1000. * frame as f32 / rate as f32).sin();
+                        let out = fx.process([input, 0.]);
+                        assert_eq!(out[1], 0.);
+                        assert!(out[0].is_finite() && out[0].abs() < 0.5);
+                        if frame >= rate / 2 {
+                            power += out[0] * out[0];
+                        }
+                    }
+                    power
+                };
+                assert!(
+                    response(1.) > response(0.) * 20.,
+                    "rate={rate}, p={parameter}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resonance_sweeps_stay_bounded_and_center_remains_neutral() {
+        for rate in [8000, 44100, 48000, 96000] {
+            let mut fx = Effect::new(rate);
+            for frame in 0..rate {
+                let parameter = if frame < rate / 2 {
+                    frame as f32 / (rate / 2) as f32
+                } else {
+                    0.5
+                };
+                fx.set(EffectState {
+                    enabled: true,
+                    amount: 1.,
+                    parameter,
+                    resonance: if (frame / 128) % 2 == 0 { 1. } else { 0. },
+                    ..EffectState::default()
+                });
+                let input = [0.1 * (TAU * 440. * frame as f32 / rate as f32).sin(), -0.05];
+                let out = fx.process(input);
+                assert!(out.iter().all(|v| v.is_finite() && v.abs() < 2.));
+                if frame > rate * 3 / 4 {
+                    assert!((out[0] - input[0]).abs() < 0.0001);
+                    assert!((out[1] - input[1]).abs() < 0.0001);
+                }
+            }
+        }
+    }
     fn configured(kind: Kind, parameter: f32) -> Effect {
         let mut fx = Effect::new(RATE);
         fx.set(EffectState {

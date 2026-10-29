@@ -13,6 +13,7 @@ fn value(fx: EffectState, parameter: u8) -> f32 {
     match parameter {
         0 => fx.amount,
         1 => fx.parameter,
+        _ if fx.kind == Kind::Filter => fx.resonance,
         _ => fx.feedback / 0.9,
     }
 }
@@ -31,6 +32,7 @@ fn set_value(fx: &mut EffectState, parameter: u8, value: f32) {
                 fx.amount = 1.;
             }
         }
+        _ if fx.kind == Kind::Filter => fx.resonance = value,
         _ => fx.feedback = value * 0.9,
     }
 }
@@ -44,6 +46,9 @@ fn parameter_label(fx: EffectState, parameter: u8) -> String {
         return format!("Mix {:.0}%", fx.amount * 100.);
     }
     if parameter == 2 {
+        if fx.kind == Kind::Filter {
+            return format!("Resonance {:.0}%", fx.resonance * 100.);
+        }
         return format!("Feedback {:.0}%", fx.feedback * 100.);
     }
     if fx.sync && fx.kind.timed() {
@@ -55,11 +60,7 @@ fn parameter_label(fx: EffectState, parameter: u8) -> String {
             if (p - 0.5).abs() < 0.0001 {
                 "Filter 50% · Neutral".into()
             } else {
-                let hz = if p < 0.5 {
-                    20. * 1000f32.powf((p / 0.49).min(1.))
-                } else {
-                    20. * 1000f32.powf(((p - 0.51) / 0.49).max(0.))
-                };
+                let hz = EffectState::filter_cutoff(p);
                 format!("{} {:.0} Hz", if p < 0.5 { "LP" } else { "HP" }, hz)
             }
         }
@@ -281,7 +282,12 @@ impl Shell {
                                 if synced {
                                     fx.beats = 0.5;
                                 } else {
-                                    set_value(fx, parameter, 0.5);
+                                    let reset = if fx.kind == Kind::Filter && parameter == 2 {
+                                        0.
+                                    } else {
+                                        0.5
+                                    };
+                                    set_value(fx, parameter, reset);
                                 }
                             },
                             cx,
@@ -390,7 +396,8 @@ impl Shell {
         row = row.child(selector);
         let dials = if dials == 0 {
             0
-        } else if fx.kind.feedback_control() && fx.kind != Kind::Delay {
+        } else if fx.kind == Kind::Filter || (fx.kind.feedback_control() && fx.kind != Kind::Delay)
+        {
             3
         } else {
             2
@@ -603,7 +610,8 @@ impl Shell {
                     row.child(self.effect_dial(deck, slot, 1, fx, cx))
                 })
                 .when(
-                    fx.kind.feedback_control() && fx.kind != Kind::Delay,
+                    fx.kind == Kind::Filter
+                        || (fx.kind.feedback_control() && fx.kind != Kind::Delay),
                     |row| row.child(self.effect_dial(deck, slot, 2, fx, cx)),
                 ),
         );
@@ -655,5 +663,29 @@ impl Shell {
             .child(options)
             .child(div().text_size(px(10.)).child(detail_help(fx.kind)));
         Some(details.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EffectState, parameter_label, set_value, value};
+    #[test]
+    fn resonance_dial_changes_only_resonance_and_clamps() {
+        let mut fx = EffectState::default();
+        let before = fx;
+        set_value(&mut fx, 2, 0.75);
+        assert_eq!(value(fx, 2), 0.75);
+        assert_eq!(parameter_label(fx, 2), "Resonance 75%");
+        assert_eq!(
+            fx,
+            EffectState {
+                resonance: 0.75,
+                ..before
+            }
+        );
+        set_value(&mut fx, 2, 2.);
+        assert_eq!(fx.resonance, 1.);
+        set_value(&mut fx, 2, -1.);
+        assert_eq!(fx, before);
     }
 }

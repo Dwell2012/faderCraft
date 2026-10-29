@@ -806,6 +806,8 @@ impl Engine {
                 if slot as usize >= djcraft_protocol::EFFECT_SLOTS
                     || !effect.feedback.is_finite()
                     || !(0.0..=0.9).contains(&effect.feedback)
+                    || !effect.resonance.is_finite()
+                    || !(0.0..=1.0).contains(&effect.resonance)
                     || !effect.beats.is_finite()
                     || !(0.125..=8.0).contains(&effect.beats)
                     || !effect.amount.is_finite()

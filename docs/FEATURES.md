@@ -749,3 +749,5 @@ lookahead and device/output buffering still apply. No device latency is removed.
 
 - [x] Mixtrack startup requests all physical absolute control values and adopts them while stopped; playback reconnects retain pickup. Hardware readback verified for all 14 absolute CCs.
 - [x] Coalesce batched jog motion to latest per-deck measured velocity/position, preserving transport barriers so redundant scratch updates do not backlog the engine.
+
+- [x] Filter slots expose smoothed resonance (Q 0.707–4), defaulting to zero for older snapshots; separate shaped LP/HP sweeps share cutoff mapping with the UI.
