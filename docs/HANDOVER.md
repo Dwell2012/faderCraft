@@ -503,7 +503,7 @@ rerun the original proposal builder or apply manifest against already edited fil
 
 ## Repository
 
-Personal private repository: https://github.com/Dwell2012/djcraft. Shared branch:
+Personal private repository: https://github.com/Dwell2012/faderCraft. Shared branch:
 `origin/main`. Original project is https://github.com/danielchim/djcraft (`upstream`);
 retain its MIT licence and attribution. Custom implementation checkpoint:
 `bd5ed92888faab1f800943dd1692681ce33ace6f`.
@@ -525,7 +525,7 @@ code, `FEATURES.md` and specialist documents for current capabilities.
 Authenticate Git/GitHub for the private repository and clone outside OneDrive:
 
 ```powershell
-git clone https://github.com/Dwell2012/djcraft.git "$env:USERPROFILE\repos\djcraft"
+git clone https://github.com/Dwell2012/faderCraft.git "$env:USERPROFILE\repos\djcraft"
 Set-Location "$env:USERPROFILE\repos\djcraft"
 git remote add upstream https://github.com/danielchim/djcraft.git
 ```

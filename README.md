@@ -1,119 +1,120 @@
 # faderCraft
 
-This is Dwell2012’s custom development version, based on
-[danielchim/djcraft](https://github.com/danielchim/djcraft). The original MIT licence
-and Git history are retained.
+faderCraft is a custom DJ workstation written in Rust with a GPUI desktop
+interface. It combines music-library management, two- or four-deck performance,
+and local stem preparation, with Windows as the primary development platform.
 
-The custom Windows build includes two-deck mixing, layered waveforms, beat grids,
-hot cues, loops, effects, pads, a polyphonic sampler, local stem preparation,
-playlist automix, loudness matching, and WASAPI exclusive / installed ASIO output.
-See [the feature status](docs/FEATURES.md) for current capabilities and limitations,
-[WASAPI](docs/WASAPI.md), [ASIO build notes and SDK terms](docs/ASIO.md), and
-[stem setup](docs/STEMS.md). Controller integrations remain in development.
+Repository: [Dwell2012/faderCraft](https://github.com/Dwell2012/faderCraft).
+Based on [danielchim/djcraft](https://github.com/danielchim/djcraft), with the
+original Git history and MIT attribution retained.
 
-For development on another machine, start with the [Codex handover](docs/HANDOVER.md).
-Settings > Library can select a portable library folder, including OneDrive.
-Use one computer at a time and let sync finish after closing the app. The
-handover describes snapshot storage, local device settings and music relinking.
-
-The original project overview follows; its baseline feature descriptions predate
-the custom changes above.
-
-An open-source DJ application written in Rust: a music library manager, a live
-mixing engine, in-app radio for listening to other DJs' live mixes, and remote
-back-to-back sessions. The interface is built with [GPUI](https://www.gpui.rs)
-through Longbridge's `gpui-kit`.
-
-djcraft is at an early stage. The library and a basic two-deck player work;
-most of the mixing features do not exist yet. [docs/FEATURES.md](docs/FEATURES.md)
-is the full plan, with the status of every item.
+The app is under active development. See [feature status](docs/FEATURES.md)
+for implemented features, limitations, and the broader roadmap.
 
 ## What works today
 
-- **Library:** add folders, scan them in the background, and browse every
-  track in a searchable, sortable table. Folders are watched, so files you
-  add, change or remove show up while the app is open. Tags are read from MP3, FLAC, WAV,
-  AIFF, M4A, OGG and Opus files.
-- **Playlists:** create playlists that mix tracks from any folder, sort them
-  into folders, and import them from a rekordbox XML export, a VirtualDJ
-  folder, or M3U files. Smart playlists fill themselves from rules such as
-  genre, tempo and key.
-- **Organising:** the library sidebar groups tracks by genre, energy and
-  decade. Tools find duplicate tracks and relink files that moved. A track
-  whose file has gone stays in the library, marked missing, with its
-  playlists and cue points.
-- **Track info:** view a track's details and cover art, edit them, and look
-  them up on MusicBrainz, the iTunes Store or Discogs, or by their sound
-  with AcoustID. The lookup opens a popup that lists the matches, best
-  first, and lets you choose which details to copy.
-- **Tag tools:** write the analysed BPM, key and energy into the tags, find
-  and replace, remove extra spaces, fix capitalisation, and rename files
-  from their tags. Every change to a file, including Save in the info panel,
-  is shown for review first, and any batch can be undone.
-- **Decks:** two decks with tempo control and key lock. Each deck shows a
-  scrolling waveform with the beat grid and bar lines, and a whole-track
-  waveform that you click to jump. Tracks become playable within a second
-  or two while the rest decodes.
-- **Track browser:** the library and playlists sit under the decks; double-click
-  a track to load it. "Suggest next" lists the tracks whose key and tempo
-  mix with the track loaded last.
-- **Analysis:** tracks are analysed in the background for BPM, beats, bars,
-  key, energy and cue points, and their waveforms are made ahead of time.
-  It assumes a steady tempo, four beats to the bar and a single key, as most
-  dance music has. You choose the tempo range, how many decimals tempos
-  show, and whether the tempo and key in a file's tags are kept over the
-  measured ones.
-- **Settings:** theme, start-up tab, start-up scanning, folder watching,
-  analysis, where key and energy are written, the lookup provider, and your
-  own AcoustID key and Discogs token.
+- **Performance:** switch between two and four decks, with layered waveforms,
+  beat grids, tempo control, key lock, scratching, channel EQ, crossfader and
+  headphone cueing. Windows output includes WASAPI exclusive and installed ASIO
+  drivers; see [WASAPI](docs/WASAPI.md) and [ASIO setup](docs/ASIO.md).
+- **Performance tools:** hot cues, loops, effects, key-shift pads and a polyphonic
+  sampler. See [pads](docs/PADS.md), [loops](docs/LOOPS.md) and
+  [effects](docs/EFFECTS.md).
+- **Automix:** playlist playback, loudness matching and intro-aware EQ
+  transitions, with saved preparation overrides. See [Automix](docs/AUTOMIX.md)
+  and [track preparation](docs/PREPARATION.md). Automatic musical analysis remains
+  an estimate and needs checking against the tracks you play.
+- **Stems:** local separation into vocals, instruments, bass and drums, with
+  cached results, stem controls and waveform overlays. Fast and Detailed models
+  and GPU-preferred or CPU preparation are available. The optional Python runtime
+  and model downloads are described in [stem setup](docs/STEMS.md).
+- **Library:** searchable, sortable tracks; background scanning and folder
+  watching; duplicate detection, missing-file relinking, artwork, metadata and
+  played history. Supported audio formats include MP3, FLAC, WAV, AIFF, M4A,
+  OGG and Opus.
+- **Playlists:** folders, nested sublists, smart playlists, and imports from
+  rekordbox XML, VirtualDJ folders and M3U files.
+- **Metadata:** online lookup through MusicBrainz, iTunes, Discogs and AcoustID,
+  plus reviewed tag editing, file renaming and undo. Online lookups contact the
+  selected provider; stem separation processes audio locally.
+- **Controllers:** a MIDI mapping bridge and a bundled Numark Mixtrack Pro II
+  starter profile. See [controller setup and limitations](docs/CONTROLLERS.md).
+  This is not blanket compatibility with every Mixtrack model; Pioneer XDJ-RX3
+  integration remains a development target.
 
-The Radio tab, live broadcasting, remote sessions, effects, the mixer and plugins are planned but not built.
+Radio broadcasting, remote back-to-back sessions and the plugin system remain
+roadmap features. Hardware support and analysis accuracy are still being refined.
 
-## Building
+## Building and running
 
-You need [Rust](https://rustup.rs). The toolchain version is pinned in
-`rust-toolchain.toml` and is installed automatically on first build.
+Clone the repository:
 
-```sh
-cargo run                       # start the app
-cargo run -- one.mp3 two.mp3    # start with tracks on decks 1 and 2
-cargo test --workspace
+```powershell
+git clone https://github.com/Dwell2012/faderCraft.git
+Set-Location faderCraft
 ```
 
-djcraft has only been built and run on macOS so far. On Linux, GPUI and the
-audio layer need the development packages listed in
-[.github/workflows/ci.yml](.github/workflows/ci.yml).
+Install Rust through rustup; `rust-toolchain.toml` pins the toolchain. Windows
+also needs Visual Studio C++ build tools, a Windows SDK and libclang. Read
+[the development handover](docs/HANDOVER.md) and [ASIO setup](docs/ASIO.md) for
+prerequisites and machine-specific configuration.
 
-## Keyboard shortcuts
+Once those prerequisites are installed:
 
-| Shortcut | Action |
-|---|---|
-| Cmd+1, Cmd+2, Cmd+3 | Library, Live, Radio |
-| Cmd+, | Settings |
-| Esc | Close settings |
-| Cmd+Q | Quit |
+```powershell
+. ./tools/dev-shell.ps1
+cargo run --locked
+# Or load tracks onto the first two decks:
+cargo run --locked -- one.mp3 two.mp3
+```
 
-## Where your data lives
+The development shell sets `DJCRAFT_DATA_DIR` to an isolated development library.
+For the Numark starter profile, use `./tools/run-mixtrack.ps1` as described in
+[controller setup](docs/CONTROLLERS.md).
 
-| What | macOS location |
-|---|---|
-| Library database and settings | `~/Library/Application Support/djcraft` |
-| Waveforms | `~/Library/Application Support/djcraft/waveforms` |
+The CI workflow builds on Windows, Linux and macOS. Linux development packages
+are listed in [.github/workflows/ci.yml](.github/workflows/ci.yml); this does not
+imply equal hardware or runtime validation on all three platforms.
 
-Set `DJCRAFT_DATA_DIR` to use a different library, for example while testing.
-Your music files are only changed when you press Save in the track info panel.
+Validation commands:
+
+```powershell
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo deny check licenses sources
+```
+
+## Library storage
+
+By default, machine settings and library data use the operating system's
+application-data folder under `djcraft` (`%APPDATA%\djcraft` on Windows).
+`DJCRAFT_DATA_DIR` overrides the location for development and testing.
+The existing crate names, executable name and data-directory identifiers still
+use `djcraft`.
+
+Settings > Library can select a portable library folder.
+The app uses a local working database and exchanges closed snapshots. Use one
+computer at a time, close the app and allow synchronisation to finish before
+switching machines. See [the handover](docs/HANDOVER.md) for relinking music and
+which device settings remain local.
+
+Scanning, analysis and stem preparation read your music. Tag editing and file
+renaming are separate operations that present changes for review.
 
 ## Project layout
 
 | Crate | Purpose |
 |---|---|
-| `crates/protocol` | The control protocol: every user action and the session state |
-| `crates/engine` | Audio engine: decoding, decks, mixing, time-stretch. No UI code |
-| `crates/analysis` | Signal analysis on decoded audio: tempo, key, energy and cue points |
-| `crates/library` | Library database, scanning, tags, playlists, import, lookups |
-| `crates/app` | The desktop application |
+| `crates/protocol` | Control actions and shared session types |
+| `crates/engine` | Audio decoding, decks, mixing and time-stretching |
+| `crates/analysis` | Tempo, key, energy, structure and cue analysis |
+| `crates/library` | Database, scanning, tags, playlists, imports and lookups |
+| `crates/controllers` | MIDI transport and controller mapping |
+| `crates/app` | Desktop interface and application coordination |
 
-## Licence
+## Licence and attribution
 
-MIT; see [LICENSE](LICENSE). Dependencies are checked against an allow-list
-with `cargo deny check licenses`, and nothing under the GPL is linked in.
+MIT; see [LICENSE](LICENSE). faderCraft builds on the original
+[DJCraft project by danielchim](https://github.com/danielchim/djcraft).
+Dependency licences and sources are checked with `cargo deny check licenses sources`.
+See the ASIO and stem setup documents for the separate SDK and model requirements.
