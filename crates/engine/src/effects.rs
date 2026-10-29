@@ -115,12 +115,17 @@ pub(crate) struct Effect {
     tail_mix: f32,
 }
 impl Effect {
+    pub fn set_beats(&mut self, beats: f32) {
+        self.state.beats = beats;
+    }
     pub fn new(rate: u32) -> Self {
         Self {
             state: EffectState::default(),
             rate: rate as f32,
             smoothing: 1. - (-1. / (rate as f32 * 0.01)).exp(),
-            delay: Delay::new(rate as usize * 7),
+            // Eight beats at the minimum effective tempo (20 BPM),
+            // with room for pitch-shifting grain offsets. Allocated off-thread.
+            delay: Delay::new(rate as usize * 25),
             reverb: Reverb::new(rate),
             low: [0.; 2],
             allpass: [[0.; 2]; 6],
@@ -772,6 +777,34 @@ mod level_regressions {
 #[cfg(test)]
 mod live_sync_tests {
     use super::*;
+    #[test]
+    fn eight_beat_delay_retains_full_length_at_minimum_tempo() {
+        let mut effect = Effect::new(1000);
+        effect.set(EffectState {
+            kind: Kind::Delay,
+            enabled: true,
+            amount: 1.,
+            beats: 8.,
+            ..EffectState::default()
+        });
+        effect.clock(Some(20.), true);
+        for _ in 0..2000 {
+            effect.process([0.; 2]);
+        }
+        effect.process([0.5; 2]);
+        let mut peak = (0usize, 0f32);
+        for frame in 1..25000 {
+            let sample = effect.process([0.; 2])[0].abs();
+            if sample > peak.1 {
+                peak = (frame, sample);
+            }
+        }
+        assert!(
+            (peak.0 as i32 - 24000).abs() <= 2,
+            "delay was truncated: {peak:?}"
+        );
+        assert!(peak.1 > 0.4, "delay lost the impulse: {peak:?}");
+    }
     #[test]
     fn timed_effect_defaults_follow_live_tempo_and_manual_override() {
         for kind in Kind::ALL.into_iter().filter(|kind| kind.timed()) {

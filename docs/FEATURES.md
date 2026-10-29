@@ -732,3 +732,6 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Controller pad/FX/transport LED state feedback and Shift auto-loop/cue-delete layers [134 profile entries; hardware LED retest pending; browser/mode lamps remain controller-owned].
 
 - [x] Mixtrack Pro II Browse/Back/Load A/B, source/playlist selection, visible track highlighting/scrolling, and File/Folder focus LEDs [hardware retest pending].
+
+- [x] One shared FX beat division per deck, with a single panel selector driving every synced slot; default slots are Filter, Echo and Cut.
+- [x] Mixtrack per-deck Beats encoders control shared FX timing across 1/8–8 beats; UI/protocol range extended and delay storage supports 8 beats at 20 effective BPM [hardware knob retest pending].

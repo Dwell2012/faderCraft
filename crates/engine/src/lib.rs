@@ -69,6 +69,7 @@ struct DeckControl {
     hot_cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     cue_appearance: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     effects: [djcraft_protocol::EffectState; djcraft_protocol::EFFECT_SLOTS],
+    effect_beats: f32,
     loop_roll: bool,
     loop_region: Option<[f64; 2]>,
     track: Option<Arc<Track>>,
@@ -259,7 +260,8 @@ impl Engine {
                 loop_roll: false,
                 hot_cues: [None; djcraft_protocol::HOT_CUES],
                 cue_appearance: Default::default(),
-                effects: [djcraft_protocol::EffectState::default(); djcraft_protocol::EFFECT_SLOTS],
+                effects: djcraft_protocol::default_effects(),
+                effect_beats: djcraft_protocol::default_effect_beats(),
                 stem_gains: [1.; 4],
             }),
             master_gain: 1.0,
@@ -786,12 +788,23 @@ impl Engine {
                 }
                 self.send(Command::EffectTempo { deck, bpm })
             }
-            DeckAction::SetEffect { slot, effect } => {
+            DeckAction::SetEffectBeats { beats } => {
+                if !beats.is_finite() || !(0.125..=8.).contains(&beats) {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::EffectBeats { deck, beats })?;
+                self.decks[deck].effect_beats = beats;
+                for effect in &mut self.decks[deck].effects {
+                    effect.beats = beats;
+                }
+                Ok(())
+            }
+            DeckAction::SetEffect { slot, mut effect } => {
                 if slot as usize >= djcraft_protocol::EFFECT_SLOTS
                     || !effect.feedback.is_finite()
                     || !(0.0..=0.9).contains(&effect.feedback)
                     || !effect.beats.is_finite()
-                    || !(0.0625..=2.0).contains(&effect.beats)
+                    || !(0.125..=8.0).contains(&effect.beats)
                     || !effect.amount.is_finite()
                     || !effect.parameter.is_finite()
                     || !(0.0..=1.0).contains(&effect.amount)
@@ -799,6 +812,7 @@ impl Engine {
                 {
                     return Err(Rejection::InvalidValue);
                 }
+                effect.beats = self.decks[deck].effect_beats;
                 self.send(Command::Effect {
                     deck,
                     slot: slot as usize,
@@ -1172,6 +1186,7 @@ impl Engine {
                     loop_region: control.loop_region,
                     loop_roll: control.loop_roll,
                     effects: control.effects,
+                    effect_beats: control.effect_beats,
                     hot_cues: control.hot_cues,
                     cue_appearance: control.cue_appearance.clone(),
                     effect_tail: shared.effect_tail(),

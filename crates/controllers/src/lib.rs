@@ -215,6 +215,10 @@ pub enum Encoding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
+    EffectBeats {
+        deck: u8,
+        encoding: Encoding,
+    },
     Browse {
         encoding: Encoding,
     },
@@ -400,6 +404,16 @@ impl Profile {
             {
                 return Err(format!(
                     "{}: LED requires a note and deck selection or headphone cue command",
+                    m.id
+                ));
+            }
+            if let Binding::EffectBeats { deck, encoding } = m.binding
+                && (usize::from(deck) >= djcraft_protocol::DECKS
+                    || encoding == Encoding::Absolute
+                    || !matches!(m.source, Source::Cc { .. }))
+            {
+                return Err(format!(
+                    "{}: effect beats requires a valid deck and relative CC",
                     m.id
                 ));
             }
@@ -814,6 +828,33 @@ impl Bridge {
             let falling = !down && memory.down;
             memory.down = down;
             let action = match &mapping.binding {
+                Binding::EffectBeats { deck, encoding } => {
+                    let raw = i32::from(event.value);
+                    let steps = match encoding {
+                        Encoding::TwosComplement if raw == 64 => 0,
+                        Encoding::TwosComplement if raw > 63 => raw - 128,
+                        Encoding::TwosComplement => raw,
+                        Encoding::Offset64 => raw - 64,
+                        Encoding::Absolute => 0,
+                    };
+                    if steps == 0 {
+                        continue;
+                    }
+                    state.decks.get(usize::from(*deck)).map(|s| {
+                        let beats = djcraft_protocol::EFFECT_BEATS;
+                        let index = beats
+                            .iter()
+                            .position(|b| *b >= s.effect_beats)
+                            .unwrap_or(beats.len() - 1) as i32;
+                        Action::Deck {
+                            deck: *deck,
+                            action: DeckAction::SetEffectBeats {
+                                beats: beats
+                                    [(index + steps).clamp(0, beats.len() as i32 - 1) as usize],
+                            },
+                        }
+                    })
+                }
                 Binding::Browse { encoding } => {
                     let raw = i32::from(event.value);
                     let steps = match encoding {

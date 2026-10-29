@@ -179,6 +179,8 @@ pub struct EffectState {
     pub parameter: f32,
     pub feedback: f32,
     pub sync: bool,
+    /// Snapshot mirror of the deck's shared timing. SetEffectBeats changes it;
+    /// SetEffect preserves the deck timing when replacing a slot.
     pub beats: f32,
     pub tails: bool,
 }
@@ -196,6 +198,23 @@ impl Default for EffectState {
         }
     }
 }
+
+pub fn default_effects() -> [EffectState; EFFECT_SLOTS] {
+    std::array::from_fn(|slot| EffectState {
+        kind: match slot {
+            1 => EffectKind::Echo,
+            2 => EffectKind::Cut,
+            _ => EffectKind::Filter,
+        },
+        ..EffectState::default()
+    })
+}
+
+pub fn default_effect_beats() -> f32 {
+    0.5
+}
+
+pub const EFFECT_BEATS: [f32; 7] = [0.125, 0.25, 0.5, 1., 2., 4., 8.];
 
 pub const HOT_CUES: usize = 16;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -287,6 +306,10 @@ pub enum DeckAction {
     /// Original-track BPM for effect timing; None uses manual timing.
     SetEffectTempo {
         bpm: Option<f64>,
+    },
+    /// Shared beat division for every effect on this deck.
+    SetEffectBeats {
+        beats: f32,
     },
     SetEffect {
         slot: u8,
@@ -685,8 +708,10 @@ pub struct DeckState {
     pub cue_appearance: [CueAppearance; HOT_CUES],
     #[serde(default)]
     pub effect_tail: bool,
-    #[serde(default)]
+    #[serde(default = "default_effects")]
     pub effects: [EffectState; EFFECT_SLOTS],
+    #[serde(default = "default_effect_beats")]
+    pub effect_beats: f32,
     pub loop_region: Option<[f64; 2]>,
     pub loop_roll: bool,
     pub roll_position_seconds: Option<f64>,
@@ -810,6 +835,27 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ServerMessage>(&json).unwrap(),
             message
+        );
+    }
+}
+#[cfg(test)]
+mod tempo_range_tests {
+    use super::*;
+    #[test]
+    fn legacy_effect_state_gets_shared_half_beat_timing() {
+        let mut old = serde_json::to_value(DeckState::default()).unwrap();
+        old.as_object_mut().unwrap().remove("effect_beats");
+        old.as_object_mut().unwrap().remove("effects");
+        let state: DeckState = serde_json::from_value(old).unwrap();
+        assert_eq!(state.effect_beats, 0.5);
+        assert_eq!(state.effects, default_effects());
+        let action = Action::Deck {
+            deck: 1,
+            action: DeckAction::SetEffectBeats { beats: 0.25 },
+        };
+        assert_eq!(
+            serde_json::from_str::<Action>(&serde_json::to_string(&action).unwrap()).unwrap(),
+            action
         );
     }
 }

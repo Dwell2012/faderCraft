@@ -17,6 +17,15 @@ fn fx_encoder_follows_the_first_ui_control_for_every_effect_kind() {
     use djcraft_protocol::{EffectKind, Role};
     let (mut engine, _mixer) = djcraft_engine::Engine::headless(48000);
     let mut b = bridge();
+    engine
+        .apply(
+            Role::Host,
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetEffectBeats { beats: 0.25 },
+            },
+        )
+        .unwrap();
     for kind in EffectKind::ALL {
         let mut effect = djcraft_protocol::EffectState {
             kind,

@@ -3197,6 +3197,36 @@
         "type": "browser_led",
         "folders": true
       }
+    },
+    {
+      "id": "fx-beats-0",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "cc",
+        "channel": 0,
+        "number": 33
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "effect_beats",
+        "deck": 0,
+        "encoding": "twos_complement"
+      }
+    },
+    {
+      "id": "fx-beats-1",
+      "port": "MixTrack Pro II",
+      "source": {
+        "kind": "cc",
+        "channel": 0,
+        "number": 34
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "effect_beats",
+        "deck": 1,
+        "encoding": "twos_complement"
+      }
     }
   ]
 }

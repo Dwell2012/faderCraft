@@ -1495,6 +1495,88 @@ fn effect_timing_and_feedback_reject_invalid_protocol_values() {
 }
 
 #[test]
+fn shared_effect_beats_are_deck_local_preserved_by_slot_edits_and_reach_audio() {
+    use djcraft_protocol::{EffectKind, EffectState};
+    let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 12]);
+    let state = engine.state();
+    for deck in &state.decks {
+        assert_eq!(deck.effect_beats, 0.5);
+        assert_eq!(
+            deck.effects[..3]
+                .iter()
+                .map(|fx| fx.kind)
+                .collect::<Vec<_>>(),
+            vec![EffectKind::Filter, EffectKind::Echo, EffectKind::Cut]
+        );
+        assert!(deck.effects.iter().all(|fx| !fx.enabled));
+    }
+    for beats in [0., 0.0625, 8.01, f32::NAN, f32::INFINITY] {
+        assert_eq!(
+            engine.apply(Role::Host, deck(DeckAction::SetEffectBeats { beats })),
+            Err(Rejection::InvalidValue)
+        );
+    }
+    assert_eq!(
+        engine.apply(Role::Viewer, deck(DeckAction::SetEffectBeats { beats: 1. })),
+        Err(Rejection::NotPermitted)
+    );
+    engine
+        .apply(Role::Host, deck(DeckAction::SetEffectBeats { beats: 2. }))
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEffect {
+                slot: 2,
+                effect: EffectState {
+                    kind: EffectKind::Cut,
+                    enabled: true,
+                    amount: 1.,
+                    beats: 0.25,
+                    ..EffectState::default()
+                },
+            }),
+        )
+        .unwrap();
+    let state = engine.state();
+    assert!(state.decks[0].effects.iter().all(|fx| fx.beats == 2.));
+    assert_eq!(state.decks[1].effect_beats, 0.5);
+    assert!(state.decks[1].effects.iter().all(|fx| fx.beats == 0.5));
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEffectTempo { bpm: Some(120.) }),
+        )
+        .unwrap();
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    render(&mut mixer, 0.5);
+    let transitions = |samples: Vec<f32>| {
+        let levels: Vec<bool> = samples
+            .chunks_exact(2)
+            .map(|frame| frame[0] > 0.15)
+            .collect();
+        levels.windows(2).filter(|pair| pair[0] != pair[1]).count()
+    };
+    let slow = transitions(render(&mut mixer, 1.));
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEffectBeats { beats: 0.125 }),
+        )
+        .unwrap();
+    render(&mut mixer, 0.5);
+    let fast = transitions(render(&mut mixer, 1.));
+    assert!(
+        slow <= 4 && fast > 12,
+        "shared timing failed to change Cut audio: {slow}, {fast}"
+    );
+    let state = engine.state();
+    assert!(state.decks[0].effects.iter().all(|fx| fx.beats == 0.125));
+    assert!(state.decks[0].effects[2].enabled);
+    assert_eq!(state.decks[0].effects[2].amount, 1.);
+}
+
+#[test]
 #[ignore = "manual real-time budget measurement"]
 fn effects_render_budget() {
     use djcraft_protocol::{EffectKind as K, EffectState};

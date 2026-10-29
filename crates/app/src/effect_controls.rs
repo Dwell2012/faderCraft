@@ -2,8 +2,8 @@ use super::*;
 use djcraft_protocol::{EFFECT_SLOTS, EffectKind as Kind, EffectState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 const VIEWS: [&str; 5] = ["FX x3", "FX x1", "FX x3 Full", "FX x6", "Pads 16"];
-const BEATS: [f32; 6] = [0.0625, 0.125, 0.25, 0.5, 1., 2.];
-const BEAT_LABELS: [&str; 6] = ["1/16", "1/8", "1/4", "1/2", "1", "2"];
+const BEATS: [f32; 7] = djcraft_protocol::EFFECT_BEATS;
+const BEAT_LABELS: [&str; 7] = ["1/8", "1/4", "1/2", "1", "2", "4", "8"];
 fn value(fx: EffectState, parameter: u8) -> f32 {
     let parameter = if fx.kind == Kind::Filter && parameter < 2 {
         1 - parameter
@@ -104,6 +104,35 @@ fn detail_help(kind: Kind) -> &'static str {
     }
 }
 impl Shell {
+    fn shared_effect_beats(&self, deck: usize, beats: f32, cx: &mut Context<Self>) -> AnyElement {
+        let weak = cx.entity().downgrade();
+        let label = BEATS
+            .iter()
+            .position(|value| (*value - beats).abs() < 0.001)
+            .map_or_else(|| beats.to_string(), |i| BEAT_LABELS[i].to_owned());
+        Button::new(("fx-shared-beats", deck))
+            .xsmall()
+            .outline()
+            .label(format!("FX beats: {label} ▾"))
+            .tooltip("Shared beat timing for every synced effect on this deck.")
+            .dropdown_menu(move |mut menu, _, _| {
+                for (value, label) in BEATS.into_iter().zip(BEAT_LABELS) {
+                    let weak = weak.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .checked((beats - value).abs() < 0.001)
+                            .on_click(move |_, _, cx| {
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.send(deck, DeckAction::SetEffectBeats { beats: value });
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
+    }
     fn update_effect(
         &mut self,
         deck: usize,
@@ -113,7 +142,16 @@ impl Shell {
     ) {
         if let Some(engine) = self.engine.as_mut() {
             let mut effect = engine.state().decks[deck].effects[slot];
+            let previous_beats = effect.beats;
             change(&mut effect);
+            if effect.beats != previous_beats {
+                self.send(
+                    deck,
+                    DeckAction::SetEffectBeats {
+                        beats: effect.beats,
+                    },
+                );
+            }
             self.send(
                 deck,
                 DeckAction::SetEffect {
@@ -133,7 +171,7 @@ impl Shell {
                 |fx| {
                     let v = (value + (start - y) / 160.).clamp(0., 1.);
                     if parameter == 1 && fx.sync && fx.kind.timed() && has_grid {
-                        fx.beats = BEATS[(v * 5.).round() as usize];
+                        fx.beats = BEATS[(v * (BEATS.len() - 1) as f32).round() as usize];
                     } else {
                         set_value(fx, parameter, v);
                     }
@@ -156,8 +194,8 @@ impl Shell {
             BEATS
                 .iter()
                 .position(|b| (*b - fx.beats).abs() < 0.001)
-                .unwrap_or(3) as f32
-                / 5.
+                .unwrap_or(2) as f32
+                / (BEATS.len() - 1) as f32
         } else {
             value(fx, parameter)
         };
@@ -213,7 +251,7 @@ impl Shell {
                             let i = BEATS
                                 .iter()
                                 .position(|b| (*b - fx.beats).abs() < 0.001)
-                                .unwrap_or(3) as i32;
+                                .unwrap_or(2) as i32;
                             fx.beats = BEATS[(i + if step > 0. {
                                 1
                             } else if step < 0. {
@@ -221,7 +259,8 @@ impl Shell {
                             } else {
                                 0
                             })
-                            .clamp(0, 5) as usize];
+                            .clamp(0, (BEATS.len() - 1) as i32)
+                                as usize];
                         } else {
                             set_value(fx, parameter, value(*fx, parameter) + step * 0.02);
                         }
@@ -318,6 +357,7 @@ impl Shell {
                                                     *fx = EffectState {
                                                         kind,
                                                         enabled: fx.enabled,
+                                                        beats: fx.beats,
                                                         ..EffectState::default()
                                                     };
                                                 },
@@ -364,6 +404,9 @@ impl Shell {
             .gap_2()
             .flex_wrap();
         for parameter in 0..dials {
+            if parameter == 1 && fx.kind.timed() && fx.sync {
+                continue;
+            }
             parameters = parameters.child(self.effect_dial(deck, slot, parameter as u8, fx, cx));
         }
         if dials > 0 {
@@ -371,7 +414,7 @@ impl Shell {
             if fx.kind.timed() {
                 options = options.child(Button::new(("fx-row-sync", deck * 6 + slot))
                     .xsmall().outline().label("Beat sync").selected(fx.sync)
-                    .tooltip("Sync effect timing to the track tempo; use the timing knob to choose beats.")
+                    .tooltip("Sync effect timing to the track tempo using this deck's shared FX beats.")
                     .disabled(self.grids[deck].is_none() && !fx.sync)
                     .on_click(cx.listener(move |this, _, _, cx| this.update_effect(deck, slot, |fx| fx.sync = !fx.sync, cx))));
             }
@@ -473,6 +516,7 @@ impl Shell {
                 );
             }
         }
+        header = header.child(self.shared_effect_beats(deck, state.effect_beats, cx));
         panel = panel.child(header);
         match view {
             1 => {
@@ -555,7 +599,9 @@ impl Shell {
                 .flex()
                 .flex_wrap()
                 .child(self.effect_dial(deck, slot, 0, fx, cx))
-                .child(self.effect_dial(deck, slot, 1, fx, cx))
+                .when(!(fx.kind.timed() && fx.sync), |row| {
+                    row.child(self.effect_dial(deck, slot, 1, fx, cx))
+                })
                 .when(
                     fx.kind.feedback_control() && fx.kind != Kind::Delay,
                     |row| row.child(self.effect_dial(deck, slot, 2, fx, cx)),
@@ -580,34 +626,11 @@ impl Shell {
                         this.update_effect(deck, slot, |fx| fx.sync = !fx.sync, cx)
                     })),
             );
-            if fx.sync && bpm.is_some() {
-                let weak = cx.entity().downgrade();
+            if fx.sync {
                 options = options.child(
-                    Button::new(("fx-beats", deck))
-                        .tooltip("Choose the effect timing in beats.")
-                        .xsmall()
-                        .outline()
-                        .label(format!("{} beats ▾", fx.beats))
-                        .dropdown_menu(move |mut menu, _, _| {
-                            for (beats, label) in BEATS.into_iter().zip(BEAT_LABELS) {
-                                let weak = weak.clone();
-                                menu = menu.item(
-                                    PopupMenuItem::new(label)
-                                        .checked((fx.beats - beats).abs() < 0.001)
-                                        .on_click(move |_, _, cx| {
-                                            let _ = weak.update(cx, |this, cx| {
-                                                this.update_effect(
-                                                    deck,
-                                                    slot,
-                                                    |fx| fx.beats = beats,
-                                                    cx,
-                                                )
-                                            });
-                                        }),
-                                );
-                            }
-                            menu
-                        }),
+                    div()
+                        .text_size(px(10.))
+                        .child(format!("Shared FX beats: {}", state.effect_beats)),
                 );
             }
             options = options.child(div().text_size(px(10.)).child(

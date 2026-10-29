@@ -474,6 +474,21 @@ fn main() -> Result<(), String> {
             binding: Binding::BrowserLed { folders },
         });
     }
+    for deck in 0..2u8 {
+        profile.mappings.push(Mapping {
+            id: format!("fx-beats-{deck}"),
+            port: port.clone(),
+            source: Source::Cc {
+                channel: 0,
+                number: 0x21 + deck,
+            },
+            modifiers: vec![],
+            binding: Binding::EffectBeats {
+                deck,
+                encoding: Encoding::TwosComplement,
+            },
+        });
+    }
     let json = profile.to_json()?;
     // Creating a starter must never overwrite someone's custom map.
     use std::io::Write;

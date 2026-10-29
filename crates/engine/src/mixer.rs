@@ -100,6 +100,10 @@ pub(crate) enum Command {
         deck: usize,
         bpm: Option<f64>,
     },
+    EffectBeats {
+        deck: usize,
+        beats: f32,
+    },
     Effect {
         deck: usize,
         slot: usize,
@@ -364,7 +368,11 @@ impl Deck {
             volume: 1.0,
             eq: Eq::new(sample_rate),
             effect_bpm: None,
-            effects: std::array::from_fn(|_| crate::effects::Effect::new(sample_rate)),
+            effects: std::array::from_fn(|slot| {
+                let mut effect = crate::effects::Effect::new(sample_rate);
+                effect.set(djcraft_protocol::default_effects()[slot]);
+                effect
+            }),
             stem_gains: [1.; 4],
             current_stems: [1.; 4],
             cross_gain: 1.,
@@ -1287,6 +1295,11 @@ impl Mixer {
             }
             Command::Effect { deck, slot, effect } => {
                 self.decks[deck].effects[slot].set(effect);
+            }
+            Command::EffectBeats { deck, beats } => {
+                for effect in &mut self.decks[deck].effects {
+                    effect.set_beats(beats);
+                }
             }
             Command::LoopRoll { deck, enabled } => {
                 let deck = &mut self.decks[deck];
