@@ -47,7 +47,7 @@ roadmap features. Hardware support and analysis accuracy are still being refined
 
 ## Building and running
 
-Clone the repository outside OneDrive or another synchronised source-code folder:
+Clone the repository:
 
 ```powershell
 git clone https://github.com/Dwell2012/faderCraft.git
@@ -92,7 +92,7 @@ application-data folder under `djcraft` (`%APPDATA%\djcraft` on Windows).
 The existing crate names, executable name and data-directory identifiers still
 use `djcraft`.
 
-Settings > Library can select a portable library folder, including OneDrive.
+Settings > Library can select a portable library folder.
 The app uses a local working database and exchanges closed snapshots. Use one
 computer at a time, close the app and allow synchronisation to finish before
 switching machines. See [the handover](docs/HANDOVER.md) for relinking music and
