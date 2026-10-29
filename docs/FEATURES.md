@@ -51,8 +51,9 @@ the committed scope of the custom build.
 - [x] Manual Refresh in the Library and performance browser rescans all added
       music folders in the background, with scan progress and analysis of new files.
 
-- [x] Local files and folders, with watch-for-changes (watching has only
-      been tried on macOS)
+- [x] Local files and folders, with watch-for-changes [Windows integration
+      tests cover additions/removals; stopped or replaced watchers discard
+      late notifications from their previous registration]
 - [ ] Network shares
 - [ ] External sources as optional plugins (YouTube and similar through a
       user-installed `yt-dlp`); see Plugins

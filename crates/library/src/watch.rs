@@ -14,16 +14,21 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use crate::scan::is_audio_file;
 use crate::{Error, Result};
 
-/// When each changed source last saw a change.
-type Changed = Arc<Mutex<HashMap<i64, Instant>>>;
+/// Each registration owns its pending notification. A callback still in flight
+/// after unwatch/replacement can only update the retired registration.
+type Changed = Arc<Mutex<Option<Instant>>>;
+
+struct WatchedFolder {
+    _watcher: RecommendedWatcher,
+    changed: Changed,
+}
 
 /// Watches folders and remembers which of them have changed since they
 /// were last asked about.
 #[derive(Default)]
 pub struct FolderWatcher {
     /// One watcher per source, so a change needs no matching to a folder.
-    watchers: HashMap<i64, RecommendedWatcher>,
-    changed: Changed,
+    watchers: HashMap<i64, WatchedFolder>,
 }
 
 impl FolderWatcher {
@@ -36,51 +41,57 @@ impl FolderWatcher {
     pub fn watch(&mut self, source_id: i64, folder: &Path) -> Result<()> {
         // Changes are reported by real path, which a linked folder's is not.
         let root = folder.canonicalize()?;
-        let changed = self.changed.clone();
+        let changed = Changed::default();
+        let callback_changed = changed.clone();
         let filter_root = root.clone();
         let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
             // An error means changes may have been missed, so look again.
             if event.map_or(true, |event| concerns_library(&filter_root, &event)) {
-                changed
+                *callback_changed
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .insert(source_id, Instant::now());
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
             }
         })
         .map_err(watch_error)?;
         watcher
             .watch(&root, RecursiveMode::Recursive)
             .map_err(watch_error)?;
-        self.watchers.insert(source_id, watcher);
+        self.watchers.insert(
+            source_id,
+            WatchedFolder {
+                _watcher: watcher,
+                changed,
+            },
+        );
         Ok(())
     }
 
     pub fn unwatch(&mut self, source_id: i64) {
         self.watchers.remove(&source_id);
-        self.lock().remove(&source_id);
     }
 
     /// The sources that changed and have since been left alone for `quiet`,
     /// in order of id. Each is reported once per burst of changes; one
     /// still being written to (a copy under way, say) waits its turn.
     pub fn take_changed(&self, quiet: Duration) -> Vec<i64> {
-        let mut changed = self.lock();
-        let mut settled: Vec<i64> = changed
+        let mut settled: Vec<i64> = self
+            .watchers
             .iter()
-            .filter(|(_, last)| last.elapsed() >= quiet)
-            .map(|(id, _)| *id)
+            .filter_map(|(id, folder)| {
+                let mut changed = folder
+                    .changed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if changed.is_some_and(|last| last.elapsed() >= quiet) {
+                    *changed = None;
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect();
         settled.sort_unstable();
-        for id in &settled {
-            changed.remove(id);
-        }
         settled
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<i64, Instant>> {
-        self.changed
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -123,6 +134,36 @@ mod tests {
     use notify::event::{AccessKind, CreateKind, RemoveKind};
 
     use super::*;
+
+    #[test]
+    fn retired_callbacks_cannot_report_changes_after_unwatch_or_replacement() {
+        // No filesystem writes are needed: retain the callback's state and
+        // deliver a late notification deterministically instead of racing the OS.
+        let dir =
+            std::env::temp_dir().join(format!("djcraft-retired-watcher-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut watcher = FolderWatcher::new();
+        watcher.watch(7, &dir).unwrap();
+        let retired = watcher.watchers[&7].changed.clone();
+        watcher.unwatch(7);
+        *retired.lock().unwrap() = Some(Instant::now());
+        assert!(watcher.take_changed(Duration::ZERO).is_empty());
+
+        watcher.watch(7, &dir).unwrap();
+        let replaced = watcher.watchers[&7].changed.clone();
+        watcher.watch(7, &dir).unwrap();
+        // Clear incidental OS notifications; the test only injects old events.
+        *watcher.watchers[&7].changed.lock().unwrap() = None;
+        *replaced.lock().unwrap() = Some(Instant::now());
+        assert!(watcher.take_changed(Duration::ZERO).is_empty());
+
+        *watcher.watchers[&7].changed.lock().unwrap() = Some(Instant::now());
+        assert!(watcher.take_changed(Duration::from_secs(3600)).is_empty());
+        assert_eq!(watcher.take_changed(Duration::ZERO), [7]);
+        assert!(watcher.take_changed(Duration::ZERO).is_empty());
+        drop(watcher);
+        std::fs::remove_dir(&dir).unwrap();
+    }
 
     fn event(kind: EventKind, path: &str) -> Event {
         Event::new(kind).add_path(PathBuf::from(path))
