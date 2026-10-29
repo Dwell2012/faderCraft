@@ -42,7 +42,7 @@ opens no MIDI ports. Profile edits take effect on app restart; the underlying
 
 The starter includes play/pause, channel volume, EQ, -50%/+100% pitch, master,
 crossfader, headphone level/blend, four existing hot-cue triggers per deck,
-and a jog mapping for each deck. The expanded profile has 140 bindings, including Loop/Sampler pads and FX1–3, plus
+and a jog mapping for each deck. The expanded profile has 142 bindings, including Loop/Sampler pads and FX1–3, plus
 Sync, transport Cue, headphone Cue, Stutter, pitch bend -/+ and Shift + Pitch-
 key lock on each deck.
 Pitch and EQ have exact neutral values at MIDI 64. All absolute controls use
@@ -281,3 +281,23 @@ Shift + FX1/2/3/Tap selects 1/2/4/16-beat auto loops using the app grid and loop
 ## Hardware browser
 
 Browse CC 0x1A moves the highlighted row in the active full Library table or compact browser under the decks. It uses the visible sorted/filtered rows, scrolls the selection into view and clamps at list ends. Back (note 0x77) switches between tracks and the source/playlist list. In source mode the encoder opens All Tracks, a source, or a playlist; Back returns to track browsing. Load A/B (notes 0x4B/0x34) load the selected row onto that deck through the existing confirmation when its output is open. No selection means no load. File/Folder LEDs show the encoder focus. Radio switches to Live when a browse command arrives. Browsing does not cancel a held Cue or scratch gesture. The profile now has 140 entries. Shift + Back and a browse push are not defined by this starter.
+
+## Tempo fader ranges and transport Cue
+
+Each deck starts in Low (±8%). Shift + Pitch+ (the controller Range function), or the on-screen ±% range button, cycles Low 8% → Medium 16% → High 32% → Wide 48% → Low. Both hardware and app faders use their entire travel for each range, with unity at centre; the hardware retains its inverted direction and exact neutral at MIDI 64. Range is per-deck protocol state (`TempoFaderRange`, default Low for older state payloads), applied through SetTempoRange without changing playback tempo or stopping Automix. `RangedTempo` resets pickup on a range change; existing generic Tempo mappings retain their configured endpoints. A tempo outside the newly selected range is preserved until reset or pickup becomes possible at a wider range. Wide’s endpoints are ratios 0.52 and 1.48. The starter now contains 142 entries.
+
+Transport Cue remembers where Play started, including a pending paused seek, rather than creating a new cue at the current playing position. Press during playback returns there and pauses; while paused, holding Cue previews from the retained point and release returns to it. Ordinary tempo/mixer/pad/scratch operations preserve that anchor. Paused repositioning prepares a new start, Play captures it, and loading another track clears the old anchor. Hot cues remain separate.
+
+## Platter free spin
+
+After a scratch-surface gesture, releasing contact keeps scratching while real jog movement packets continue, forwards or backwards. The last surface contact retains ownership through the release instead of immediately converting the remaining spin into pitch bend. After 80 ms without motion the gesture settles once and restores the prior playing/paused transport; a later rim gesture pitch bends normally while playing. A stationary contact release still uses the 30 ms contact grace. Retouching during free spin keeps the same accumulated target. Disabling Scratch, manual transport takeover, disconnect, profile/track replacement still cancel the gesture. No synthetic spin or new audio-thread work is added; sensitivity, tempo and key lock are unchanged.
+
+## Measured platter speed
+
+Native MIDI input now preserves the driver’s microsecond timestamps through a timed event queue; UI drain time is not used as a substitute. Jog displacement divided by packet interval produces signed platter speed, retaining the 0.003 source-seconds/count calibration and existing ±4× engine bound. `JogScratch` carries position, measured velocity and interval through protocol validation. The audio callback uses measured velocity with a small bounded position correction and a packet-sized following buffer, instead of position chase alone. Reversals, phase alignment and stationary fade remain bounded by the physical target; no motion is generated beyond it. Waveform ScratchTo remains unchanged. Paused final seeks also clear residual varispeed so releasing a spin does not drift the settled position.
+
+Ranged hardware tempo faders snap their nearest MIDI position to the opposite deck's exact effective BPM (A/B and C/D pairs). Both analysed BPMs must be known and the target must fit the selected range. Soft takeover still applies; the next fader step leaves the snap. This matches tempo only, without changing beat phase or enabling Sync.
+
+Mixtrack Beats encoders (CC 21/22 hexadecimal, two's-complement relative) now step the shared FX division independently per deck: 1/8, 1/4, 1/2, 1, 2, 4, 8 beats. Steps clamp at the endpoints and neutral packets do nothing. The bundled and development profiles now contain 144 mappings. The app selector uses the same divisions.
+
+On Mixtrack Pro II output connection, the app sends the manufacturer's verified startup request after opening input. One absolute reading per mapped control may adopt the physical position within one second, while every deck is stopped. Active playback, expired snapshots and later software changes retain soft takeover. Relative encoders/buttons are not restored as absolute positions. A drained MIDI batch now forwards only the latest JogScratch per deck, retaining timestamp-derived velocity and cumulative physical position. Non-jog actions and host commands flush pending motion first so touch/transport ordering remains intact.

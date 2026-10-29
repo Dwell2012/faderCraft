@@ -6,6 +6,20 @@ Persistent stem worker (26 October): stdin JSON requests and stdout ready/progre
 
 Updated 27 October 2026. Read this and `AGENTS.md` before changing code.
 
+## Measured jog speed (27 October 2026)
+
+User clarified audio must match physical platter speed, not merely retain the gesture. Added JogScratch protocol action with seconds/speed/interval, validated on control side. Native Input has drain_timed with driver-clock reconstruction (clock reset handled), while drain preserves raw-event API for monitor. App passes timestamps to Bridge::process_at. Jog velocity is counts×calibration/interval, bounded ±4×; first/unresolved interval uses prior 10 ms default. Audio ScratchTo command carries optional measured velocity and packet-following frames; a bounded 10% phase correction accompanies feedforward velocity and existing 4 ms easing. Normal waveform ScratchTo still uses position-only following. No allocations/locks/I/O/logging added to the audio thread. Paused Seek after scratch release resets residual speed to avoid drift. Added regressions for queued timestamp preservation/reset, controller rate deceleration/reversal, steady audio speed in both directions, volume stability, validation/stationary stopping and stepped free-spin deceleration. Existing release/idle behavior retained. Hardware listening retest pending.
+
+## Platter free spin (27 October 2026)
+
+User requested physical inertia after lifting from the scratch surface. Jog contact release now waits for both the existing 30 ms contact grace and 80 ms motion idle. Incoming wheel packets keep the last surface gesture active in either direction instead of converting to rim bend; packets continue accumulating the original target. No simulated motion, sensitivity or audio-thread changes. Stationary releases remain 30 ms, normal rim bend returns after idle, and disabling Scratch during released free spin clears the remembered contact. Existing cleanup/cancellation paths remain immediate. Three new regressions cover both directions/decks/transport states, explicit mode-off cleanup, and headless audible free spin with key lock on/off plus playing/paused restoration. Hardware retest pending.
+
+## Current controller range / Cue changes (27 October 2026)
+
+142-entry starter: Shift + Pitch+ cycles Low ±8%, Medium ±16%, High ±32%, Wide ±48%, default Low per deck. Added protocol TempoFaderRange/SetTempoRange and defaulted DeckState field; DeckControl stores scaling with no realtime mixer change. Range changes preserve tempo and Automix. RangedTempo mapping derives endpoints from state and re-arms pickup on range changes. Generic Tempo mappings are unchanged. App fader, thumb and wheel use selected range; UI range button cycles the same protocol state. Profile generator/bundled/installed copies updated. Tests cover four ranges/decks/endpoints/centre, cycle debounce/wrap, pickup, role gating, no tempo change and backward state deserialization.
+
+User also requested transport Cue return to where playback started. Shell/pad send paths now retain the anchor through unrelated actions and capture it on paused-to-Play (including pending seek); paused seek prepares a new start and track load clears it. Playing Cue returns to the anchor and pauses, rather than starting a preview at the currently playing position. Paused Cue hold/release previews are kept. UI regression covers anchor preservation and new playback starts. Hardware retest pending.
+
 ## Four-deck performance foundation (24 October 2026)
 
 Stem acceleration (26 October): Settings > Audio > Stem preparation persists
@@ -781,3 +795,11 @@ walk back through immediately adjacent strong attacks within 25 ms of that phase
 This preserves an opening kick with a different envelope instead of shifting the
 bar origin by one beat (Motorcycle, As the Rush Comes). The phase consensus still
 uses the strict 12 ms threshold, and recovery cannot cross a missing attack.
+
+Controller tempo matching: host supplies current analysed base BPMs to Bridge. Absolute RangedTempo assigns the nearest raw MIDI position to the paired opposite deck's BPM times tempo / own BPM. Pickup remains based on unsnapped physical values, so external changes/range changes keep existing takeover behavior. Unknown/invalid BPM or out-of-range targets use ordinary scaling. No beat-phase sync or engine DSP changes.
+
+FX timing: DeckAction::SetEffectBeats changes the deck-wide 1/16–2 beat division (default half a beat). DeckState.effect_beats is authoritative; EffectState.beats remains a snapshot mirror for compatibility. SetEffect normalizes its incoming beat field to the deck value, so changing kinds, pad effects or controller mix values cannot reset timing. One allocation-free EffectBeats command updates every DSP slot. UI has one selector per deck; manual timing and per-slot Sync remain available. New engine decks initialize slots 1–3 to Filter/Echo/Cut, disabled.
+
+FX Beats knob update: Binding::EffectBeats handles relative CC with two's-complement/offset encoding; Mixtrack CC 0x21/0x22 maps decks A/B with no modifier. Shared EFFECT_BEATS catalogue is 0.125/0.25/0.5/1/2/4/8. Engine validates 0.125–8 (replaces the previous 1/16–2 range); default remains 0.5. Audio delay buffers are allocated off-thread for 25 seconds to accommodate 8 beats at the minimum effective 20 BPM plus grain offsets, instead of silently clipping long delays. Added real 24-second impulse-delay and controller encoder regression tests. Installed development profile upgraded additively, preserving custom bindings.
+
+Mixtrack startup snapshot: live-tested official init SysEx now returns every absolute CC (14 controls). Output connection sends native::MIXTRACK_PRO_II_STARTUP after input opens; Bridge::prepare_startup_snapshot arms each absolute mapping for one reading within one second. Only when ALL decks are stopped can it bypass initial pickup. Then usual external-change pickup applies; reconnect during playback never adopts. The app's JogBatch coalesces pending JogScratch commands by deck across each drained input batch, flushes before other actions/host commands and at batch end. Every MIDI packet still updates the bridge's timestamp-based speed and physical target, but only the latest motion is forwarded to the engine. Added deterministic pickup/live/expiry and delayed-batch/reversal/release-order tests.
