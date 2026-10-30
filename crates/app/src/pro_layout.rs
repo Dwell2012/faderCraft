@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::tooltip::Tooltip;
 
 pub(super) fn current_key_label(
     key: Option<djcraft_library::Camelot>,
@@ -29,6 +30,26 @@ pub(super) fn current_key_label(
 }
 
 impl Shell {
+    pub(super) fn key_hover_text(&self, deck: usize, state: &DeckState) -> String {
+        let base = current_key_label(self.deck_keys[deck], state);
+        let Some(mode) = self.deck_modes[deck].as_ref() else {
+            return format!("{base}\nMode unresolved");
+        };
+        let offset = state.key_shift as f64
+            + if state.key_lock {
+                0.
+            } else {
+                12. * state.tempo.log2()
+            };
+        let nearest = offset.round() as i32;
+        let cents = ((offset - nearest as f64) * 100.).round() as i32;
+        let detune = if cents == 0 {
+            String::new()
+        } else {
+            format!(" {cents:+}¢")
+        };
+        format!("{base}\nEstimated mode: {}{detune}", mode.label(nearest),)
+    }
     pub(super) fn transport_anchor_for(
         &mut self,
         deck: usize,
@@ -147,8 +168,10 @@ impl Shell {
                                             state.cue_appearance.clone(),
                                             index,
                                             self.stem_waveforms[index],
+                                            self.settings.rgb_waveforms,
                                             if state.eq_mode == EqMode::Classic { state.eq } else { [1.; 3] },
                                             state.stem_gains,
+                                            self.overview_cache[index].clone(),
                                         ))
                                     })
                                     .when(track.is_none(), |this| {
@@ -350,6 +373,7 @@ impl Shell {
                                                 .flex()
                                                 .items_center()
                                                 .text_size(px(11.))
+                                                .id(("deck-key-info", index))
                                                 .text_color(colour)
                                                 .whitespace_nowrap()
                                                 .children(
@@ -370,7 +394,13 @@ impl Shell {
                                                                 .child(line.to_owned())
                                                         })
                                                         .collect::<Vec<_>>(),
-                                                ),
+                                                )
+                                                .tooltip({
+                                                    let text = self.key_hover_text(index, state);
+                                                    move |window, cx| {
+                                                        Tooltip::new(text.clone()).build(window, cx)
+                                                    }
+                                                }),
                                         ),
                                 ),
                         ),
@@ -527,7 +557,6 @@ impl Shell {
         let area = self.pitch_areas[deck].clone();
         let colour = deck_colour(deck);
         let tempo = state.tempo;
-        let key_lock = state.key_lock;
         let range = state.tempo_range;
         div()
             .flex()
@@ -549,19 +578,6 @@ impl Shell {
                                 range: range.next(),
                             },
                         );
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new(("key-lock", deck))
-                    .outline()
-                    .xsmall()
-                    .icon(IconName::Lock)
-                    .label("Key lock")
-                    .selected(key_lock)
-                    .tooltip("Keep the musical pitch unchanged when changing tempo.")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.send(deck, DeckAction::SetKeyLock { on: !key_lock });
                         cx.notify();
                     })),
             )

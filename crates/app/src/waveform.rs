@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use djcraft_engine::Track;
 use djcraft_library::TempoResult;
@@ -22,6 +22,13 @@ pub(crate) fn deck_palette(deck: usize) -> [u32; 3] {
     ][deck % djcraft_protocol::DECKS]
 }
 
+fn attack_colour(primary: u32) -> Hsla {
+    let mut colour = Hsla::from(rgb(primary));
+    colour.s *= 0.08;
+    colour.l = 0.94;
+    colour
+}
+
 pub(crate) const STEM_COLOURS: [u32; 4] = [0xff6ba9, 0x48d1dd, 0xffb347, 0xd8e4f0];
 pub(crate) const STEM_LABELS: [&str; 4] = ["Vocals", "Instruments", "Bass", "Drums"];
 
@@ -39,6 +46,7 @@ fn column_bands(track: &Track, range: std::ops::Range<usize>) -> [f32; 3] {
 struct DisplayColumn {
     energy: [f32; 3],
     peak: f32,
+    attack: f32,
 }
 
 // Symmetric display-only filter: no temporal lag or shift of beat positions.
@@ -49,6 +57,7 @@ fn smooth_columns(raw: &[Option<DisplayColumn>]) -> Vec<Option<DisplayColumn>> {
             neighbours[2]?; // Never extend the waveform beyond available audio.
             let mut result = DisplayColumn {
                 peak: neighbours[2]?.peak,
+                attack: neighbours[2]?.attack,
                 ..DisplayColumn::default()
             };
             for (column, weight) in neighbours.iter().zip(WEIGHTS) {
@@ -63,13 +72,19 @@ fn smooth_columns(raw: &[Option<DisplayColumn>]) -> Vec<Option<DisplayColumn>> {
         .collect()
 }
 
+#[cfg(test)]
 fn display_columns(
     track: &Track,
     first: i64,
     count: usize,
     step: f64,
 ) -> Vec<Option<DisplayColumn>> {
-    display_source_columns(track, first, count, step, None)
+    let levels: Vec<_> = (0..track.peak_count()).map(|i| track.bands(i)[0]).collect();
+    let attacks = djcraft_analysis::bass_attacks(
+        &levels,
+        track.frames_per_peak() as f64 / track.sample_rate as f64,
+    );
+    display_source_columns(track, first, count, step, None, &attacks)
 }
 
 fn display_source_columns(
@@ -78,8 +93,10 @@ fn display_source_columns(
     count: usize,
     step: f64,
     stem: Option<usize>,
+    attacks: &[djcraft_analysis::BassAttack],
 ) -> Vec<Option<DisplayColumn>> {
     let ready = track.peak_count() as i64;
+    let dt = track.frames_per_peak() as f64 / track.sample_rate as f64;
     let raw: Vec<_> = (-2..count as i64 + 3)
         .map(|offset| {
             let start = ((first + offset) as f64 * step).floor() as i64;
@@ -102,8 +119,23 @@ fn display_source_columns(
             } else {
                 0.
             };
+            let from = start.max(0) as f64;
+            let to = end.max(start + 1) as f64;
+            let lo = attacks.partition_point(|attack| attack.index as f64 + 0.045 / dt < from);
+            let hi = attacks.partition_point(|attack| (attack.index as f64) < to);
             Some(DisplayColumn {
                 peak,
+                attack: attacks[lo.min(hi)..hi]
+                    .iter()
+                    .filter_map(|attack| {
+                        let at = attack.index as f64;
+                        if at < to && at + 0.045 / dt >= from {
+                            Some(attack.strength)
+                        } else {
+                            None
+                        }
+                    })
+                    .fold(0., f32::max),
                 energy: bands.map(|v| v * v / (end - start).max(1) as f32),
             })
         })
@@ -118,23 +150,59 @@ fn paint_columns(
     shift: f32,
     palette: [u32; 3],
     gains: [f32; 3],
+    mesh: &mut Option<WaveformMesh>,
+    show_attacks: bool,
+    rgb_waveforms: bool,
 ) {
     // Keep the actual peak silhouette separate from the smoothed RMS body.
     // This preserves brief attacks instead of averaging their energy away.
-    paint_peaks(window, bounds, columns, shift, palette[1], gains);
+    let mesh = mesh.get_or_insert_with(|| WaveformMesh::new(columns, gains));
+    if mesh.gains != gains {
+        *mesh = WaveformMesh::new(columns, gains);
+    }
+    if rgb_waveforms {
+        let colours = mesh.rgb.get_or_insert_with(|| rgb_meshes(columns, gains));
+        for (tint, path) in colours {
+            paint_mesh(window, bounds, path, shift, *tint, 0.85);
+        }
+        return;
+    }
+    paint_mesh(window, bounds, &mesh.peak, shift, palette[1], 0.55);
     // Low sits behind mid and high; each keeps its own amplitude envelope.
     for (band, tint) in palette.into_iter().enumerate() {
-        paint_band(
-            window,
-            bounds,
-            columns,
-            shift,
-            band,
-            tint,
-            0.85,
-            gains[band],
-        );
+        if gains[band] > 0. {
+            paint_mesh(window, bounds, &mesh.bands[band], shift, tint, 0.85);
+        }
     }
+    // Warm attack colouring stays inside the existing peak silhouette.
+    // It never draws a separate full-height event/grid line over the waveform.
+    if !show_attacks {
+        return;
+    }
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        for (i, column) in columns.iter().enumerate() {
+            let Some(column) = column.filter(|column| column.attack > 0.04) else {
+                continue;
+            };
+            let x = i as f32 * COLUMN_WIDTH - shift;
+            if x < -COLUMN_WIDTH || x > bounds.size.width.as_f32() {
+                continue;
+            }
+            let strength = (column.attack * gains[0]).clamp(0., 1.);
+            let half = peak_height(column, gains) * bounds.size.height.as_f32() * 0.48;
+            window.paint_quad(fill(
+                Bounds::new(
+                    bounds.origin
+                        + point(
+                            px(i as f32 * COLUMN_WIDTH - shift),
+                            bounds.size.height / 2. - px(half),
+                        ),
+                    size(px(COLUMN_WIDTH + 0.2), px(half * 2.)),
+                ),
+                attack_colour(palette[1]).opacity((strength * 1.4).min(0.85)),
+            ));
+        }
+    });
 }
 
 fn peak_height(column: DisplayColumn, gains: [f32; 3]) -> f32 {
@@ -153,100 +221,136 @@ fn peak_height(column: DisplayColumn, gains: [f32; 3]) -> f32 {
     (column.peak * gain).clamp(0., 1.)
 }
 
-fn paint_peaks(
-    window: &mut Window,
-    bounds: Bounds<Pixels>,
+// Consecutive envelope columns form trapezoids. Building these directly avoids
+// general-purpose polygon tessellation and preserves the same linear silhouette.
+fn envelope_mesh(
     columns: &[Option<DisplayColumn>],
-    shift: f32,
-    tint: u32,
-    gains: [f32; 3],
-) {
-    window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        let mut path = PathBuilder::fill();
-        let mut start = 0;
-        while start < columns.len() {
-            if columns[start].is_none() {
-                start += 1;
-                continue;
-            }
-            let mut end = start + 1;
-            while end < columns.len() && columns[end].is_some() {
-                end += 1;
-            }
-            let edge = |i: usize, bottom: bool| {
-                let half =
-                    peak_height(columns[i].unwrap(), gains) * bounds.size.height.as_f32() * 0.48;
-                bounds.origin
-                    + point(
-                        px(i as f32 * COLUMN_WIDTH - shift),
-                        bounds.size.height / 2. + px(if bottom { half } else { -half }),
-                    )
-            };
-            path.move_to(edge(start, false));
-            for i in start + 1..end {
-                path.line_to(edge(i, false));
-            }
-            for i in (start..end).rev() {
-                path.line_to(edge(i, true));
-            }
-            path.close();
-            start = end;
+    half_height: impl Fn(DisplayColumn) -> f32,
+) -> Path<Pixels> {
+    let mut path = Path::new(point(px(0.), px(0.)));
+    let mut previous = None;
+    for (i, column) in columns.iter().enumerate() {
+        let Some(column) = column else {
+            previous = None;
+            continue;
+        };
+        let x = i as f32 * COLUMN_WIDTH;
+        let half = half_height(*column);
+        if let Some((left, old_half)) = previous {
+            let a = point(px(left), px(0.5 - old_half));
+            let b = point(px(x), px(0.5 - half));
+            let c = point(px(x), px(0.5 + half));
+            let d = point(px(left), px(0.5 + old_half));
+            let fill = (point(0., 1.), point(0., 1.), point(0., 1.));
+            path.push_triangle((a, b, c), fill);
+            path.push_triangle((a, c, d), fill);
         }
-        if let Ok(path) = path.build() {
-            window.paint_path(path, Hsla::from(rgb(tint)).opacity(0.55));
-        }
-    });
+        previous = Some((x, half));
+    }
+    path
 }
 
-fn paint_band(
+struct WaveformMesh {
+    gains: [f32; 3],
+    peak: Path<Pixels>,
+    bands: [Path<Pixels>; 3],
+    rgb: Option<Vec<(u32, Path<Pixels>)>>,
+}
+impl WaveformMesh {
+    fn new(columns: &[Option<DisplayColumn>], gains: [f32; 3]) -> Self {
+        Self {
+            gains,
+            rgb: None,
+            peak: envelope_mesh(columns, |column| peak_height(column, gains) * 0.48),
+            bands: std::array::from_fn(|band| {
+                envelope_mesh(columns, |column| {
+                    (column.energy[band].max(0.).sqrt() * gains[band] * std::f32::consts::SQRT_2)
+                        .min(1.)
+                        * 0.5
+                })
+            }),
+        }
+    }
+}
+
+// Additive RGB: each channel follows its band's post-EQ amplitude. Normalize
+// hue independently of waveform height so quiet passages retain readable colour.
+fn mixed_rgb(energy: [f32; 3], gains: [f32; 3]) -> u32 {
+    let amplitudes: [f32; 3] = std::array::from_fn(|i| {
+        let value = energy[i].max(0.).sqrt() * gains[i].max(0.);
+        if value.is_finite() { value } else { 0. }
+    });
+    let maximum = amplitudes.into_iter().fold(0., f32::max);
+    if maximum <= 1e-12 {
+        return 0;
+    }
+    // Quantization lets adjacent colours share cached geometry (512 hues).
+    // Suppress weaker channels for more saturated hues without changing the
+    // full-brightness dominant channel or balanced secondary colours.
+    let channels = amplitudes.map(|v| {
+        let contrast = (v / maximum).powf(1.2);
+        (contrast.mul_add(7., 0.).round() as u32) * 255 / 7
+    });
+    channels[0] << 16 | channels[1] << 8 | channels[2]
+}
+
+fn rgb_meshes(columns: &[Option<DisplayColumn>], gains: [f32; 3]) -> Vec<(u32, Path<Pixels>)> {
+    let mut paths = std::collections::BTreeMap::new();
+    for (i, pair) in columns.windows(2).enumerate() {
+        let (Some(left), Some(right)) = (pair[0], pair[1]) else {
+            continue;
+        };
+        let energy = std::array::from_fn(|band| (left.energy[band] + right.energy[band]) * 0.5);
+        let tint = mixed_rgb(energy, gains);
+        if tint == 0 {
+            continue;
+        }
+        let path = paths
+            .entry(tint)
+            .or_insert_with(|| Path::new(point(px(0.), px(0.))));
+        let x = i as f32 * COLUMN_WIDTH;
+        let a = peak_height(left, gains) * 0.48;
+        let b = peak_height(right, gains) * 0.48;
+        let tl = point(px(x), px(0.5 - a));
+        let bl = point(px(x), px(0.5 + a));
+        let tr = point(px(x + COLUMN_WIDTH), px(0.5 - b));
+        let br = point(px(x + COLUMN_WIDTH), px(0.5 + b));
+        let fill = (point(0., 1.), point(0., 1.), point(0., 1.));
+        path.push_triangle((tl, tr, br), fill);
+        path.push_triangle((tl, br, bl), fill);
+    }
+    paths.into_iter().collect()
+}
+
+fn placed_mesh(source: &Path<Pixels>, bounds: Bounds<Pixels>, shift: f32) -> Path<Pixels> {
+    let mut path = source.clone();
+    let height = bounds.size.height.as_f32();
+    for vertex in &mut path.vertices {
+        vertex.xy_position.x += bounds.origin.x - px(shift);
+        vertex.xy_position.y = bounds.origin.y + px(vertex.xy_position.y.as_f32() * height);
+    }
+    path.bounds.origin.x += bounds.origin.x - px(shift);
+    path.bounds.origin.y = bounds.origin.y + px(path.bounds.origin.y.as_f32() * height);
+    path.bounds.size.height *= height;
+    path
+}
+
+fn paint_mesh(
     window: &mut Window,
     bounds: Bounds<Pixels>,
-    columns: &[Option<DisplayColumn>],
+    mesh: &Path<Pixels>,
     shift: f32,
-    band: usize,
     tint: u32,
     opacity: f32,
-    gain: f32,
 ) {
-    if gain <= 0. {
+    if mesh.vertices.is_empty() {
         return;
     }
-    let height = bounds.size.height.as_f32();
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
-        let mut path = PathBuilder::fill();
-        let mut start = 0;
-        while start < columns.len() {
-            if columns[start].is_none() {
-                start += 1;
-                continue;
-            }
-            let mut end = start + 1;
-            while end < columns.len() && columns[end].is_some() {
-                end += 1;
-            }
-            let edge = |i: usize, bottom: bool| {
-                let amplitude = columns[i].unwrap().energy[band].max(0.).sqrt() * gain;
-                let half = (amplitude * std::f32::consts::SQRT_2).min(1.) * height / 2.;
-                bounds.origin
-                    + point(
-                        px(i as f32 * COLUMN_WIDTH - shift),
-                        px(height / 2. + if bottom { half } else { -half }),
-                    )
-            };
-            path.move_to(edge(start, false));
-            for i in start + 1..end {
-                path.line_to(edge(i, false));
-            }
-            for i in (start..end).rev() {
-                path.line_to(edge(i, true));
-            }
-            path.close();
-            start = end;
-        }
-        if let Ok(path) = path.build() {
-            let color: Hsla = rgb(tint).into();
-            window.paint_path(path, color.opacity(opacity));
-        }
+        window.paint_path(
+            placed_mesh(mesh, bounds, shift),
+            Hsla::from(rgb(tint)).opacity(opacity),
+        );
     });
 }
 
@@ -317,8 +421,10 @@ pub fn waveform(
     cue_styles: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     deck: usize,
     show_stems: bool,
+    rgb_waveforms: bool,
     eq_gains: [f32; 3],
     stem_gains: [f32; 4],
+    cache: Rc<RefCell<OverviewCache>>,
 ) -> impl IntoElement {
     let flags = cue_flags(
         hot_cues,
@@ -335,6 +441,11 @@ pub fn waveform(
             canvas(
                 move |bounds, _, _| area.set(bounds),
                 move |bounds, _, window, _| {
+                    let mut cached = cache.borrow_mut();
+                    cached.prepare_attacks(&track);
+                    if cached.attacks_started && cached.attacks.get().is_none() {
+                        window.request_animation_frame();
+                    }
                     let visible_seconds = VISIBLE_SECONDS * tempo;
                     let width = bounds.size.width.as_f32();
                     let height = bounds.size.height.as_f32();
@@ -393,34 +504,49 @@ pub fn waveform(
                                 if stem_gains[stem] <= 0. {
                                     continue;
                                 }
-                                let data = display_source_columns(
+                                cached.scrolling_columns(
                                     &track,
                                     first,
                                     columns as usize,
                                     peaks_per_column,
                                     Some(stem),
                                 );
-                                paint_band(
+                                let tile = cached.scrolling[stem + 1].as_mut().unwrap();
+                                let gains = [stem_gains[stem], 0., 0.];
+                                let mesh = tile
+                                    .mesh
+                                    .get_or_insert_with(|| WaveformMesh::new(&tile.data, gains));
+                                if mesh.gains != gains {
+                                    *mesh = WaveformMesh::new(&tile.data, gains);
+                                }
+                                paint_mesh(
                                     window,
                                     bounds,
-                                    &data,
-                                    shift,
-                                    0,
+                                    &mesh.bands[0],
+                                    (first - tile.first) as f32 * COLUMN_WIDTH + shift,
                                     tint,
                                     0.55,
-                                    stem_gains[stem],
                                 );
                             }
                         } else {
-                            let data =
-                                display_columns(&track, first, columns as usize, peaks_per_column);
+                            cached.scrolling_columns(
+                                &track,
+                                first,
+                                columns as usize,
+                                peaks_per_column,
+                                None,
+                            );
+                            let tile = cached.scrolling[0].as_mut().unwrap();
                             paint_columns(
                                 window,
                                 bounds,
-                                &data,
-                                shift,
+                                &tile.data,
+                                (first - tile.first) as f32 * COLUMN_WIDTH + shift,
                                 deck_palette(deck),
                                 eq_gains,
+                                &mut tile.mesh,
+                                true,
+                                rgb_waveforms,
                             );
                         }
                         let x = (columns / 2) as f32 * COLUMN_WIDTH;
@@ -489,6 +615,94 @@ pub(crate) struct OverviewCache {
     ready: usize,
     frames: usize,
     columns: Vec<Option<DisplayColumn>>,
+    mesh: Option<WaveformMesh>,
+    analysis_track: Option<Arc<Track>>,
+    attacks: Arc<OnceLock<Vec<djcraft_analysis::BassAttack>>>,
+    attacks_started: bool,
+    overview_has_attacks: bool,
+    scrolling: [Option<ScrollColumns>; 5],
+}
+
+struct ScrollColumns {
+    first: i64,
+    step: f64,
+    ready: usize,
+    has_attacks: bool,
+    data: Vec<Option<DisplayColumn>>,
+    mesh: Option<WaveformMesh>,
+}
+
+impl OverviewCache {
+    fn prepare_attacks(&mut self, track: &Arc<Track>) {
+        if self
+            .analysis_track
+            .as_ref()
+            .is_none_or(|old| !Arc::ptr_eq(old, track))
+        {
+            self.analysis_track = Some(track.clone());
+            self.attacks = Arc::default();
+            self.attacks_started = false;
+            self.scrolling = std::array::from_fn(|_| None);
+        }
+        let ready = track.peak_count();
+        let total = track.frames().div_ceil(track.frames_per_peak());
+        if !self.attacks_started && ready > 0 && (track.is_complete() || ready == total) {
+            self.attacks_started = true;
+            let result = self.attacks.clone();
+            let track = track.clone();
+            std::thread::spawn(move || {
+                let _ = result.set(crate::attack_cache::load_or_analyse(&track));
+            });
+        }
+    }
+
+    fn scrolling_columns(
+        &mut self,
+        track: &Track,
+        first: i64,
+        count: usize,
+        step: f64,
+        stem: Option<usize>,
+    ) -> &[Option<DisplayColumn>] {
+        const MARGIN: i64 = 256;
+        let slot = stem.map_or(0, |stem| stem + 1);
+        let ready = track.peak_count();
+        let has_attacks = self.attacks.get().is_some();
+        let reuse = self.scrolling[slot].as_ref().is_some_and(|cache| {
+            cache.step == step
+                && cache.ready == ready
+                && cache.has_attacks == has_attacks
+                && first >= cache.first
+                && first + count as i64 <= cache.first + cache.data.len() as i64
+        });
+        if !reuse {
+            let start = first.div_euclid(MARGIN) * MARGIN - MARGIN;
+            let attacks = if stem.is_none() {
+                self.attacks.get().map(Vec::as_slice).unwrap_or_default()
+            } else {
+                &[]
+            };
+            let data = display_source_columns(
+                track,
+                start,
+                count + MARGIN as usize * 3,
+                step,
+                stem,
+                attacks,
+            );
+            self.scrolling[slot] = Some(ScrollColumns {
+                first: start,
+                step,
+                ready,
+                has_attacks,
+                data,
+                mesh: None,
+            });
+        }
+        let cache = self.scrolling[slot].as_ref().unwrap();
+        let offset = (first - cache.first) as usize;
+        &cache.data[offset..offset + count]
+    }
 }
 
 /// A track's whole waveform, with the part already played in another colour
@@ -502,7 +716,7 @@ pub fn overview(
     cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     styles: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     deck: usize,
-    eq_gains: [f32; 3],
+    rgb_waveforms: bool,
 ) -> impl IntoElement {
     let duration = track.frames() as f64 / track.sample_rate as f64;
     let flags = cue_flags(cues, &styles, deck, 0., duration, false);
@@ -519,6 +733,11 @@ pub fn overview(
                     let columns = (width / COLUMN_WIDTH).ceil() as usize;
                     let played_x = played_fraction as f32 * width;
                     let mut cached = cache.borrow_mut();
+                    cached.prepare_attacks(&track);
+                    let has_attacks = cached.attacks.get().is_some();
+                    if cached.attacks_started && !has_attacks {
+                        window.request_animation_frame();
+                    }
                     let ready = track.peak_count();
                     let frames = track.frames();
                     if cached
@@ -528,27 +747,61 @@ pub fn overview(
                         || cached.width != width
                         || cached.ready != ready
                         || cached.frames != frames
+                        || cached.overview_has_attacks != has_attacks
                     {
-                        cached.columns = display_columns(
+                        cached.columns = display_source_columns(
                             &track,
                             0,
                             columns,
                             COLUMN_WIDTH as f64 / width as f64 * total as f64,
+                            None,
+                            cached.attacks.get().map(Vec::as_slice).unwrap_or_default(),
                         );
                         cached.track = Some(track.clone());
                         cached.width = width;
                         cached.ready = ready;
                         cached.frames = frames;
+                        cached.overview_has_attacks = has_attacks;
+                        cached.mesh = None;
                     }
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                        let waveform_bounds = Bounds::new(
+                            bounds.origin,
+                            size(bounds.size.width, (bounds.size.height - px(4.)).max(px(1.))),
+                        );
+                        let OverviewCache { columns, mesh, .. } = &mut *cached;
                         paint_columns(
                             window,
-                            bounds,
-                            &cached.columns,
+                            waveform_bounds,
+                            columns,
                             0.,
                             deck_palette(deck),
-                            eq_gains,
+                            [1.; 3],
+                            mesh,
+                            false,
+                            rgb_waveforms,
                         );
+                        for (i, column) in cached.columns.iter().enumerate() {
+                            let Some(column) = column.filter(|column| column.attack > 0.04) else {
+                                continue;
+                            };
+                            let strength = column.attack.clamp(0., 1.);
+                            if strength <= 0. {
+                                continue;
+                            }
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    bounds.origin
+                                        + point(
+                                            px(i as f32 * COLUMN_WIDTH),
+                                            bounds.size.height - px(2.),
+                                        ),
+                                    size(px(1.), px(2.)),
+                                ),
+                                attack_colour(deck_palette(deck)[1])
+                                    .opacity((strength * 1.5).min(0.9)),
+                            ));
+                        }
                     });
                     window.paint_quad(fill(
                         Bounds::new(
@@ -566,7 +819,128 @@ pub fn overview(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rgb_mixes_bands_and_respects_eq() {
+        use super::mixed_rgb;
+        assert_eq!(mixed_rgb([1., 0., 0.], [1.; 3]), 0xff0000);
+        assert_eq!(mixed_rgb([0., 1., 0.], [1.; 3]), 0x00ff00);
+        assert_eq!(mixed_rgb([0., 0., 1.], [1.; 3]), 0x0000ff);
+        assert_eq!(mixed_rgb([1., 1., 0.], [1.; 3]), 0xffff00);
+        assert_eq!(mixed_rgb([1., 0., 1.], [1.; 3]), 0xff00ff);
+        assert_eq!(mixed_rgb([0., 1., 1.], [1.; 3]), 0x00ffff);
+        assert_eq!(mixed_rgb([1.; 3], [1.; 3]), 0xffffff);
+        assert_eq!(mixed_rgb([1.; 3], [1., 0., 1.]), 0xff00ff);
+        assert_eq!(mixed_rgb([1.; 3], [0.; 3]), 0);
+        assert_eq!(mixed_rgb([0.; 3], [1.; 3]), 0);
+        assert_eq!(mixed_rgb([0.01, 0.01, 0.], [1.; 3]), 0xffff00);
+        // Weak background energy no longer washes dominant or mixed hues out.
+        assert_eq!(mixed_rgb([1., 0.01, 0.01], [1.; 3]), 0xff0000);
+        assert_eq!(mixed_rgb([1., 1., 0.01], [1.; 3]), 0xffff00);
+        assert_eq!(mixed_rgb([1., 0.01, 1.], [1.; 3]), 0xff00ff);
+        assert_eq!(mixed_rgb([0.01, 1., 1.], [1.; 3]), 0x00ffff);
+    }
+
+    #[test]
+    fn rgb_geometry_keeps_gaps_and_silhouette() {
+        let column = super::DisplayColumn {
+            peak: 0.8,
+            energy: [1., 1., 0.],
+            attack: 0.,
+        };
+        let meshes = super::rgb_meshes(
+            &[Some(column), Some(column), None, Some(column), Some(column)],
+            [1.; 3],
+        );
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(meshes[0].0, 0xffff00);
+        assert_eq!(meshes[0].1.vertices.len(), 12);
+        assert!(super::rgb_meshes(&[Some(column); 2], [0.; 3]).is_empty());
+    }
+
+    #[test]
+    fn cached_mesh_preserves_gaps_and_moves_without_changing_shape() {
+        use gpui_kit::{Bounds, point, px, size};
+        let column = super::DisplayColumn {
+            peak: 0.8,
+            energy: [0.2; 3],
+            attack: 0.,
+        };
+        let source = super::envelope_mesh(
+            &[Some(column), Some(column), None, Some(column), Some(column)],
+            |_| 0.25,
+        );
+        assert_eq!(source.vertices.len(), 12);
+        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(100.), px(80.)));
+        let moved = super::placed_mesh(&source, bounds, 3.);
+        for (original, placed) in source.vertices.iter().zip(&moved.vertices) {
+            assert_eq!(placed.xy_position.x, original.xy_position.x + px(7.));
+            assert_eq!(
+                placed.xy_position.y,
+                px(20. + original.xy_position.y.as_f32() * 80.)
+            );
+        }
+    }
     // Not `super::*`: that would bring in GPUI's own `test` attribute.
+    #[test]
+    fn scrolling_reuses_columns_and_keeps_global_source_alignment() {
+        let track = djcraft_engine::Track::from_samples("cache", 48000, vec![0.3; 48000 * 8]);
+        let mut cache = super::OverviewCache::default();
+        cache.scrolling_columns(&track, -16, 160, 1., None);
+        let allocation = cache.scrolling[0].as_ref().unwrap().data.as_ptr();
+        for first in [-16, 0, 16, 128] {
+            let actual = cache
+                .scrolling_columns(&track, first, 160, 1., None)
+                .to_vec();
+            let expected = super::display_source_columns(&track, first, 160, 1., None, &[]);
+            for (a, b) in actual.iter().zip(&expected) {
+                assert_eq!(a.is_some(), b.is_some());
+                if let (Some(a), Some(b)) = (a, b) {
+                    assert_eq!(a.peak, b.peak);
+                    assert_eq!(a.energy, b.energy);
+                    assert_eq!(a.attack, b.attack);
+                }
+            }
+            assert_eq!(
+                cache.scrolling[0].as_ref().unwrap().data.as_ptr(),
+                allocation
+            );
+        }
+        // Background completion invalidates cached colour data exactly once.
+        cache
+            .attacks
+            .set(vec![djcraft_analysis::BassAttack {
+                index: 100,
+                strength: 1.,
+            }])
+            .unwrap();
+        let data = cache.scrolling_columns(&track, 0, 160, 1., None);
+        assert!(data[100].unwrap().attack > 0.9);
+        let data = cache.scrolling_columns(&track, 0, 160, 2., None);
+        assert!(data[50].unwrap().attack > 0.9);
+    }
+    #[test]
+    fn integrated_attack_colour_stops_when_only_sustained_bass_remains() {
+        let rate = 48000;
+        let mut samples = Vec::new();
+        for i in 0..rate * 4 {
+            let t = i as f64 / rate as f64;
+            let mut sample = 0.15 * (std::f64::consts::TAU * 90. * t).sin();
+            for hit in [0.5, 1., 1.5] {
+                let age = t - hit;
+                if (0. ..0.15).contains(&age) {
+                    sample += 0.6
+                        * (-age / 0.035).exp()
+                        * (std::f64::consts::TAU * (110. * age - 200. * age * age)).sin();
+                }
+            }
+            samples.extend([sample as f32; 2]);
+        }
+        let track = djcraft_engine::Track::from_samples("break", rate, samples);
+        let step = track.peak_count() as f64 / 400.;
+        let columns = super::display_columns(&track, 0, 400, step);
+        assert!(columns[40..180].iter().flatten().any(|c| c.attack > 0.1));
+        assert!(columns[220..380].iter().flatten().all(|c| c.attack == 0.));
+    }
     use super::{DisplayColumn, VISIBLE_SECONDS, grid_lines, smooth_columns};
     use djcraft_library::TempoResult;
 
@@ -597,9 +971,9 @@ mod tests {
             ])
             .unwrap();
         for (stem, expected) in [0.1f32, 0.15, 0.05, 0.2].into_iter().enumerate() {
-            let columns = super::display_source_columns(&track, 0, 8, 1., Some(stem));
+            let columns = super::display_source_columns(&track, 0, 8, 1., Some(stem), &[]);
             assert!((columns[3].unwrap().energy[0] - expected * expected).abs() < 1e-5);
-            let preroll = super::display_source_columns(&track, -8, 8, 1., Some(stem));
+            let preroll = super::display_source_columns(&track, -8, 8, 1., Some(stem), &[]);
             assert!(preroll[..8].iter().all(Option::is_none));
         }
     }
@@ -652,12 +1026,20 @@ mod tests {
         raw[4] = Some(DisplayColumn {
             energy: [1., 0., 0.],
             peak: 1.,
+            attack: 1.,
         });
         let smoothed = smooth_columns(&raw);
         let levels: Vec<_> = smoothed.iter().map(|c| c.unwrap().energy[0]).collect();
         assert_eq!(levels, vec![0.1, 0.2, 0.4, 0.2, 0.1]);
         assert_eq!(
             smoothed.iter().map(|c| c.unwrap().peak).collect::<Vec<_>>(),
+            vec![0., 0., 1., 0., 0.]
+        );
+        assert_eq!(
+            smoothed
+                .iter()
+                .map(|c| c.unwrap().attack)
+                .collect::<Vec<_>>(),
             vec![0., 0., 1., 0., 0.]
         );
         assert_eq!(super::peak_height(smoothed[2].unwrap(), [0.; 3]), 0.);
@@ -667,6 +1049,7 @@ mod tests {
             Some(DisplayColumn {
                 energy: [0.1, 0.2, 0.3],
                 peak: 0.7,
+                attack: 0.,
             });
             7
         ];

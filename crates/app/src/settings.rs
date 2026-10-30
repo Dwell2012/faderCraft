@@ -123,6 +123,8 @@ pub struct Settings {
     pub start_tab: StartTab,
     /// Show all four decks in the performance view.
     pub four_decks: bool,
+    /// Red bass, green mids and blue highs in performance waveforms.
+    pub rgb_waveforms: bool,
     /// Prefer an available GPU for local stem preparation; false forces CPU.
     pub stem_gpu: bool,
     pub stem_model: StemModel,
@@ -211,6 +213,7 @@ impl Default for Settings {
             theme: ThemeChoice::default(),
             start_tab: StartTab::default(),
             four_decks: false,
+            rgb_waveforms: false,
             stem_gpu: true,
             stem_model: StemModel::Fast,
             scan_on_startup: true,
@@ -302,6 +305,7 @@ mod tests {
             theme: ThemeChoice::Light,
             start_tab: StartTab::Library,
             four_decks: true,
+            rgb_waveforms: true,
             stem_gpu: false,
             stem_model: StemModel::Detailed,
             scan_on_startup: false,

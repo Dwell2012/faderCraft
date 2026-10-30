@@ -1,6 +1,4 @@
-# CPU or CUDA torch/torchaudio are installed from the official index first.
-torch==2.5.1
-torchaudio==2.5.1
+# Platform-specific pinned torch/torchaudio are installed by setup-stems first.
 demucs==4.0.1
 numpy==1.26.4
 dora-search==0.1.13

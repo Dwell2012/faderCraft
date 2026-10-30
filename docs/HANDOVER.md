@@ -1,5 +1,38 @@
 # Codex handover
 
+## Reminder for tomorrow morning on the other PC (31 October 2026)
+
+**Enable the Mixtrack controller profile when launching.** A direct launch of
+`djcraft.exe` without `DJCRAFT_CONTROLLER_MAP` opens no MIDI ports, even when
+Windows detects the controller. Recent RGB-test launches omitted that variable;
+the hardware and saved mapping were still present.
+
+From the repository on the other PC, build and launch with:
+
+```powershell
+. ./tools/dev-shell.ps1
+cargo build --workspace --locked
+./tools/run-mixtrack.ps1
+```
+
+The launcher creates a local editable copy of
+`profiles/numark-mixtrack-pro-ii.json` in the development data directory's
+`controllers` folder if missing, then sets `DJCRAFT_CONTROLLER_MAP`.
+Personal edits to an existing local copy are preserved. Local edited profiles
+are machine-specific and are not included in Git: transfer/review them separately
+if the other PC needs those exact edits, or use `-MappingPath` explicitly.
+Confirm the exact MIDI port name on that PC (expected `MixTrack Pro II`);
+logs should show `Controller connected: MixTrack Pro II (144 mappings)`
+and a startup snapshot request. Audio-device settings are separate and must
+match that PC. Keep launches visible and retain the isolated development library.
+
+RGB update (30 October): the performance header's persistent RGB toggle colours
+scrolling and overview waveforms from bass/mid/high amplitudes, with yellow,
+magenta/pink, cyan and white mixtures. The final visual adjustment uses a gentle
+1.2 contrast curve and 85% opacity. The main debug build was rebuilt and launched;
+Mixtrack connected with 144 mappings. See [waveform details](WAVEFORMS.md).
+
+
 Latest session: [29 October UI, waveform, key investigation and ASIO handover](SESSION-2026-10-29.md).
 
 Stem model choice (26 October): stem_model defaults Fast for old settings; Detailed selects htdemucs_ft. Settings has background download/verify buttons and local availability markers. Both models stay on disk; the worker keeps only the current model loaded, switches on a queued request, and preloads the selected model at startup. Cache keys include model name, preserving existing htdemucs-v1 entries. Already attached stems require a deck reload to change model. Worker heartbeats cover first-use downloads, with absolute startup/job limits. Lost-GPU CPU fallback reloads the correct model. No library schema or engine/audio change.
@@ -805,3 +838,17 @@ FX timing: DeckAction::SetEffectBeats changes the deck-wide 1/16–2 beat divisi
 FX Beats knob update: Binding::EffectBeats handles relative CC with two's-complement/offset encoding; Mixtrack CC 0x21/0x22 maps decks A/B with no modifier. Shared EFFECT_BEATS catalogue is 0.125/0.25/0.5/1/2/4/8. Engine validates 0.125–8 (replaces the previous 1/16–2 range); default remains 0.5. Audio delay buffers are allocated off-thread for 25 seconds to accommodate 8 beats at the minimum effective 20 BPM plus grain offsets, instead of silently clipping long delays. Added real 24-second impulse-delay and controller encoder regression tests. Installed development profile upgraded additively, preserving custom bindings.
 
 Mixtrack startup snapshot: live-tested official init SysEx now returns every absolute CC (14 controls). Output connection sends native::MIXTRACK_PRO_II_STARTUP after input opens; Bridge::prepare_startup_snapshot arms each absolute mapping for one reading within one second. Only when ALL decks are stopped can it bypass initial pickup. Then usual external-change pickup applies; reconnect during playback never adopts. The app's JogBatch coalesces pending JogScratch commands by deck across each drained input batch, flushes before other actions/host commands and at batch end. Every MIDI packet still updates the bridge's timestamp-based speed and physical target, but only the latest motion is forwarded to the engine. Added deterministic pickup/live/expiry and delayed-batch/reversal/release-order tests.
+
+Modal analysis (29 October 2026): schema 21 adds tracks.key_modal JSON. Analysis version 12 refreshes existing tracks; base tonic/Camelot stay compatible, with a separate conservative ModalEstimate. Characteristic degrees, third quality and candidate margin gate mode labels; UI marks modal names with '?' and deck headers distinguish unresolved modes. Manual/preferred tagged keys suppress modal overrides. Full Eyeball remains modal-unresolved with legacy E-minor result; no hardcoded exception. See MODES.md for heuristic profiles, limitations and tests.
+
+Mode presentation refined: modal names and unresolved/estimated status now appear only in key hover tooltips (compact headers, four-deck view and library). Inline labels retain their original compact key/Camelot presentation.
+
+Waveform bass attacks: new analysis::bass_attacks reads existing low-band RMS values, with no beat-grid dependency. DisplayColumn carries unsmoothed attack salience; warm tint stays inside actual peak silhouette, and tiny 2px ticks sit under deck overviews (4px reserved inside existing bounds). Stems retain prior style. Unit tests cover sustained-bass breaks and smoothing; 48kHz Eyeball checks around 2:22 still show other bass attacks, so this is explicitly a bass-attack cue, not kick source separation. See WAVEFORMS.md.
+
+AMD stem diagnosis (29 October 2026): this machine has an RX 9070 XT but its original stem runtime contained torch 2.5.1+cpu, so Automatic ran on CPU. Added official Windows ROCm 7.2.1 / torch+torchaudio 2.9.1 installation into a separate stem-runtime-rocm directory; the CPU runtime remains intact. Setup verifies real GPU inference without fallback before activating through DJCraft/stem-runtime-choice.txt. Explicit DJCRAFT_STEM_RUNTIME wins. Model cache can be shared via model-cache-path.txt. Check worker.log for both adapter name and actual inference device.
+
+AMD validation completed: both Fast and Detailed passed strict GPU inference probes on RX 9070 XT. Fresh end-to-end Rust check_stems with Detailed validated four sources from eight seconds of Eyeball; prepare.log reports Stem device: cuda and 1.637s inference. On AMD, cuda is the PyTorch API name and worker.log identifies the Radeon adapter. Eleven Python worker tests pass on CPU and ROCm environments. Original CPU environment and cached stems were retained; no graphics driver changes were needed.
+
+Waveform jitter follow-up: removed synchronous bass-attack detection from paint and repeated per-frame column construction. OverviewCache now owns a per-track Arc<OnceLock<attack list>> filled by one background worker, shared by scrolling and overview. Ready-state transitions invalidate cached columns, with a 256-column margin retaining data during panning; per-column event access uses partition-point searches. The existing visual clock is unchanged. Tests cover allocation reuse, source alignment across negative time/panning, readiness and zoom updates. Attack tint retains deck hue at 8% saturation and 94% lightness.
+
+Persistent attack follow-up: Track exposes its disposable waveform-cache identity, never the music-file path. App attack_cache stores time/strength records in .bass-attacks-v1 sidecars with validation and atomic publication. Normal analysis populates them; the existing UI background task loads or backfills them, with no file I/O in painting. No global analysis version bump is needed: older tracks backfill on first load. Source-time records resample to display indices without re-detection. Removed the highlight's exponential tail fade; cached salience stays fixed across scrolling. Tests cover reload reuse, different sample rates, malformed cache repair and empty results.

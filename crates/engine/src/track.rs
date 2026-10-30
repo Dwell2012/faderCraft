@@ -26,6 +26,7 @@ const RESAMPLE_CHUNK: usize = 1024;
 /// appends audio, and the audio thread and UI read whatever has arrived so
 /// far. Samples are stored as atomics so that this needs no locks.
 pub struct Track {
+    waveform_cache_path: Option<std::path::PathBuf>,
     pub title: String,
     pub sample_rate: u32,
     /// Interleaved stereo, as `f32` bits.
@@ -70,6 +71,11 @@ fn zeroed(len: usize) -> Box<[AtomicU32]> {
 }
 
 impl Track {
+    /// Identity of the disposable waveform cache, for related display metadata.
+    /// Read-only; source music paths are never returned here.
+    pub fn waveform_cache_path(&self) -> Option<&Path> {
+        self.waveform_cache_path.as_deref()
+    }
     /// An empty track with room for `capacity` frames.
     fn with_capacity(
         title: String,
@@ -78,6 +84,7 @@ impl Track {
         capacity: usize,
     ) -> Self {
         Self {
+            waveform_cache_path: None,
             title,
             sample_rate,
             samples: zeroed(capacity * CHANNELS),
@@ -407,7 +414,8 @@ impl Track {
                 }
             }
             converter.finish(&mut samples)?;
-            let track = Self::from_samples(title, sample_rate, samples);
+            let mut track = Self::from_samples(title, sample_rate, samples);
+            track.waveform_cache_path = entry.as_ref().map(|entry| entry.path().to_owned());
             save(&track);
             opened(Arc::new(track));
             return Ok(());
@@ -416,6 +424,7 @@ impl Track {
         // Headers are not always exact; leave a second of headroom.
         let capacity = estimated + sample_rate as usize;
         let mut track = Self::with_capacity(title, sample_rate, estimated, capacity);
+        track.waveform_cache_path = entry.as_ref().map(|entry| entry.path().to_owned());
         if let Some(cached) = &cached {
             for (slot, peak) in track.peaks.iter().zip(&cached.peaks) {
                 slot.store(peak[0].to_bits(), Ordering::Relaxed);

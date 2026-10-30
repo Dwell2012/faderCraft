@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::tooltip::Tooltip;
 
 impl Shell {
     pub(super) fn refresh_deck_artwork(&mut self, cx: &mut Context<Self>) {
@@ -84,83 +85,108 @@ impl Shell {
                 k.shifted(offset.round() as i32).to_string()
             })
             .unwrap_or_else(|| "—".into());
+        let key_hover = self.key_hover_text(deck, state);
         div()
             .flex()
+            .when(deck % 2 == 1, |row| row.flex_row_reverse())
             .items_center()
-            .gap_2()
             .min_w_0()
-            .h(px(58.))
+            .h(px(72.))
             .flex_shrink_0()
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(22.))
-                    .h_full()
-                    .flex_shrink_0()
-                    .bg(Hsla::from(accent).opacity(0.18))
-                    .text_color(accent)
-                    .font_weight(FontWeight::BOLD)
-                    .child(deck_label(deck)),
-            )
-            .child(
-                div()
-                    .w(px(48.))
-                    .h(px(48.))
-                    .flex_shrink_0()
-                    .rounded_sm()
-                    .overflow_hidden()
-                    .bg(cx.theme().secondary)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when_some(self.deck_artwork[deck].clone(), |art, image| {
-                        art.child(img(image).w_full().h_full().object_fit(ObjectFit::Contain))
-                    })
-                    .when(self.deck_artwork[deck].is_none(), |art| {
-                        art.child(div().text_color(cx.theme().muted_foreground).child("♪"))
-                    }),
-            )
-            .child(
-                div()
+                    .when(deck % 2 == 1, |row| row.flex_row_reverse())
                     .flex_1()
                     .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
+                    .h_full()
+                    .items_center()
+                    .gap(px(4.))
+                    .bg(cx.theme().secondary.opacity(0.5))
                     .child(
                         div()
-                            .truncate()
-                            .text_sm()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(22.))
+                            .h_full()
+                            .flex_shrink_0()
+                            .bg(Hsla::from(accent).opacity(0.18))
+                            .text_color(accent)
                             .font_weight(FontWeight::BOLD)
-                            .child(title),
+                            .child(deck_label(deck)),
                     )
                     .child(
                         div()
-                            .truncate()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(artist),
+                            .w(px(72.))
+                            .h_full()
+                            .flex_shrink_0()
+                            .overflow_hidden()
+                            .bg(cx.theme().secondary)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when_some(self.deck_artwork[deck].clone(), |art, image| {
+                                art.child(
+                                    img(image).w_full().h_full().object_fit(ObjectFit::Contain),
+                                )
+                            })
+                            .when(self.deck_artwork[deck].is_none(), |art| {
+                                art.child(div().text_color(cx.theme().muted_foreground).child("♪"))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .when(deck % 2 == 1, |text| text.text_right())
+                            .gap_1()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(artist),
+                            ),
                     ),
             )
             .child(
                 div()
                     .w(px(146.))
                     .flex_shrink_0()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .pl_2()
+                    .px(px(4.))
+                    .h_full()
                     .flex()
                     .flex_col()
+                    .gap(px(4.))
                     .items_end()
+                    .when(deck % 2 == 1, |controls| controls.items_start())
                     .child(
                         div()
                             .id(("header-bpm", deck))
+                            .w_full()
+                            .h(px(40.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_center()
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .p(px(4.))
                             .text_size(px(26.))
+                            .line_height(px(26.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(accent)
-                            .child(bpm)
+                            .child(div().h(px(26.)).relative().top(px(-1.)).child(bpm))
                             .on_scroll_wheel(cx.listener(
                                 move |this, event: &ScrollWheelEvent, _, cx| {
                                     this.wheel_tempo(deck, event, cx)
@@ -170,10 +196,29 @@ impl Shell {
                     .child(
                         div()
                             .flex()
+                            .w_full()
+                            .h(px(28.))
+                            .flex_shrink_0()
+                            .justify_center()
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .p(px(4.))
                             .items_center()
-                            .gap_1()
-                            .child(div().text_xs().child(format!("KEY {key}")))
-                            .children([-1., 1.].into_iter().enumerate().map(|(direction, step)| {
+                            .child(div().id(("header-key-info", deck)).w(relative(0.3)).flex_shrink_0().text_center().text_xs().child("KEY"))
+                            .child(div().flex().w(relative(0.4)).flex_shrink_0().min_w_0().items_center().justify_center().gap(px(2.))
+                            .children((0..3).map(|position| {
+                                if position == 1 {
+                                    let hover = key_hover.clone();
+                                    return div()
+                                        .id(("header-key-value", deck))
+                                        .text_xs()
+                                        .child(key.clone())
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new(hover.clone()).build(window, cx)
+                                        })
+                                        .into_any_element();
+                                }
+                                let direction = usize::from(position == 2);
+                                let step = if direction == 0 { -1. } else { 1. };
                                 Button::new(("header-key-step", deck * 2 + direction))
                                     .xsmall()
                                     .outline()
@@ -195,13 +240,18 @@ impl Shell {
                                             cx.notify();
                                         }
                                     }))
-                            }))
+                                    .into_any_element()
+                            })))
                             .child(
+                                div().flex().w(relative(0.3)).flex_shrink_0().justify_center().child(
                                 Button::new(("header-key-lock", deck))
                                     .xsmall()
                                     .outline()
-                                    .label("MT")
+                                    .w(px(26.))
+                                    .p_0()
+                                    .icon(IconName::Lock)
                                     .selected(state.key_lock)
+                                    .when(state.key_lock, |button| button.bg(Hsla::from(accent)).text_color(rgb(0x070b12)))
                                     .tooltip(
                                         "Master tempo: preserve musical key when changing speed.",
                                     )
@@ -213,52 +263,69 @@ impl Shell {
                                             .unwrap_or(true);
                                         this.send(deck, DeckAction::SetKeyLock { on });
                                         cx.notify();
-                                    })),
+                                    }))),
                             ),
                     ),
             )
     }
 
-    pub(super) fn deck_header_times(&self, state: &DeckState, cx: &Context<Self>) -> Div {
+    pub(super) fn deck_header_times(
+        &self,
+        _deck: usize,
+        state: &DeckState,
+        cx: &Context<Self>,
+    ) -> Div {
         let duration = state.track.as_ref().map(|t| t.duration_seconds);
         div()
             .w(px(146.))
             .flex_shrink_0()
-            .border_l_1()
-            .border_color(cx.theme().border)
-            .pl_2()
+            .px(px(4.))
+            .h_full()
             .flex()
+            .gap(px(4.))
             .justify_between()
-            .children(
-                [
-                    (
-                        "ELAPSED",
-                        duration.map(|_| clock(state.position_seconds / state.tempo)),
-                    ),
-                    (
-                        "REMAIN",
-                        duration.map(|d| clock((d - state.position_seconds).max(0.) / state.tempo)),
-                    ),
-                ]
-                .into_iter()
-                .map(|(label, value)| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .child(
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .h_full()
+                    .items_center()
+                    .bg(cx.theme().secondary.opacity(0.5))
+                    .children(
+                        [
+                            (
+                                "ELAPSED",
+                                duration.map(|_| clock(state.position_seconds / state.tempo)),
+                            ),
+                            (
+                                "REMAIN",
+                                duration.map(|d| {
+                                    clock((d - state.position_seconds).max(0.) / state.tempo)
+                                }),
+                            ),
+                        ]
+                        .into_iter()
+                        .map(|(label, value)| {
                             div()
-                                .text_size(px(9.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(value.unwrap_or_else(|| "—".into())),
-                        )
-                }),
+                                .flex()
+                                .flex_1()
+                                .p(px(4.))
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_size(px(9.))
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(label),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(value.unwrap_or_else(|| "—".into())),
+                                )
+                        }),
+                    ),
             )
     }
 }

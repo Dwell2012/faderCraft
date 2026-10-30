@@ -928,7 +928,7 @@ impl FlowView {
                     [None; djcraft_protocol::HOT_CUES],
                     Default::default(),
                     0,
-                    [1.; 3],
+                    false,
                 ))
             })
             .children(flags)

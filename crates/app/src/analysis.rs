@@ -19,7 +19,8 @@ use djcraft_library::{Camelot, CuePoint, KeyResult, Library, TempoResult};
 // Version 10 uses the first confirmed run and refines it locally, not the intro.
 // Version 11 anchors quiet-lead-in bar starts on the confirmed kick entrance,
 // rejects unstable/rolling references and accepts half-time kick cadence.
-const ANALYSIS_VERSION: i64 = 11;
+// Version 12 adds conservative modal estimates alongside the legacy key.
+const ANALYSIS_VERSION: i64 = 12;
 /// Tempo and key do not need treble, and a lower rate is quicker to decode.
 const ANALYSIS_RATE: u32 = 22_050;
 const MAX_WORKERS: usize = 4;
@@ -83,6 +84,7 @@ pub fn analyse_pending(
         for (id, analysis) in received {
             library.store_structure(id, analysis.energy, &analysis.cues)?;
             library.store_key(id, analysis.key)?;
+            library.store_modal_key(id, analysis.modal)?;
             // Last, as this is what marks the track as analysed.
             library.store_tempo(id, ANALYSIS_VERSION, analysis.tempo)?;
             progress.done.fetch_add(1, Ordering::Relaxed);
@@ -93,6 +95,7 @@ pub fn analyse_pending(
 
 #[derive(Default)]
 struct Analysis {
+    modal: Option<djcraft_library::ModalKeyResult>,
     tempo: Option<TempoResult>,
     key: Option<KeyResult>,
     energy: Option<u8>,
@@ -105,6 +108,8 @@ fn analyse(path: &Path, waveform_dir: &Path, range: TempoRange) -> Analysis {
         return Analysis::default();
     };
     let samples = track.mono();
+    // Persist waveform events while this track is already decoded for analysis.
+    let _ = crate::attack_cache::load_or_analyse(&track);
     let tempo = detect_tempo(&samples, ANALYSIS_RATE, range);
     // Cue points sit on the bar lines of a tempo worth trusting.
     let structure = detect_structure(
@@ -112,14 +117,23 @@ fn analyse(path: &Path, waveform_dir: &Path, range: TempoRange) -> Analysis {
         ANALYSIS_RATE,
         tempo.filter(|t| t.confidence >= 0.1),
     );
+    let key = detect_key(&samples, ANALYSIS_RATE);
     Analysis {
+        modal: key.and_then(|key| {
+            key.modal.map(|mode| djcraft_library::ModalKeyResult {
+                tonic: key.tonic,
+                mode: mode.mode.label().into(),
+                score: f64::from(mode.score),
+                margin: f64::from(mode.margin),
+            })
+        }),
         tempo: tempo.map(|tempo| TempoResult {
             bpm: tempo.bpm,
             first_beat_seconds: tempo.first_beat_seconds,
             downbeat: tempo.downbeat,
             confidence: tempo.confidence as f64,
         }),
-        key: detect_key(&samples, ANALYSIS_RATE).map(|key| KeyResult {
+        key: key.map(|key| KeyResult {
             key: Camelot::from_tonic(key.tonic, key.major),
             confidence: key.confidence as f64,
         }),

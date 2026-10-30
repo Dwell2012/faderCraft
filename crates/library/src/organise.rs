@@ -832,6 +832,7 @@ mod tests {
 
     fn track(title: &str, artist: &str, bpm: f64, key: &str, energy: u8) -> Track {
         Track {
+            modal_key: None,
             id: 0,
             source_id: 1,
             source_name: String::new(),

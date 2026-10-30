@@ -9,6 +9,23 @@ import prepare_stems as worker
 
 
 class DeviceTests(unittest.TestCase):
+    def test_larger_discrete_gpu_is_preferred_over_integrated_adapter(self):
+        from types import SimpleNamespace
+        with patch.object(torch.cuda, "is_available", return_value=True), \
+             patch.object(torch.cuda, "device_count", return_value=2), \
+             patch.object(torch.cuda, "get_device_properties", side_effect=lambda i: SimpleNamespace(total_memory=[512, 16384][i])), \
+             patch.object(torch.cuda, "set_device") as select, \
+             patch.object(torch.cuda, "get_device_name", return_value="Radeon RX 9070 XT"), \
+             patch.object(torch, "empty"):
+            self.assertEqual(worker.select_device("auto"), "cuda")
+            select.assert_called_once_with(1)
+
+    def test_verification_refuses_cpu_fallback(self):
+        with patch.object(worker, "select_device", return_value="cpu"), \
+             patch.object(worker, "load_model") as load:
+            with self.assertRaisesRegex(RuntimeError, "No GPU backend"):
+                worker.verify_gpu("htdemucs")
+            load.assert_not_called()
     def test_cpu_override_never_probes_gpu(self):
         with patch.object(torch.cuda, "is_available") as probe:
             self.assertEqual(worker.select_device("cpu"), "cpu")

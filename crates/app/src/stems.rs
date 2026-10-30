@@ -51,7 +51,7 @@ impl Worker {
             .arg(model)
             .arg("--device")
             .arg(if prefer_gpu { "auto" } else { "cpu" })
-            .env("TORCH_HOME", runtime.join("models"))
+            .env("TORCH_HOME", model_cache_dir(&runtime))
             .env("PYTHONUTF8", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -104,9 +104,10 @@ impl Worker {
             match line.as_str() {
                 "DJCRAFT_DONE" => return Ok(()),
                 "DJCRAFT_ERROR" => {
-                    return Err(
-                        "Preparation failed; see prepare.log and stem-runtime/worker.log".into(),
-                    );
+                    return Err(format!(
+                        "Preparation failed; see prepare.log and {}",
+                        runtime_dir().join("worker.log").display()
+                    ));
                 }
                 _ => {
                     if let Some(percent) = progress_percent(&line) {
@@ -146,7 +147,7 @@ pub fn download_model(model: &str) -> Result<(), String> {
         .arg(script)
         .arg("--download")
         .arg(model)
-        .env("TORCH_HOME", runtime.join("models"))
+        .env("TORCH_HOME", model_cache_dir(&runtime))
         .env("PYTHONUTF8", "1")
         .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
         .stderr(Stdio::from(log));
@@ -158,12 +159,20 @@ pub fn download_model(model: &str) -> Result<(), String> {
     if command.status().map_err(|e| e.to_string())?.success() {
         Ok(())
     } else {
-        Err("Download failed; see stem-runtime/model-download.log. Retry when connected.".into())
+        Err(format!(
+            "Download failed; see {}. Retry when connected.",
+            runtime.join("model-download.log").display()
+        ))
     }
 }
 
 pub fn model_downloaded(model: &str) -> bool {
-    runtime_dir().join(format!("model-{model}.ready")).is_file()
+    let runtime = runtime_dir();
+    model_cache_dir(&runtime)
+        .parent()
+        .unwrap_or(&runtime)
+        .join(format!("model-{model}.ready"))
+        .is_file()
 }
 
 pub fn shutdown() {
@@ -227,10 +236,43 @@ pub fn runtime_dir() -> PathBuf {
     std::env::var_os("DJCRAFT_STEM_RUNTIME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            dirs::data_local_dir()
+            let root = dirs::data_local_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join("DJCraft/stem-runtime")
+                .join("DJCraft");
+            let choice =
+                fs::read_to_string(root.join("stem-runtime-choice.txt")).unwrap_or_default();
+            root.join(runtime_name(&choice))
         })
+}
+
+fn runtime_name(choice: &str) -> &'static str {
+    if choice.trim() == "stem-runtime-rocm" {
+        "stem-runtime-rocm"
+    } else {
+        "stem-runtime"
+    }
+}
+
+fn model_cache_dir(runtime: &Path) -> PathBuf {
+    fs::read_to_string(runtime.join("model-cache-path.txt"))
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| PathBuf::from(path.trim()))
+        .unwrap_or_else(|| runtime.join("models"))
+}
+
+#[cfg(test)]
+mod runtime_selection_tests {
+    #[test]
+    fn runtime_choice_only_accepts_supported_local_backends() {
+        assert_eq!(
+            super::runtime_name("stem-runtime-rocm\n"),
+            "stem-runtime-rocm"
+        );
+        for value in ["", "stem-runtime", "../../other", "C:\\other", "unverified"] {
+            assert_eq!(super::runtime_name(value), "stem-runtime");
+        }
+    }
 }
 
 /// Returns false for a cache miss when preparation was not requested.

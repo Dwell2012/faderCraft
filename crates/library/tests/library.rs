@@ -217,7 +217,7 @@ fn metadata_migration_preserves_existing_tracks_and_empty_fields_do_not_erase_th
     drop(library);
     let raw = rusqlite::Connection::open(&db).unwrap();
     raw.execute_batch("DROP TRIGGER tracks_assign_identity; DROP TABLE track_identities; DROP TABLE track_metadata;
-        DROP INDEX playlist_children; ALTER TABLE playlists DROP COLUMN parent_playlist_id; PRAGMA user_version=17;")
+        DROP INDEX playlist_children; ALTER TABLE playlists DROP COLUMN parent_playlist_id; ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=17;")
         .unwrap();
     drop(raw);
     let mut library = Library::open(&db).unwrap();
@@ -544,6 +544,7 @@ fn version_19_playlists_migrate_and_sublists_persist() {
     old.execute_batch(
         "DROP INDEX playlist_children;
         ALTER TABLE playlists DROP COLUMN parent_playlist_id;
+        ALTER TABLE tracks DROP COLUMN key_modal;
         PRAGMA user_version=19;",
     )
     .unwrap();
@@ -670,6 +671,7 @@ fn an_existing_library_gains_playlists_on_upgrade() {
          ALTER TABLE tracks DROP COLUMN key_manual;
          ALTER TABLE tracks DROP COLUMN key_detected;
          ALTER TABLE tracks DROP COLUMN key_confidence;
+         ALTER TABLE tracks DROP COLUMN key_modal;
          ALTER TABLE tracks DROP COLUMN cues_manual;
          DROP TABLE cues; ALTER TABLE tracks DROP COLUMN energy;
          ALTER TABLE flow_clips DROP COLUMN key_shift;
@@ -2128,4 +2130,82 @@ fn removing_tracks_keeps_files_and_prevents_rescan_reappearance() {
     assert!(library.tracks(&TrackQuery::default()).unwrap()[0].missing);
     library.remove_track(track).unwrap();
     assert!(library.tracks(&TrackQuery::default()).unwrap().is_empty());
+}
+
+#[test]
+fn modal_keys_migrate_persist_and_respect_manual_or_tagged_keys() {
+    use djcraft_library::ModalKeyResult;
+    let dir = TempDir::new("modal-key");
+    let audio = dir.0.join("song.wav");
+    write_tagged(&audio, "Modal", "Artist", "", "120", "Am");
+    let db = dir.0.join("library.db");
+    let mut library = Library::open(&db).unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    drop(library);
+    // Build the previous schema, with an existing track and its tags.
+    let old = rusqlite::Connection::open(&db).unwrap();
+    old.execute_batch("ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=20;")
+        .unwrap();
+    drop(old);
+    let mut library = Library::open(&db).unwrap();
+    let query = TrackQuery {
+        id: Some(id),
+        ..Default::default()
+    };
+    assert!(library.tracks(&query).unwrap()[0].modal_key.is_none());
+    let modal = ModalKeyResult {
+        tonic: 4,
+        mode: "Dorian".into(),
+        score: 0.8,
+        margin: 0.1,
+    };
+    assert_eq!(modal.label(2), "F♯ Dorian");
+    library
+        .store_key(
+            id,
+            Some(KeyResult {
+                key: Camelot::parse("9A").unwrap(),
+                confidence: 0.8,
+            }),
+        )
+        .unwrap();
+    library.store_modal_key(id, Some(modal.clone())).unwrap();
+    // Kept file tags take precedence over the modal estimate.
+    assert!(library.tracks(&query).unwrap()[0].modal_key.is_none());
+    library
+        .set_keep_tagged(KeepTagged {
+            tempo: true,
+            key: false,
+        })
+        .unwrap();
+    assert_eq!(
+        library.tracks(&query).unwrap()[0].modal_key,
+        Some(modal.clone())
+    );
+    drop(library);
+    let mut library = Library::open(&db).unwrap();
+    assert_eq!(
+        library.tracks(&query).unwrap()[0].modal_key,
+        Some(modal.clone())
+    );
+    assert!(
+        library
+            .store_modal_key(
+                id,
+                Some(ModalKeyResult {
+                    score: f64::NAN,
+                    ..modal.clone()
+                })
+            )
+            .is_err()
+    );
+    let (_, mut edit) = library.file_tags(id).unwrap();
+    edit.key = Some("8A".into());
+    library.edit_track(id, &edit).unwrap();
+    library.store_modal_key(id, Some(modal)).unwrap();
+    assert!(library.tracks(&query).unwrap()[0].modal_key.is_none());
+    library.store_key(id, None).unwrap();
+    library.store_modal_key(id, None).unwrap();
 }

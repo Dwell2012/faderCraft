@@ -6,9 +6,11 @@ mod fingerprint;
 mod key;
 mod structure;
 mod tempo;
+mod transients;
+pub use transients::{BassAttack, bass_attacks};
 
 pub use fingerprint::{Fingerprint, fingerprint};
-pub use key::{Key, detect_key};
+pub use key::{Key, ModalEstimate, Mode, detect_key};
 pub use structure::{Cue, MAX_CUES, SectionLabel, Structure, detect_structure, label_sections};
 pub use tempo::{BEATS_PER_BAR, Tempo, TempoRange, detect_tempo};
 

@@ -39,10 +39,17 @@ def select_device(preference):
         return "cpu"
     try:
         if torch.cuda.is_available():
+            index = 0
+            if torch.cuda.device_count() > 1:
+                # Prefer the discrete GPU over a smaller integrated adapter.
+                best = max(range(torch.cuda.device_count()),
+                           key=lambda i: torch.cuda.get_device_properties(i).total_memory)
+                torch.cuda.set_device(best)
+                index = best
             # Probe allocation too: a detected card can still have a broken driver.
             torch.empty(1, device="cuda")
             torch.set_float32_matmul_precision("high")
-            print(f"Stem GPU: {torch.cuda.get_device_name(0)}", file=sys.stderr, flush=True)
+            print(f"Stem GPU: {torch.cuda.get_device_name(index)}", file=sys.stderr, flush=True)
             return "cuda"
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             torch.empty(1, device="mps")
@@ -171,6 +178,21 @@ def serve(preference, model_name="htdemucs"):
             print("DJCRAFT_ERROR", flush=True)
 
 
+def verify_gpu(model_name):
+    """A real model probe which must never succeed by silently using the CPU."""
+    device = select_device("auto")
+    if device == "cpu":
+        raise RuntimeError("No GPU backend is available in this runtime")
+    model = load_model(model_name).to(device)
+    with torch.inference_mode():
+        result = apply_model(model, torch.zeros(1, 2, model.samplerate),
+                             device=device, shifts=0, split=True, overlap=0.25,
+                             progress=False, num_workers=0)
+        if not torch.isfinite(result.cpu()).all():
+            raise RuntimeError("GPU inference returned non-finite samples")
+    print(f"Verified GPU stem inference: {device}", flush=True)
+
+
 if __name__ == "__main__":
     if "--download" in sys.argv:
         parser = argparse.ArgumentParser()
@@ -178,6 +200,10 @@ if __name__ == "__main__":
         args = parser.parse_args()
         load_model(args.download)
         print("Model downloaded and verified", flush=True)
+    elif "--verify-gpu" in sys.argv:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--verify-gpu", choices=MODELS, required=True)
+        verify_gpu(parser.parse_args().verify_gpu)
     elif "--serve" in sys.argv:
         parser = argparse.ArgumentParser()
         parser.add_argument("--serve", action="store_true")

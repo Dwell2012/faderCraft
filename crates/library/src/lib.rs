@@ -42,7 +42,7 @@ pub use watch::FolderWatcher;
 pub use history::PlayHistoryEntry;
 pub use metadata::SavedLookup;
 
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 21;
 
 /// A measured tempo is shown only when the analysis was at least this sure
 /// of it. Below that (mixes with several tempos, music with no clear beat)
@@ -178,6 +178,8 @@ pub enum SourceKind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
+    /// Additional estimated mode; Camelot remains the legacy compatibility key.
+    pub modal_key: Option<ModalKeyResult>,
     pub id: i64,
     pub source_id: i64,
     /// The name of the source the track came from, such as its folder.
@@ -223,6 +225,26 @@ pub struct KeyResult {
     pub key: Camelot,
     /// 0.0 to 1.0.
     pub confidence: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ModalKeyResult {
+    pub tonic: u8,
+    pub mode: String,
+    pub score: f64,
+    pub margin: f64,
+}
+impl ModalKeyResult {
+    pub fn label(&self, semitones: i32) -> String {
+        const NOTES: [&str; 12] = [
+            "C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B",
+        ];
+        format!(
+            "{} {}",
+            NOTES[(i32::from(self.tonic) + semitones).rem_euclid(12) as usize],
+            self.mode
+        )
+    }
 }
 
 /// What tempo analysis found for a track.
@@ -626,6 +648,9 @@ impl Library {
                  COMMIT;",
             )?;
         }
+        if version < 21 {
+            conn.execute_batch("BEGIN; ALTER TABLE tracks ADD COLUMN key_modal TEXT; PRAGMA user_version=21; COMMIT;")?;
+        }
         Ok(Self { conn })
     }
 
@@ -708,12 +733,44 @@ impl Library {
     /// Records the outcome of key analysis; `None` when no key was found.
     pub fn store_key(&self, id: i64, key: Option<KeyResult>) -> Result<()> {
         self.conn.execute(
-            "UPDATE tracks SET key_detected = ?2, key_confidence = ?3 WHERE id = ?1",
+            "UPDATE tracks SET key_detected = ?2, key_confidence = ?3, key_modal=NULL WHERE id = ?1",
             params![
                 id,
                 key.map(|k| k.key.to_string()),
                 key.map(|k| k.confidence)
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Stores additional analysis without rewriting tags or manual keys.
+    pub fn store_modal_key(&self, id: i64, key: Option<ModalKeyResult>) -> Result<()> {
+        if let Some(key) = &key
+            && (key.tonic >= 12
+                || ![
+                    "Ionian",
+                    "Dorian",
+                    "Phrygian",
+                    "Lydian",
+                    "Mixolydian",
+                    "Aeolian",
+                    "Locrian",
+                ]
+                .contains(&key.mode.as_str())
+                || !key.score.is_finite()
+                || !(-1. ..=1.).contains(&key.score)
+                || !key.margin.is_finite()
+                || !(0. ..=2.).contains(&key.margin))
+        {
+            return Err(Error::Library("Invalid modal key analysis".into()));
+        }
+        let json = key
+            .map(|key| serde_json::to_string(&key))
+            .transpose()
+            .map_err(|e| Error::Library(e.to_string()))?;
+        self.conn.execute(
+            "UPDATE tracks SET key_modal=?2 WHERE id=?1",
+            params![id, json],
         )?;
         Ok(())
     }
@@ -1047,13 +1104,16 @@ impl Library {
         let mut sql = format!(
             "SELECT t.id, t.source_id, s.location, t.locator, t.title, t.artist, t.album,
                     t.genre, t.duration, {bpm}, {key}, t.energy, s.name, s.kind,
-                    t.year, t.missing, t.added_at
+                    t.year, t.missing, t.added_at,
+                    CASE WHEN t.key_manual=0 AND t.key_confidence >= {MIN_KEY_CONFIDENCE}
+                         AND NOT (t.key IS NOT NULL AND {keep_key}) THEN t.key_modal END
              FROM tracks t JOIN sources s ON s.id = t.source_id
              LEFT JOIN playlist_tracks pt ON pt.track_id = t.id AND pt.playlist_id = ?2
              WHERE (?1 IS NULL OR t.source_id = ?1) AND (?2 IS NULL OR pt.track_id IS NOT NULL)
                AND (?3 IS NULL OR t.id = ?3)",
             bpm = shown_bpm_sql(),
             key = shown_key_sql(),
+            keep_key = option_sql("keep_tagged_key", KeepTagged::default().key),
         );
         let mut values: Vec<rusqlite::types::Value> =
             vec![query.source.into(), query.playlist.into(), query.id.into()];
@@ -1088,6 +1148,9 @@ impl Library {
             let root: String = row.get(2)?;
             let locator: String = row.get(3)?;
             Ok(Track {
+                modal_key: row
+                    .get::<_, Option<String>>(17)?
+                    .and_then(|json| serde_json::from_str(&json).ok()),
                 id: row.get(0)?,
                 source_id: row.get(1)?,
                 path: Path::new(&root).join(locator),

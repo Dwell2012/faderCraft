@@ -93,3 +93,8 @@ job cancellation and automatic cache eviction are not implemented yet.
 Loaded/prepared vocal stems now also produce a local vocal-activity map for
 automix. The preparation strip displays purple vocal regions and the Automix
 preview reports predicted overlaps; see [AUTOMIX.md](AUTOMIX.md).
+
+## AMD Radeon on Windows
+Setup now detects supported Radeon GPUs and offers -Device ROCm, using AMD's official Python 3.12 / ROCm 7.2.1 / PyTorch 2.9.1 wheels. The RX 9070 XT is supported by AMD; a compatible Windows 11 Radeon driver is required. The AMD environment lives in DJCraft/stem-runtime-rocm alongside the existing CPU/CUDA environment. Setup shares an existing verified model cache, checks dependencies, and performs real GPU inference without CPU fallback before writing stem-runtime-choice.txt to select it. DJCRAFT_STEM_RUNTIME still overrides the choice. Running setup with -Device CPU selects the original runtime again. Existing cached stems remain valid and are reused.
+Official instructions: https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installrad/windows/install-pytorch.html
+GPU workers use PyTorch's cuda API on AMD as well as NVIDIA; worker.log must also name the actual adapter. On machines exposing multiple GPU adapters, the worker selects the adapter with the most reported GPU memory. A CPU-only PyTorch install cannot use an AMD card merely by enabling Automatic in settings. The optional Python runtime is separately installed; Rust licence checks do not audit its dependencies.

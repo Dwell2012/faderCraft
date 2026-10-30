@@ -217,6 +217,10 @@ Feature set modelled on Mixed In Key 10.
 
 ### Decks
 
+- [x] Persistent RGB toggle in the performance window header: red bass, green mids,
+      blue highs blended additively into yellow, pink/magenta, cyan and white
+      for scrolling waveforms and deck overviews; off restores deck colours.
+      Stem overlays retain their source colours.
 - [x] Two decks with scrolling and overview waveforms
 - [x] Deck-coloured waveforms: dark/primary/light low/mid/high overlays in each
       deck's lime/sapphire/amber/violet palette, including track overviews.
@@ -769,3 +773,47 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Mixed waveforms retain maximum sample peaks separately from the smoothed frequency-band body, preserving attack spikes at each horizontal scale; peak rendering follows the displayed EQ gains.
 
 - [x] Negotiate an advertised sample rate before creating DSP when an ASIO driver reports zero Hz at startup (Realtek ASIO); reject unavailable rates cleanly.
+
+- [~] Eyeball key investigation: independent audio peaks and supplied MIDI support G-natural/C-sharp and an E-centred modal hypothesis [detector unchanged; tonal-centre/corpus validation pending; see KEY-INVESTIGATION-2026-10-29.md].
+
+- [~] Estimated Ionian/Dorian/Phrygian/Lydian/Mixolydian/Aeolian/Locrian modes, stored separately and displayed in library/decks with ambiguity handling [tonic uses existing matcher; real-music corpus validation pending; see MODES.md].
+
+- [~] Integrated low-frequency attack colour in waveforms and tiny attack ticks below deck overviews [audio-derived, not grid-generated; kicks may be masked and sharp bass notes may qualify; Eyeball 2:22 visual retest pending; see WAVEFORMS.md].
+
+- [x] Native AMD ROCm stem runtime setup on Windows, separate from CPU/CUDA, with verified GPU inference before activation and multi-adapter selection [Fast/Detailed GPU inference validated on RX 9070 XT; see STEMS.md].
+
+- [x] Waveform attack accents use near-white deck tints; shared background attack analysis and reusable scrolling column caches remove repeated analysis from painting [smoothness hardware retest pending].
+
+- [x] Persistent, versioned waveform attack sidecars created during analysis and reused on reload/cross-rate playback; fixed highlight strength replaces fading tails [older cache entries backfill on next load].
+
+- [x] Cached waveform envelope meshes for playback scrolling and overview rendering; EQ and source changes invalidate geometry. [Two-deck smoothness requires live confirmation.]
+
+- [x] EQ-independent deck overviews with attack markers below only; engine-state polling wakes stalled playback visuals after asynchronous transport acknowledgement.
+
+- [x] Deck overview fills its existing waveform container with square corners; header and elapsed/remaining layout retained.
+
+- [x] Integrated overview/header styling: matching grey, square waveform edges, no gap or vertical divider beside timing.
+
+- [x] Track identity background aligns exactly with overview width; BPM/key and timing retain the fixed right column.
+
+- [x] Deck album artwork fills the 58px identity header height alongside the A/B label.
+
+- [x] Mirrored right-deck identity and overview/timing layout, with 4px identity spacing matching the header-to-waveform gap.
+
+- [x] Header BPM/key and timing boxes have 4px inner padding; right-deck key controls and elapsed/remaining order fully mirror the left.
+
+- [x] Separate grey BPM, key, elapsed and remaining boxes with 4px padding. Key lock uses a header lock icon; duplicate pitch-area button removed. Elapsed/remaining order stays unchanged on both decks.
+
+- [x] Centred BPM; consistent KEY / minus / key / plus / lock order on both decks. Combined elapsed/remaining box matches overview height.
+
+- [x] Consistent 4px header separators: 40px BPM and 28px key boxes in a 72px header; 44px elapsed/remaining and overview row.
+
+- [x] Key box uses equal-width edge slots: KEY left, lock right, minus/key/plus independently centred.
+
+- [x] Key box has invisible 30/40/30 percent sections, each centring its label, key controls or lock icon.
+
+- [x] BPM uses a centred 26px text line with optical baseline adjustment inside its fixed-height box.
+
+- [x] Header key-lock button widened to 26px and filled with the deck accent while active.
+
+- [x] RGB waveform blends with gentle saturation and softened brightness to clarify reds, yellows, pinks and cyan without harsh neon colours.

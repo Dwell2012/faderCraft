@@ -41,7 +41,7 @@ use crate::settings_view::{SettingsEvent, SettingsView};
 use crate::waveform::{VISIBLE_SECONDS, overview, waveform};
 
 const TOP_BAR_HEIGHT: Pixels = px(52.);
-const OVERVIEW_HEIGHT: f32 = 36.;
+const OVERVIEW_HEIGHT: f32 = 44.;
 
 pub(crate) fn deck_label(deck: usize) -> &'static str {
     ["A", "B", "C", "D"][deck]
@@ -199,6 +199,7 @@ pub struct Shell {
     /// has been analysed.
     grids: Vec<Option<TempoResult>>,
     deck_keys: Vec<Option<djcraft_library::Camelot>>,
+    deck_modes: Vec<Option<djcraft_library::ModalKeyResult>>,
     deck_metadata: Vec<Option<(String, String)>>,
     deck_artwork: Vec<Option<Arc<Image>>>,
     artwork_paths: Vec<Option<PathBuf>>,
@@ -439,6 +440,7 @@ impl Shell {
             deck_paths: vec![None; DECKS],
             grids: vec![None; DECKS],
             deck_keys: vec![None; DECKS],
+            deck_modes: vec![None; DECKS],
             deck_metadata: vec![None; DECKS],
             deck_artwork: vec![None; DECKS],
             artwork_paths: vec![None; DECKS],
@@ -543,12 +545,26 @@ impl Shell {
                 if this
                     .update(cx, |this, cx| {
                         let was_enabled = this.automix.enabled;
+                        let mut visuals_moving = false;
                         if let Some(engine) = &mut this.engine {
-                            this.automix = engine.state().automix;
+                            let state = engine.state();
+                            visuals_moving = state.decks.iter().any(|deck| {
+                                deck.playing
+                                    || deck.loading
+                                    || deck.effect_tail
+                                    || deck.track.as_ref().is_some_and(|track| !track.fully_loaded)
+                            });
+                            this.automix = state.automix;
                         }
                         this.ensure_loudness(cx);
                         this.persist_automix();
-                        if was_enabled || this.automix.enabled {
+                        // A command's immediate repaint can precede audio-thread
+                        // acknowledgement. Bootstrap animation from authoritative
+                        // state even when that first frame still saw a stopped deck.
+                        if (visuals_moving && this.last_frame.elapsed().as_millis() >= 50)
+                            || was_enabled
+                            || this.automix.enabled
+                        {
                             cx.notify();
                         }
                     })
@@ -594,6 +610,11 @@ impl Shell {
             .deck_paths
             .iter()
             .map(|path| path.as_deref().and_then(|path| library.key_at(path)))
+            .collect();
+        self.deck_modes = self
+            .deck_paths
+            .iter()
+            .map(|path| path.as_deref().and_then(|path| library.modal_key_at(path)))
             .collect();
         self.grids = self
             .deck_paths
@@ -1318,6 +1339,22 @@ impl Shell {
                                 )
                                 .on_click(cx.listener(|this, _, _, cx| this.prepare_stems(cx))),
                             )
+                            .child(
+                                Button::new("rgb-waveforms")
+                                    .small()
+                                    .outline()
+                                    .label("RGB")
+                                    .selected(self.settings.rgb_waveforms)
+                                    .tooltip("RGB waveforms: red bass, green mids, blue highs. Toggle off for deck colours.")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings.rgb_waveforms = !this.settings.rgb_waveforms;
+                                        if let Err(error) = this.settings.save(&crate::storage::machine_dir()) {
+                                            eprintln!("Could not save waveform preference: {error}");
+                                        }
+                                        cx.set_global(this.settings.clone());
+                                        cx.notify();
+                                    })),
+                            )
                             .child(self.eq_mode_menu(cx))
                             .when(self.has_stem_waveforms(), |bar| {
                                 bar.child(
@@ -1720,8 +1757,13 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .when(index % 2 == 1, |row| row.flex_row_reverse())
                     .items_center()
-                    .gap_2()
+                    .h(px(if self.settings.four_decks {
+                        28.
+                    } else {
+                        OVERVIEW_HEIGHT
+                    }))
                     .child(
                         div()
                             .flex_1()
@@ -1739,7 +1781,6 @@ impl Shell {
                                 OVERVIEW_HEIGHT
                             }))
                             .flex_shrink_0()
-                            .rounded_md()
                             .bg(theme.secondary.opacity(0.5))
                             .overflow_hidden()
                             .when_some(track, |this, track| {
@@ -1752,11 +1793,7 @@ impl Shell {
                                     state.hot_cues,
                                     state.cue_appearance.clone(),
                                     index,
-                                    if state.eq_mode == EqMode::Classic {
-                                        state.eq
-                                    } else {
-                                        [1.; 3]
-                                    },
+                                    self.settings.rgb_waveforms,
                                 ))
                             })
                             .on_mouse_down(
@@ -1773,7 +1810,7 @@ impl Shell {
                             ),
                     )
                     .when(!self.settings.four_decks, |row| {
-                        row.child(self.deck_header_times(state, cx))
+                        row.child(self.deck_header_times(index, state, cx))
                     }),
             )
             .child(self.deck_display(index, state, display_controls, display_identity, cx))

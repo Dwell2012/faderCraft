@@ -677,6 +677,20 @@ impl TableDelegate for TrackTable {
                 })
                 .child(div().min_w_0().truncate().child(text));
         }
+        if matches!(self.field(col_ix), Field::Key) {
+            let mode = track.modal_key.as_ref().map_or_else(
+                || "Mode unresolved".to_owned(),
+                |mode| format!("Estimated mode: {}", mode.label(0)),
+            );
+            return div().child(
+                div()
+                    .id(("library-key-info", row_ix))
+                    .truncate()
+                    .when(missing, |this| this.opacity(0.5))
+                    .child(text)
+                    .tooltip(move |window, cx| Tooltip::new(mode.clone()).build(window, cx)),
+            );
+        }
         div()
             .truncate()
             .when(missing, |this| this.opacity(0.5))
@@ -951,6 +965,19 @@ impl LibraryView {
             .ok()?
             .pop()?
             .camelot
+    }
+
+    pub fn modal_key_at(&self, path: &Path) -> Option<djcraft_library::ModalKeyResult> {
+        let library = self.library.as_ref()?;
+        let id = library.track_at(path).ok()??;
+        library
+            .tracks(&TrackQuery {
+                id: Some(id),
+                ..Default::default()
+            })
+            .ok()?
+            .pop()?
+            .modal_key
     }
 
     /// Starts or stops watching the library's folders for changes.

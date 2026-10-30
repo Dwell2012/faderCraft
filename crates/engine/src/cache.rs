@@ -26,6 +26,9 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
     /// Identifies `audio` by its size and its first and last bytes, so the
     /// entry survives the file being moved or renamed.
     pub(crate) fn for_file(cache_dir: &Path, audio: &Path) -> io::Result<Self> {

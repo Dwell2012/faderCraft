@@ -36,12 +36,124 @@ const MINOR: [f32; 12] = [
     6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17,
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Ionian,
+    Dorian,
+    Phrygian,
+    Lydian,
+    Mixolydian,
+    Aeolian,
+    Locrian,
+}
+impl Mode {
+    pub const ALL: [Self; 7] = [
+        Self::Ionian,
+        Self::Dorian,
+        Self::Phrygian,
+        Self::Lydian,
+        Self::Mixolydian,
+        Self::Aeolian,
+        Self::Locrian,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ionian => "Ionian",
+            Self::Dorian => "Dorian",
+            Self::Phrygian => "Phrygian",
+            Self::Lydian => "Lydian",
+            Self::Mixolydian => "Mixolydian",
+            Self::Aeolian => "Aeolian",
+            Self::Locrian => "Locrian",
+        }
+    }
+    fn profile(self) -> [f32; 12] {
+        let mut p = if matches!(self, Self::Ionian | Self::Lydian | Self::Mixolydian) {
+            MAJOR
+        } else {
+            MINOR
+        };
+        match self {
+            Self::Dorian => p.swap(8, 9),
+            Self::Phrygian => p.swap(1, 2),
+            Self::Lydian => p.swap(5, 6),
+            Self::Mixolydian => p.swap(10, 11),
+            Self::Locrian => {
+                p.swap(1, 2);
+                p.swap(6, 7);
+            }
+            _ => {}
+        }
+        p
+    }
+}
+
+/// Heuristic mode estimate at the detected tonic, not a calibrated probability.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModalEstimate {
+    pub mode: Mode,
+    pub score: f32,
+    pub margin: f32,
+}
+
+fn estimate_mode(chroma: &[f32; 12], tonic: u8) -> Option<ModalEstimate> {
+    let relative = std::array::from_fn(|i| chroma[(i + usize::from(tonic)) % 12]);
+    // Choose chord quality from the actual third, not the legacy profile label.
+    let major = if relative[4] > relative[3] * 1.4 {
+        true
+    } else if relative[3] > relative[4] * 1.4 {
+        false
+    } else {
+        return None;
+    };
+    let mut ranked: Vec<_> = Mode::ALL
+        .into_iter()
+        .filter(|mode| matches!(mode, Mode::Ionian | Mode::Lydian | Mode::Mixolydian) == major)
+        .map(|mode| (mode, correlation(&relative, &mode.profile())))
+        .collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let (mode, score) = ranked[0];
+    let margin = score - ranked[1].1;
+    if score < 0.5 || margin < 0.025 {
+        return None;
+    }
+    // A loud tonic pedal must not hide quieter characteristic scale degrees.
+    let peak = relative.iter().skip(1).copied().fold(0., f32::max);
+    let supports = |present: usize, absent: usize| {
+        relative[present] >= peak * 0.12 && relative[present] > relative[absent] * 1.4
+    };
+    let third = if matches!(mode, Mode::Ionian | Mode::Lydian | Mode::Mixolydian) {
+        4
+    } else {
+        3
+    };
+    if !supports(third, if third == 4 { 3 } else { 4 }) {
+        return None;
+    }
+    let supported = match mode {
+        Mode::Dorian => !major && supports(9, 8) && supports(10, 11),
+        Mode::Phrygian => !major && supports(1, 2) && supports(7, 6),
+        Mode::Lydian => major && supports(6, 5),
+        Mode::Mixolydian => major && supports(10, 11),
+        Mode::Locrian => !major && supports(1, 2) && supports(6, 7),
+        Mode::Ionian => major && supports(5, 6) && supports(11, 10),
+        Mode::Aeolian => !major && supports(8, 9) && supports(2, 1),
+    };
+    supported.then_some(ModalEstimate {
+        mode,
+        score,
+        margin,
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Key {
+    /// None when characteristic notes or candidate separation are insufficient.
+    pub modal: Option<ModalEstimate>,
     /// The key's home note in semitones above C: 0 is C, 9 is A.
     pub tonic: u8,
     pub major: bool,
-    /// 0.0 to 1.0: how closely the track's notes fit the key.
+    /// Positive profile correlation, not a calibrated probability.
     pub confidence: f32,
 }
 
@@ -59,6 +171,7 @@ pub fn detect_key(samples: &[f32], sample_rate: u32) -> Option<Key> {
             let confidence = correlation(&chroma, &expected);
             if best.is_none_or(|key| confidence > key.confidence) {
                 best = Some(Key {
+                    modal: None,
                     tonic: tonic as u8,
                     major,
                     confidence,
@@ -66,7 +179,13 @@ pub fn detect_key(samples: &[f32], sample_rate: u32) -> Option<Key> {
             }
         }
     }
-    best.filter(|key| key.confidence > 0.0)
+    best.filter(|key| key.confidence > 0.0).map(|mut key| {
+        key.modal = estimate_mode(&chroma, key.tonic);
+        if let Some(modal) = key.modal {
+            key.major = matches!(modal.mode, Mode::Ionian | Mode::Lydian | Mode::Mixolydian);
+        }
+        key
+    })
 }
 
 /// How much of each of the twelve notes the audio holds, from C upwards.
@@ -192,6 +311,62 @@ mod tests {
     use super::*;
 
     const RATE: u32 = 22_050;
+
+    #[test]
+    fn modes_require_characteristic_notes_and_preserve_transposition() {
+        let scales = [
+            (Mode::Ionian, [0, 2, 4, 5, 7, 9, 11], true),
+            (Mode::Dorian, [0, 2, 3, 5, 7, 9, 10], false),
+            (Mode::Phrygian, [0, 1, 3, 5, 7, 8, 10], false),
+            (Mode::Lydian, [0, 2, 4, 6, 7, 9, 11], true),
+            (Mode::Mixolydian, [0, 2, 4, 5, 7, 9, 10], true),
+            (Mode::Aeolian, [0, 2, 3, 5, 7, 8, 10], false),
+            (Mode::Locrian, [0, 1, 3, 5, 6, 8, 10], false),
+        ];
+        for (mode, notes, _major) in scales {
+            for tonic in 0..12u8 {
+                let mut chroma = [0.1; 12];
+                for interval in notes {
+                    chroma[(usize::from(tonic) + interval) % 12] = match interval {
+                        0 => 8.,
+                        3 | 4 => 5.,
+                        6 | 7 => 6.,
+                        _ => 3.,
+                    };
+                }
+                assert_eq!(
+                    estimate_mode(&chroma, tonic).map(|m| m.mode),
+                    Some(mode),
+                    "{tonic} {mode:?}"
+                );
+            }
+        }
+        let mut triad = [0.; 12];
+        triad[0] = 8.;
+        triad[3] = 5.;
+        triad[7] = 6.;
+        assert_eq!(estimate_mode(&triad, 0), None);
+        assert_eq!(estimate_mode(&[1.; 12], 0), None);
+    }
+
+    #[test]
+    fn dorian_audio_with_a_tonic_drone_is_not_flattened_to_minor_only() {
+        let mut audio = Vec::new();
+        for note in [7, 4, 6, 2, 1, 11, 9, 4] {
+            let mut segment = vec![0.; RATE as usize * 2];
+            add_note(&mut segment, RATE, 4 - 24, 0., 0.3);
+            add_note(&mut segment, RATE, note, 0., 0.2);
+            audio.extend(segment);
+        }
+        let key = detect_key(&audio, RATE).unwrap();
+        assert_eq!(key.tonic, 4);
+        assert_eq!(
+            key.modal.map(|m| m.mode),
+            Some(Mode::Dorian),
+            "chroma {:?}",
+            chroma(&audio, RATE)
+        );
+    }
 
     /// A note with overtones, like a plucked or bowed string. `note` counts
     /// semitones from C4; `cents` detunes it.

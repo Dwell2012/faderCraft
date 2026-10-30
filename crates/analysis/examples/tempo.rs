@@ -50,6 +50,17 @@ fn main() {
                 if key.major { "major" } else { "minor" },
                 key.confidence
             );
+            if let Some(modal) = key.modal {
+                println!(
+                    "mode {} {} (estimate; score {:.3}, margin {:.3})",
+                    NOTES[key.tonic as usize % 12],
+                    modal.mode.label(),
+                    modal.score,
+                    modal.margin
+                );
+            } else {
+                println!("mode unresolved");
+            }
         }
         match tempo {
             Some(tempo) => println!(

@@ -1,6 +1,8 @@
 //! Run the app's pending analysis without restarting an active DJ session.
 #[path = "../src/analysis.rs"]
 mod analysis;
+#[path = "../src/attack_cache.rs"]
+mod attack_cache;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::var_os("DJCRAFT_DATA_DIR").ok_or("Set DJCRAFT_DATA_DIR")?;
