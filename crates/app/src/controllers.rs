@@ -1,4 +1,4 @@
-//! Optional JSON mapping host. No MIDI is opened without a user-owned profile.
+//! MIDI mapping host. Matching devices require approval before ports are opened.
 use djcraft_controllers::{
     Bridge, Profile,
     native::{Input, Output, input_ports},
@@ -76,7 +76,27 @@ mod jog_batch_tests {
     }
 }
 
+#[derive(Default)]
+struct ConnectionConsent {
+    present: std::collections::BTreeSet<String>,
+    decisions: std::collections::BTreeMap<String, bool>,
+}
+impl ConnectionConsent {
+    fn update(&mut self, available: &[String]) {
+        self.present = available
+            .iter()
+            .filter(|name| available.iter().filter(|other| *other == *name).count() == 1)
+            .cloned()
+            .collect();
+        self.decisions.retain(|name, _| self.present.contains(name));
+    }
+    fn allowed(&self, name: &str) -> bool {
+        self.present.contains(name) && self.decisions.get(name) == Some(&true)
+    }
+}
+
 pub struct Controllers {
+    consent: ConnectionConsent,
     bridge: Bridge,
     inputs: Vec<(String, Input)>,
     releases: Vec<Action>,
@@ -94,13 +114,11 @@ impl Controllers {
     pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
         self.bridge.set_tempo_bpms(bpms);
     }
-    pub fn load() -> Result<Option<Self>, String> {
-        let Some(path) = std::env::var_os("DJCRAFT_CONTROLLER_MAP") else {
+    pub fn load(settings: &crate::settings::Settings) -> Result<Option<Self>, String> {
+        if settings.controller_mapping == "@disabled" {
             return Ok(None);
-        };
-        let json = std::fs::read_to_string(&path)
-            .map_err(|e| format!("controller profile {path:?}: {e}"))?;
-        let mut profile = Profile::from_json(&json)?;
+        }
+        let mut profile = read_mapping(&settings.controller_mapping)?;
         // Upgrade only the named legacy headphone buttons; custom activation mappings stay intact.
         for mapping in &mut profile.mappings {
             if mapping.id.starts_with("headphone-cue-")
@@ -112,6 +130,7 @@ impl Controllers {
         }
         let bridge = Bridge::new(profile)?;
         let mut controllers = Self {
+            consent: Default::default(),
             bridge,
             inputs: Vec::new(),
             releases: Vec::new(),
@@ -131,6 +150,46 @@ impl Controllers {
         Ok(Some(controllers))
     }
 
+    pub fn release_all(&mut self) -> Vec<Action> {
+        let mut actions = std::mem::take(&mut self.releases);
+        for (name, _) in &self.inputs {
+            actions.extend(self.bridge.disconnect(name));
+        }
+        actions
+    }
+    pub fn use_connected(&mut self) {
+        while let Some((name, _)) = self.pending_connection() {
+            self.answer_connection(name, true);
+        }
+    }
+
+    pub fn has_matching_device(&self) -> bool {
+        self.bridge
+            .profile()
+            .mappings
+            .iter()
+            .any(|m| self.consent.present.contains(&m.port))
+    }
+
+    pub fn pending_connection(&self) -> Option<(String, String)> {
+        self.bridge
+            .profile()
+            .mappings
+            .iter()
+            .map(|m| &m.port)
+            .find(|name| {
+                self.consent.present.contains(*name) && !self.consent.decisions.contains_key(*name)
+            })
+            .map(|name| (name.clone(), self.bridge.profile().name.clone()))
+    }
+
+    pub fn answer_connection(&mut self, name: String, use_controller: bool) {
+        if self.consent.present.contains(&name) {
+            self.consent.decisions.insert(name, use_controller);
+            self.next_scan = std::time::Instant::now();
+        }
+    }
+
     fn rescan(&mut self) {
         let now = std::time::Instant::now();
         if now < self.next_scan {
@@ -140,6 +199,7 @@ impl Controllers {
         let Ok(available) = input_ports() else {
             return;
         };
+        self.consent.update(&available);
         // Names must be unambiguous; never guess between identical controllers.
         self.inputs.retain(|(name, _)| {
             if available.iter().filter(|n| *n == name).count() == 1 {
@@ -160,6 +220,9 @@ impl Controllers {
                 if self.failed.insert(name.clone()) {
                     eprintln!("Controller waiting for one input named {name:?}");
                 }
+                continue;
+            }
+            if !self.consent.allowed(&name) {
                 continue;
             }
             if self.inputs.iter().any(|(n, _)| *n == name) {
@@ -381,4 +444,82 @@ impl Drop for Controllers {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+    #[test]
+    fn approval_is_required_and_resets_after_disconnect_or_ambiguity() {
+        let mut c = ConnectionConsent::default();
+        c.update(&["deck".into()]);
+        assert!(!c.allowed("deck"));
+        c.decisions.insert("deck".into(), false);
+        c.update(&["deck".into()]);
+        assert_eq!(c.decisions.get("deck"), Some(&false));
+        c.decisions.insert("deck".into(), true);
+        assert!(c.allowed("deck"));
+        c.update(&[]);
+        c.update(&["deck".into()]);
+        assert!(!c.allowed("deck"));
+        assert!(!c.decisions.contains_key("deck"));
+        c.decisions.insert("deck".into(), true);
+        c.update(&["deck".into(), "deck".into()]);
+        assert!(!c.allowed("deck"));
+        assert!(!c.decisions.contains_key("deck"));
+    }
+}
+
+/// Validate a selected profile before changing the current controller connection.
+pub fn read_mapping(selection: &str) -> Result<Profile, String> {
+    let installed = crate::storage::machine_dir().join("controllers/numark-mixtrack-pro-ii.json");
+    let path = match selection {
+        "@bundled" => None,
+        "" => std::env::var_os("DJCRAFT_CONTROLLER_MAP")
+            .map(std::path::PathBuf::from)
+            .or_else(|| installed.exists().then_some(installed)),
+        other => Some(std::path::PathBuf::from(other)),
+    };
+    let json = match path {
+        Some(path) => std::fs::read_to_string(&path)
+            .map_err(|e| format!("Mapping {}: {e}", path.display()))?,
+        None => include_str!("../../../profiles/numark-mixtrack-pro-ii.json").to_owned(),
+    };
+    Profile::from_json(&json)
+}
+
+pub fn mapping_choices() -> Vec<(String, String)> {
+    let mut choices = vec![
+        (
+            String::new(),
+            "Automatic (installed/default mapping)".into(),
+        ),
+        ("@bundled".into(), "Numark MixTrack Pro II (bundled)".into()),
+        ("@disabled".into(), "Disabled".into()),
+    ];
+    if let Ok(entries) = std::fs::read_dir(crate::storage::machine_dir().join("controllers")) {
+        let mut paths: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let selection = path.to_string_lossy().into_owned();
+            if let Ok(profile) = read_mapping(&selection) {
+                choices.push((
+                    selection,
+                    format!(
+                        "{} ({})",
+                        profile.name,
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                ));
+            }
+        }
+    }
+    choices
 }

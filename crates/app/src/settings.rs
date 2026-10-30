@@ -113,6 +113,7 @@ impl StemModel {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub controller_mapping: String,
     pub audio_asio: bool,
     pub audio_exclusive: bool,
     pub audio_device: String,
@@ -204,6 +205,7 @@ pub fn format_bpm(bpm: f64, decimals: u8) -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            controller_mapping: String::new(),
             audio_asio: false,
             audio_exclusive: false,
             audio_device: String::new(),
@@ -299,6 +301,7 @@ mod tests {
             audio_asio: true,
             audio_exclusive: false,
             audio_device: "Example ASIO".into(),
+            controller_mapping: "custom-controller.json".into(),
             audio_buffer: 256,
             audio_master_pair: 0,
             audio_cue_pair: Some(2),

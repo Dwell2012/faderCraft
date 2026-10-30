@@ -33,6 +33,10 @@ magenta/pink, cyan and white mixtures. The final visual adjustment uses a gentle
 Mixtrack connected with 144 mappings. See [waveform details](WAVEFORMS.md).
 
 
+Controller mapping Settings follow-up: Settings > Controllers now selects Automatic, bundled MixTrack, installed JSON profiles, Disabled or an external JSON via Load mapping. Selection persists as controller_mapping (empty for legacy/default behavior). Changes validate then release held controls, drop old ports and enable currently matched devices. Future reconnections retain the consent prompt. JSON remains at its original path. No port renaming or broad unknown-device matching. Hardware behavior still needs user testing.
+
+30 October controller discovery: normal launches load an installed or bundled MixTrack mapping and scan once per second. Matching unique MIDI inputs prompt Use controller / Not now before opening input/output. Disconnect resets the decision and releases held actions; reconnect prompts again. Explicit DJCRAFT_CONTROLLER_MAP remains supported but also requires approval. Unknown controllers and a general profile chooser/catalogue remain pending. Hardware acceptance testing still required.
+
 Latest session: [29 October UI, waveform, key investigation and ASIO handover](SESSION-2026-10-29.md).
 
 Stem model choice (26 October): stem_model defaults Fast for old settings; Detailed selects htdemucs_ft. Settings has background download/verify buttons and local availability markers. Both models stay on disk; the worker keeps only the current model loaded, switches on a queued request, and preloads the selected model at startup. Cache keys include model name, preserving existing htdemucs-v1 entries. Already attached stems require a deck reload to change model. Worker heartbeats cover first-use downloads, with absolute startup/job limits. Lost-GPU CPU fallback reloads the correct model. No library schema or engine/audio change.

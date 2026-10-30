@@ -22,6 +22,7 @@ pub const KEY_CONTEXT: &str = "Settings";
 pub enum SettingsEvent {
     /// A setting changed; the new values should be applied and saved.
     Changed(Settings),
+    MappingSelected(Settings),
     Closed,
 }
 
@@ -29,6 +30,7 @@ pub enum SettingsEvent {
 enum Page {
     Preferences,
     Audio,
+    Controllers,
     Library,
     Assistant,
     Plugins,
@@ -44,6 +46,7 @@ impl Page {
             &[
                 Page::Preferences,
                 Page::Audio,
+                Page::Controllers,
                 Page::Library,
                 Page::Assistant,
             ],
@@ -56,6 +59,7 @@ impl Page {
         match self {
             Page::Preferences => IconName::SlidersHorizontal,
             Page::Audio => IconName::Volume2,
+            Page::Controllers => IconName::SlidersHorizontal,
             Page::Library => IconName::Library,
             Page::Assistant => IconName::Sparkles,
             Page::Plugins => IconName::Puzzle,
@@ -68,6 +72,7 @@ impl Page {
         match self {
             Page::Preferences => "Preferences",
             Page::Audio => "Audio",
+            Page::Controllers => "Controllers",
             Page::Library => "Library",
             Page::Assistant => "Assistant",
             Page::Plugins => "Plugins",
@@ -80,6 +85,7 @@ impl Page {
         match self {
             Page::Preferences => "How djcraft looks and starts on this computer.",
             Page::Audio => "Where the mix is played.",
+            Page::Controllers => "Choose the mapping for your MIDI controller.",
             Page::Library => "How your music library is kept up to date.",
             Page::Assistant => "A helper for organising music and preparing sets.",
             Page::Plugins => "Extensions installed on this computer.",
@@ -100,13 +106,20 @@ pub struct SettingsView {
     /// draw, as making them needs the window.
     key_inputs: Option<[Entity<InputState>; 2]>,
     library_notice: Option<String>,
+    controller_notice: String,
+    controller_present: bool,
     model_download: bool,
     model_notice: String,
     models_downloaded: [bool; 2],
 }
 
 impl SettingsView {
-    pub fn new(settings: Settings, audio: SharedString, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: Settings,
+        audio: SharedString,
+        controller_present: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             settings,
             page: Page::Preferences,
@@ -114,10 +127,56 @@ impl SettingsView {
             focus: cx.focus_handle(),
             key_inputs: None,
             library_notice: None,
+            controller_notice: String::new(),
+            controller_present,
             model_download: false,
             model_notice: String::new(),
             models_downloaded: StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name())),
         }
+    }
+
+    pub fn set_controller_present(&mut self, present: bool, cx: &mut Context<Self>) {
+        if self.controller_present != present {
+            self.controller_present = present;
+            cx.notify();
+        }
+    }
+
+    pub fn controller_notice(&mut self, message: String, cx: &mut Context<Self>) {
+        self.controller_notice = message;
+        cx.notify();
+    }
+
+    fn select_mapping(&mut self, selection: String, cx: &mut Context<Self>) {
+        if selection != "@disabled" {
+            if let Err(error) = crate::controllers::read_mapping(&selection) {
+                self.controller_notice(error, cx);
+                return;
+            }
+        }
+        self.controller_notice = "Mapping selected.".into();
+        self.settings.controller_mapping = selection;
+        cx.emit(SettingsEvent::MappingSelected(self.settings.clone()));
+        cx.notify();
+    }
+
+    fn choose_mapping(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose a controller mapping JSON file".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            if let Some(path) = paths.first() {
+                let selection = path.to_string_lossy().into_owned();
+                let _ = this.update(cx, |this, cx| this.select_mapping(selection, cx));
+            }
+        })
+        .detach();
     }
 
     fn download_stem_model(&mut self, model: StemModel, cx: &mut Context<Self>) {
@@ -401,6 +460,41 @@ impl SettingsView {
                         cx,
                     ),
                 ]
+            }
+            Page::Controllers => {
+                let current = displayed_mapping(&self.settings.controller_mapping, self.controller_present).to_owned();
+                let choices = crate::controllers::mapping_choices();
+                let label = choices.iter().find(|(key, _)| key == &current).map(|(_, name)| name.clone())
+                    .unwrap_or_else(|| current.clone());
+                let view = cx.weak_entity();
+                let mapping = Button::new("controller-mapping").outline().label(label)
+                    .dropdown_caret(true).dropdown_menu(move |mut menu, _, _| {
+                        let mut choices = crate::controllers::mapping_choices();
+                        if !choices.iter().any(|(key, _)| key == &current) { choices.push((current.clone(), current.clone())); }
+                        for (key, label) in choices {
+                            let view = view.clone();
+                            menu = menu.item(PopupMenuItem::new(label).checked(key == current).on_click(move |_, _, cx| {
+                                let _ = view.update(cx, |view, cx| view.select_mapping(key.clone(), cx));
+                            }));
+                        }
+                        menu
+                    });
+                let import = Button::new("controller-mapping-file").outline().label("Load mapping…")
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_mapping(cx)));
+                let detail = if !self.controller_present || self.settings.controller_mapping == "@disabled" { "Controller input is disabled.".to_string() }
+                    else { match crate::controllers::read_mapping(&self.settings.controller_mapping) {
+                        Ok(profile) => {
+                            let ports: std::collections::BTreeSet<_> = profile.mappings.iter().map(|m| m.port.as_str()).collect();
+                            format!("{} — MIDI ports: {}", profile.name, ports.into_iter().collect::<Vec<_>>().join(", "))
+                        }
+                        Err(error) => error,
+                    }};
+                vec![self.section("Controller mapping", vec![
+                    self.row("Mapping", "Choosing a mapping applies it immediately. New connections ask before enabling input.", mapping, cx),
+                    self.row("Custom mapping", "Load a faderCraft JSON mapping. The original file is kept unchanged and must remain available.", import, cx),
+                    self.info(detail, cx).into_any_element(),
+                    self.info(self.controller_notice.clone(), cx).into_any_element(),
+                ], cx)]
             }
             Page::Audio => {
                 let backend = self.dropdown("audio-backend", if self.settings.audio_asio { 2u8 } else if self.settings.audio_exclusive { 1 } else { 0 }, &[0, 1, 2],
@@ -789,5 +883,24 @@ impl Render for SettingsView {
                             .children(sections),
                     ),
             )
+    }
+}
+
+fn displayed_mapping(saved: &str, controller_present: bool) -> &str {
+    if controller_present {
+        saved
+    } else {
+        "@disabled"
+    }
+}
+
+#[cfg(test)]
+mod controller_display_tests {
+    #[test]
+    fn absent_controller_displays_disabled_without_discarding_mapping() {
+        for saved in ["", "@bundled", "custom.json", "@disabled"] {
+            assert_eq!(super::displayed_mapping(saved, false), "@disabled");
+            assert_eq!(super::displayed_mapping(saved, true), saved);
+        }
     }
 }

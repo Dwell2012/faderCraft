@@ -417,11 +417,11 @@ impl Shell {
             },
             library,
             browser,
-            settings,
+            settings: settings.clone(),
             settings_view: None,
             focus_settings: false,
             engine,
-            controllers: match crate::controllers::Controllers::load() {
+            controllers: match crate::controllers::Controllers::load(&settings) {
                 Ok(controllers) => controllers,
                 Err(error) => {
                     eprintln!("Controller setup: {error}");
@@ -520,7 +520,7 @@ impl Shell {
         for (deck, path) in tracks.into_iter().take(DECKS).enumerate() {
             shell.send(deck, DeckAction::Load { path });
         }
-        if shell.controllers.is_some() {
+        {
             cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor()
@@ -688,10 +688,30 @@ impl Shell {
             (None, None) => "Not available".into(),
         };
         let settings = self.settings.clone();
-        let view = cx.new(|cx| SettingsView::new(settings, audio, cx));
-        cx.subscribe(&view, |this, _, event: &SettingsEvent, cx| {
+        let controller_present = self
+            .controllers
+            .as_ref()
+            .is_some_and(|c| c.has_matching_device());
+        let view = cx.new(|cx| SettingsView::new(settings, audio, controller_present, cx));
+        cx.subscribe(&view, |this, view, event: &SettingsEvent, cx| {
             match event {
-                SettingsEvent::Changed(settings) => {
+                SettingsEvent::Changed(settings) | SettingsEvent::MappingSelected(settings) => {
+                    if matches!(event, SettingsEvent::MappingSelected(_)) || this.settings.controller_mapping != settings.controller_mapping {
+                        match crate::controllers::Controllers::load(settings) {
+                            Ok(mut next) => {
+                                if let Some(mut old) = this.controllers.take() {
+                                    for action in old.release_all() { this.controller_action(action, cx); }
+                                }
+                                if let Some(controller) = &mut next { controller.use_connected(); }
+                                this.controllers = next;
+                                view.update(cx, |view, cx| view.controller_notice(if settings.controller_mapping == "@disabled" { "Controller input disabled." } else { "Mapping applied. Matching connected devices are enabled; new connections will ask first." }.into(), cx));
+                            }
+                            Err(error) => {
+                                view.update(cx, |view, cx| view.controller_notice(error, cx));
+                                return;
+                            }
+                        }
+                    }
                     this.settings = settings.clone();
                     this.settings.apply_theme(cx);
                     cx.set_global(settings.clone());
@@ -1094,7 +1114,11 @@ impl Shell {
         let Some(mut controllers) = self.controllers.take() else {
             return;
         };
+        let previous_prompt = controllers.pending_connection();
         let batches = controllers.drain();
+        if previous_prompt != controllers.pending_connection() {
+            cx.notify();
+        }
         controllers.set_tempo_bpms(
             &self
                 .grids
@@ -1145,6 +1169,11 @@ impl Shell {
             for action in controllers.tick(&state, &self.loop_in) {
                 self.controller_action(action, cx);
             }
+        }
+        if let Some(view) = &self.settings_view {
+            view.update(cx, |view, cx| {
+                view.set_controller_present(controllers.has_matching_device(), cx)
+            });
         }
         self.controllers = Some(controllers);
     }
@@ -2324,6 +2353,47 @@ impl Render for Shell {
             window.focus(&handle, cx);
         }
         div()
+            .when_some(
+                self.controllers
+                    .as_ref()
+                    .and_then(|c| c.pending_connection()),
+                |view, (name, mapping)| {
+                    let accept = name.clone();
+                    view.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .p_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(format!("{name} detected — use {mapping}?")),
+                            )
+                            .child(
+                                Button::new("controller-accept")
+                                    .label("Use controller")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(controllers) = &mut this.controllers {
+                                            controllers.answer_connection(accept.clone(), true);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("controller-dismiss")
+                                    .outline()
+                                    .label("Not now")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(controllers) = &mut this.controllers {
+                                            controllers.answer_connection(name.clone(), false);
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                },
+            )
             .track_focus(&self.deck_focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if this.deck_focus.is_focused(window)

@@ -817,3 +817,9 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Header key-lock button widened to 26px and filled with the deck accent while active.
 
 - [x] RGB waveform blends with gentle saturation and softened brightness to clarify reds, yellows, pinks and cyan without harsh neon colours.
+
+- [~] Controller discovery prompts on startup/reconnection before opening mapped MIDI/LED ports; installed or bundled MixTrack mapping works on normal launch. General profile catalogue/chooser and unknown-controller onboarding remain pending.
+
+- [x] Settings > Controllers mapping selector: installed/bundled/custom JSON profiles and Disabled, persisted selection and live switching with held-control release.
+
+- [x] Controller Settings displays Disabled when no matching device is detected, retaining the saved mapping for later connection.

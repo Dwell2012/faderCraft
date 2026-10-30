@@ -5,6 +5,18 @@ the existing faderCraft protocol. It does not depend on GPUI and does not run on
 the audio thread. Its native transport uses MIT-licensed `midir`; all generated
 deck/mixer operations still pass through `Engine::apply` under the host's Role.
 
+## Settings
+
+When no matching controller is detected, the mapping selector displays Disabled. The saved mapping is retained for later detection; an absent device does not permanently disable discovery. Explicitly selecting Disabled still disables controller input.
+
+Settings > Controllers selects the mapping: Automatic (installed/default), bundled MixTrack, Disabled, or a valid JSON profile in the machine-data controllers folder. Load mapping opens a file picker for another faderCraft JSON profile and validates it before switching. The chosen path is remembered; keep external files at that path. Files are not overwritten. Selecting a different mapping releases held controls, closes the previous ports and enables matching currently connected devices; later reconnections still ask first. Controller hardware is matched by exact MIDI port name from the profile, not guessed or automatically remapped.
+
+## Startup and hardware changes
+
+Normal launches now offer **Use controller / Not now** when a uniquely named MIDI input matches the active mapping. Ports and LED output open only after acceptance. Detection polls once per second; disconnecting releases held controls and clears the decision, so reconnecting asks again. Not now suppresses repeat prompts until disconnect or restart. Identically named devices are not guessed between.
+
+The default mapping is the bundled Numark MixTrack Pro II profile, with an existing machine-data `controllers/numark-mixtrack-pro-ii.json` taking precedence to preserve custom edits. `DJCRAFT_CONTROLLER_MAP` overrides this with an explicit profile. Unknown controllers are not assigned guessed mappings; a general profile chooser/catalogue and support for other hardware remain future work. Profile files are read on startup, but their MIDI ports are not opened until approved.
+
 ## Try the Numark starter
 
 To launch the development build with the bundled official-address profile:
@@ -37,7 +49,7 @@ cargo run --locked
 Create the destination directory first if it does not exist. The optional second
 argument to `mixtrack_profile` sets another exact MIDI port name. The app opens
 only ports explicitly named by the profile. Without `DJCRAFT_CONTROLLER_MAP`, it
-opens no MIDI ports. Profile edits take effect on app restart; the underlying
+offers the installed or bundled MixTrack profile when matching hardware is detected. Profile edits take effect on app restart; the underlying
 `Bridge::replace` API supports a future editor without restarting.
 
 The starter includes play/pause, channel volume, EQ, -50%/+100% pitch, master,
