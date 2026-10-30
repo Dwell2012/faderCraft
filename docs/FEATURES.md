@@ -590,9 +590,13 @@ waveforms, and options tucked into popovers.
 ### Pro performance pads
 
 - [x] Per-deck eight-pad layout, page dropdown/favourites, options and two parameter lanes
-- [x] Split pages and FX-area Pads 16 (split disabled in 16-pad mode)
+- [x] Split pages and FX-area Pads 16 (split disabled in 16-pad mode); compact split rows have their own labels and equal-height pads, with separate upper/lower page-options submenus.
 - [x] Hot Cues, Loop, Loop Roll, Slicer, Beat Jump, CueLoop, Saved Loops, Manual Loop, Stems and Pad FX
-- [x] Sixteen persistent hot cues per track, loop cues, shift-delete, edit lock and quantize-on-set (new Hot Cues snap only within 5% of a beat; mid-beat placements are preserved)
+- [x] Sixteen persistent hot cues per track, loop cues, shift-delete, edit lock and quantize-on-set (Hot Cues can snap within 5%, 10%, 20% or 30% of a beat, or leave quantization off)
+- [x] All compact pad pages use two full-width rows of four square pads; rows equally fill the available height with 4px gaps, and page adjustments live in the side-rail cog rather than above the grid.
+- [x] Loop Roll pads use the same beat-length banks as Loop pads, including alternate pad actions.
+- [x] Beat Jump defaults to backward/forward pairs of 4, 8, 16 and 32 beats; its bank remains adjustable.
+- [x] CueLoop uses the deck's current Loops-panel length (four beats by default) instead of maintaining a separate length setting.
 - [x] Momentary roll/slicer with background transport, stutter cues, temporary FX slot restoration
 - [x] Saved-loop arm versus Shift-jump, 16-slot storage with backwards-compatible four-slot loading
 - [x] Stem mute/isolate pads work with Classic EQ and prepared stems
@@ -637,7 +641,8 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 - [x] Full-track peak-normalized Auto-Trim to -0.1 dBFS, including cubic interpolation extrema, +12 dB boost cap and sufficient attenuation for over-range sources; per-load manual override, paused/explicit application, background measurement and automix preload integration. RMS is informational.
 - [ ] Standards-based integrated LUFS and oversampled true-peak measurement.
 
-- [x] Compact performance workspace: aligned decks, pinned transport controls, independent Loops / Effects / Pads / Prepare tabs, bounded mixer and scrollable tool panels above the library.
+- [x] Compact performance workspace: aligned decks, pinned transport controls, bounded mixer and Loops / Effects / Pads tools. The two-deck view places these tools in a 2×2 grid beside each platter, with rotated dropdown labels; Loops occupies the narrower lower-right cell with square main controls, and the fourth cell remains open for a later layout decision.
+- [ ] Move track preparation and its suggestions into the Library. The Perform view no longer shows a Prepare button; design and implement the Library workflow separately.
 
 - [x] Performance actions use bordered buttons with hover descriptions across deck tools, preparation, cues, effects, loops and automix.
 - [x] Windows executable reserves an 8 MiB main-thread stack for nested GPUI tool panels (including Loops in debug builds).
@@ -658,7 +663,9 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 
 - [x] Prepare auto cues snap to the nearest analysed 4/4 bar start, respect opening silence and track end, and wait for a beat grid. Existing saved cues remain unchanged.
 
-- [x] Mirrored deck displays with centred platters, track information beside inner vertical pitch faders, transport aligned opposite tabs, key lock enabled at startup, hold Cue preview/return, automatic deck selection on track load, deck-coloured A/B selection, thicker matching active-deck borders and Space transport.
+- [x] Mirrored deck displays with centred platters, track information beside inner vertical pitch faders, transport aligned opposite tabs, key lock enabled at startup, hold Cue preview/return, automatic deck selection on track load, deck-coloured A/B selection, matching active-deck borders with a subtle outer glow and Space transport.
+
+- [x] `-quick` startup option skips stem model preloading for UI checks while leaving normal stem startup unchanged.
 
 - [x] Ctrl-click Hot Cues to jump to the stored cue with playback paused; normal trigger and Shift-delete remain available.
 
@@ -768,7 +775,7 @@ lookahead and device/output buffering still apply. No device latency is removed.
 
 - [x] Two-deck headers group artwork and library title/artist on the left, prominent tempo and key/master-tempo controls on the right, with elapsed/remaining time beside the seekable overview. Artwork loads off the UI thread and stale results are discarded.
 
-- [x] Two-deck performance view gives rhythm waveforms more height and uses finer display sampling; platters have a dedicated transport row and tempo strip, with track statistics consolidated in the header.
+- [x] Two-deck performance view gives each rhythm waveform twice the four-deck height inside the same 100px panel and uses finer display sampling; platters have a dedicated transport row and tempo strip, with track statistics consolidated in the header.
 
 - [x] Mixed waveforms retain maximum sample peaks separately from the smoothed frequency-band body, preserving attack spikes at each horizontal scale; peak rendering follows the displayed EQ gains.
 
@@ -823,3 +830,11 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Settings > Controllers mapping selector: installed/bundled/custom JSON profiles and Disabled, persisted selection and live switching with held-control release.
 
 - [x] Controller Settings displays Disabled when no matching device is detected, retaining the saved mapping for later connection.
+
+- [x] Two-deck pitch faders have their own grey panel, with spacing matching the deck header blocks; four-deck layout remains separate.
+
+- [x] Two-deck header BPM/key and overview-time blocks align to the same outer inset as the deck letter; pitch panel has top/bottom breathing room for its buttons.
+
+- [x] Two-deck title/overview and BPM/key/timing blocks keep a 4px inner gap while sharing the same outer inset.
+
+- [x] Two-deck transport controls stack beside the tempo fader at the header block width: Load/Eject, Sync, Cue, Play; square buttons, forest-green Play, red Cue text. Eject unloads the track through the protocol.

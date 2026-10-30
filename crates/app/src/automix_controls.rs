@@ -1,6 +1,55 @@
 use super::*;
 use djcraft_protocol::QueueTrack;
 impl Shell {
+    pub(super) fn library_side_panel(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .w(px(310.))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .child(
+                div().flex().w_full().h(px(29.)).flex_shrink_0().children(
+                    ["AUTOMIX", "SAVED LOOPS"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(tab, label)| {
+                            div()
+                                .id(("library-side-tab", tab))
+                                .flex()
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(29.))
+                                .items_center()
+                                .justify_center()
+                                .text_size(px(11.))
+                                .when(tab == 0, |button| button.border_r_1())
+                                .border_color(cx.theme().border)
+                                .when(self.library_side_tab == tab, |button| {
+                                    button.bg(cx.theme().background)
+                                })
+                                .when(self.library_side_tab != tab, |button| {
+                                    button.bg(cx.theme().secondary.opacity(0.5)).border_b_1()
+                                })
+                                .child(label)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.library_side_tab = tab;
+                                    if tab == 1 && this.saved_loops_deck.is_none() {
+                                        this.saved_loops_deck = Some(this.active_deck);
+                                    }
+                                    cx.notify();
+                                }))
+                        }),
+                ),
+            )
+            .child(if self.library_side_tab == 0 {
+                self.automix_panel(cx)
+            } else {
+                self.saved_loops_panel(self.saved_loops_deck.unwrap_or(self.active_deck), cx)
+            })
+    }
     fn automix_send(&mut self, action: MixerAction, cx: &mut Context<Self>) {
         if let Some(engine) = &mut self.engine {
             match engine.apply(Role::Host, Action::Mixer { action }) {
@@ -108,14 +157,12 @@ impl Shell {
         let seconds = self.automix.fade_seconds;
         let mut panel =
             div()
-                .w(px(310.))
-                .flex_shrink_0()
+                .flex_1()
+                .min_h_0()
                 .flex()
                 .flex_col()
                 .gap_1()
-                .p_2()
-                .border_l_1()
-                .border_color(cx.theme().border)
+                .p(px(4.))
                 .child(
                     div()
                         .text_sm()

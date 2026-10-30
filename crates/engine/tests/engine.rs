@@ -3737,3 +3737,20 @@ fn first_filter_slot_is_reserved_always_on_and_neutral_by_default() {
     render(&mut mixer, 0.2);
     assert!((power(&render(&mut mixer, 0.3)) - power(&neutral)).abs() < 0.01);
 }
+
+#[test]
+fn eject_clears_loaded_track_and_stops_audio() {
+    let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 2]);
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    let mut output = vec![0.; CALLBACK * 2];
+    mixer.render(&mut output);
+    assert!(output.iter().any(|sample| sample.abs() > 0.01));
+    engine.apply(Role::Host, deck(DeckAction::Unload)).unwrap();
+    assert!(engine.track(0).is_none());
+    assert!(engine.state().decks[0].track.is_none());
+    mixer.render(&mut output);
+    assert!(output.iter().all(|sample| sample.abs() < 1e-6));
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    mixer.render(&mut output);
+    assert!(output.iter().all(|sample| sample.abs() < 1e-6));
+}

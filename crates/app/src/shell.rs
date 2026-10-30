@@ -212,10 +212,14 @@ pub struct Shell {
     overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; DECKS],
     pending_seeks: [Option<(f64, Instant)>; DECKS],
     mixer_values: [f32; mixer_controls::CONTROL_COUNT],
+    mixer_last_change: [Option<Instant>; mixer_controls::CONTROL_COUNT],
     mixer_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     mixer_drag: Option<(usize, f32, f32)>,
     mixer_peaks: [f32; DECKS + 2],
+    mixer_clip_until: [Option<Instant>; DECKS + 2],
     mixer_curve: CrossfaderCurve,
+    mixer_tab: usize,
+    mic_enabled: bool,
     crossfader_routing: djcraft_protocol::CrossfaderRouting,
     eq_mode: EqMode,
     stem_waveforms: [bool; DECKS],
@@ -245,6 +249,8 @@ pub struct Shell {
     loop_size: [i32; DECKS],
     loop_options: [loop_controls::LoopOptions; DECKS],
     loop_view: [usize; DECKS],
+    saved_loops_deck: Option<usize>,
+    library_side_tab: usize,
     loop_last: [Option<[f64; 2]>; DECKS],
     loudness_tracks: [Option<(Arc<Track>, f64, bool)>; DECKS],
     preparations: crate::preparation::Preparations,
@@ -313,6 +319,7 @@ impl Shell {
     pub fn new(
         tracks: Vec<String>,
         mut settings: Settings,
+        quick: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -404,7 +411,7 @@ impl Shell {
             });
         }
         let mut shell = Self {
-            stems_starting: true,
+            stems_starting: !quick,
             automix: Default::default(),
             saved_queue: Vec::new(),
             automix_notice: String::new(),
@@ -454,12 +461,16 @@ impl Shell {
             overview_cache: std::array::from_fn(|_| Rc::default()),
             pending_seeks: [None; DECKS],
             mixer_values: mixer_controls::initial_values(),
+            mixer_last_change: [None; mixer_controls::CONTROL_COUNT],
             mixer_areas: (0..mixer_controls::CONTROL_COUNT)
                 .map(|_| Rc::default())
                 .collect(),
             mixer_drag: None,
             mixer_peaks: [0.; DECKS + 2],
+            mixer_clip_until: [None; DECKS + 2],
             mixer_curve: CrossfaderCurve::default(),
+            mixer_tab: 0,
+            mic_enabled: false,
             crossfader_routing: djcraft_protocol::CrossfaderRouting::default(),
             eq_mode: EqMode::Classic,
             stem_waveforms: [false; DECKS],
@@ -490,6 +501,8 @@ impl Shell {
             loop_size: [2; DECKS],
             loop_options: [loop_controls::LoopOptions::default(); DECKS],
             loop_view: [0; DECKS],
+            saved_loops_deck: None,
+            library_side_tab: 0,
             loop_last: [None; DECKS],
             loudness_tracks: std::array::from_fn(|_| None),
             preparations: crate::preparation::load(&data_dir()),
@@ -502,21 +515,23 @@ impl Shell {
             loop_in: [None; DECKS],
             loop_notice: std::array::from_fn(|_| String::new()),
         };
-        let prefer_gpu = shell.settings.stem_gpu;
-        let model = shell.settings.stem_model.name();
-        let warmup = cx
-            .background_executor()
-            .spawn(async move { crate::stems::warm_up(prefer_gpu, model) });
-        cx.spawn(async move |this, cx| {
-            if let Err(error) = warmup.await {
-                eprintln!("Stem startup: {error}");
-            }
-            let _ = this.update(cx, |this, cx| {
-                this.stems_starting = false;
-                cx.notify();
-            });
-        })
-        .detach();
+        if !quick {
+            let prefer_gpu = shell.settings.stem_gpu;
+            let model = shell.settings.stem_model.name();
+            let warmup = cx
+                .background_executor()
+                .spawn(async move { crate::stems::warm_up(prefer_gpu, model) });
+            cx.spawn(async move |this, cx| {
+                if let Err(error) = warmup.await {
+                    eprintln!("Stem startup: {error}");
+                }
+                let _ = this.update(cx, |this, cx| {
+                    this.stems_starting = false;
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         for (deck, path) in tracks.into_iter().take(DECKS).enumerate() {
             shell.send(deck, DeckAction::Load { path });
         }
@@ -1018,12 +1033,16 @@ impl Shell {
     /// Sends a deck action to the engine as the session host.
     fn send(&mut self, deck: usize, action: DeckAction) {
         let cue_anchor = self.transport_anchor_for(deck, &action);
-        if matches!(action, DeckAction::Load { .. } | DeckAction::Pause) {
+        if matches!(
+            action,
+            DeckAction::Load { .. } | DeckAction::Unload | DeckAction::Pause
+        ) {
             self.sync_playback[deck] = SyncPlayback::default();
         }
         if matches!(
             action,
             DeckAction::Load { .. }
+                | DeckAction::Unload
                 | DeckAction::Play
                 | DeckAction::Pause
                 | DeckAction::Seek { .. }
@@ -1043,7 +1062,7 @@ impl Shell {
                 }
             }
         }
-        if matches!(action, DeckAction::Load { .. }) {
+        if matches!(action, DeckAction::Load { .. } | DeckAction::Unload) {
             self.release_pad(deck);
             self.loop_in[deck] = None;
             self.loop_last[deck] = None;
@@ -1052,11 +1071,14 @@ impl Shell {
         }
         if matches!(
             action,
-            DeckAction::SetTempo { .. } | DeckAction::Sync { .. } | DeckAction::Load { .. }
+            DeckAction::SetTempo { .. }
+                | DeckAction::Sync { .. }
+                | DeckAction::Load { .. }
+                | DeckAction::Unload
         ) {
             self.tempo_returns[deck] = None;
         }
-        if matches!(action, DeckAction::Load { .. })
+        if matches!(action, DeckAction::Load { .. } | DeckAction::Unload)
             && self
                 .wheel_scrub
                 .is_some_and(|(active, _, _, _)| active == deck)
@@ -1069,7 +1091,7 @@ impl Shell {
                     display.0 = Some(*seconds);
                     self.pending_seeks[deck] = Some((*seconds, Instant::now()));
                 }
-                DeckAction::Load { .. } => {
+                DeckAction::Load { .. } | DeckAction::Unload => {
                     display.0 = None;
                     self.pending_seeks[deck] = None;
                 }
@@ -1092,6 +1114,13 @@ impl Shell {
             *slot = Some(PathBuf::from(path));
             self.last_loaded = Some(deck);
         }
+        let unloading = matches!(
+            &action,
+            Action::Deck {
+                action: DeckAction::Unload,
+                ..
+            }
+        );
         let loading = matches!(
             &action,
             Action::Deck {
@@ -1106,7 +1135,12 @@ impl Shell {
                 self.focus_loaded_deck = true;
             }
             Err(reason) => eprintln!("action rejected: {reason:?}"),
-            Ok(()) => self.cue_anchor[deck] = cue_anchor,
+            Ok(()) => {
+                self.cue_anchor[deck] = cue_anchor;
+                if unloading {
+                    self.deck_paths[deck] = None;
+                }
+            }
         }
     }
 
@@ -1319,6 +1353,9 @@ impl Shell {
             div()
                 .flex()
                 .flex_1()
+                .h_full()
+                .relative()
+                .top(px(3.))
                 .items_center()
                 .justify_between()
                 .px_3()
@@ -1351,6 +1388,16 @@ impl Shell {
                             "Library",
                             cx,
                         )),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(self.tab == Tab::Live && !self.settings.four_decks, |header| {
+                            header.child(self.master_header_meters())
+                        }),
                 )
                 .child(
                     div()
@@ -1515,11 +1562,39 @@ impl Shell {
                 })
                 .detach();
             }));
+        let eject_button = Button::new(("eject", index))
+            .outline()
+            .small()
+            .rounded(ButtonRounded::None)
+            .w(px(29.))
+            .h(px(29.))
+            .icon(IconName::Eject)
+            .tooltip("Eject the loaded track from this deck.")
+            .disabled(state.track.is_none())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.send(index, DeckAction::Unload);
+                this.deck_paths[index] = None;
+                this.pad_tracks[index] = None;
+                if this.last_loaded == Some(index) {
+                    this.last_loaded = None;
+                }
+                this.refresh_grids(cx);
+                cx.notify();
+            }));
         let play_button = Button::new(("play", index))
             .tooltip("Play or pause this deck.")
             .primary()
             .small()
             .when(self.settings.four_decks, |button| button.w(px(28.)))
+            .when(!self.settings.four_decks, |button| {
+                button
+                    .rounded(ButtonRounded::None)
+                    .w_full()
+                    .flex_1()
+                    .border_1()
+                    .bg(rgb(if playing { 0x30343a } else { 0x174d2e }))
+                    .text_color(rgb(0xffffff))
+            })
             .icon(if playing {
                 IconName::Pause
             } else {
@@ -1540,6 +1615,9 @@ impl Shell {
             .small()
             .label("Sync")
             .when(self.settings.four_decks, |button| button.w_full())
+            .when(!self.settings.four_decks, |button| {
+                button.rounded(ButtonRounded::None).w_full().h(px(33.))
+            })
             .tooltip(if self.settings.four_decks {
                 "Match the longest-playing other deck with a beat grid; align the nearest beat when both play. If none is playing, prefer the paired deck."
             } else {
@@ -1553,7 +1631,7 @@ impl Shell {
             .on_click(cx.listener(move |this, _, _, cx| this.sync_deck(index, cx)));
         let cue_button = div()
             .id(("cue-hold", index))
-            .when(self.settings.four_decks, |group| group.w_full())
+            .w_full()
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
@@ -1567,7 +1645,13 @@ impl Shell {
                     .outline()
                     .small()
                     .label("Cue")
-                    .when(self.settings.four_decks, |button| button.w_full())
+                    .w_full()
+                    .when(!self.settings.four_decks, |button| {
+                        button
+                            .rounded(ButtonRounded::None)
+                            .h(px(33.))
+                            .text_color(rgb(0xd94b4b))
+                    })
                     .tooltip("Hold to preview; release to stop and return to the starting point.")
                     .disabled(state.track.is_none()),
             );
@@ -1575,42 +1659,13 @@ impl Shell {
             .prepare_stems_button(index, cx)
             .small()
             .when(self.settings.four_decks, |button| button.w_full());
-        let controls = if self.settings.four_decks {
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_1()
-                .w(px(64.))
-                .flex_shrink_0()
-                .child(cue_button)
-                .child(sync_button)
-                .child(stems_button)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(play_button)
-                        .child(load_button),
-                )
-        } else {
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(cue_button)
-                .child(play_button)
-                .child(sync_button)
-                .child(load_button)
-                .child(stems_button)
-        }
-        .into_any_element();
-        let display_controls = Some(controls);
         let deck_select = Button::new(("select-deck", index))
             .outline()
-            .w(px(40.))
-            .h(px(28.))
+            .w(px(if self.settings.four_decks { 40. } else { 29. }))
+            .h(px(if self.settings.four_decks { 28. } else { 29. }))
+            .when(!self.settings.four_decks, |button| {
+                button.rounded(ButtonRounded::None).min_w_0().px_0()
+            })
             .text_xs()
             .font_weight(FontWeight::BOLD)
             .label(deck_label(index))
@@ -1632,23 +1687,85 @@ impl Shell {
                 window.focus(&this.deck_focus, cx);
                 cx.notify();
             }));
-
-        let identity = div().flex().items_center().gap_1().flex_shrink_0().when(self.settings.four_decks, |group| group.flex_col())
-                    .child(deck_select)
-                    .child(Button::new(("headphone-cue", index)).outline().small()
-                        .icon(IconName::Headphones)
-                        .selected(headphone_cued)
-                        .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
-                        .tooltip("Toggle this deck in headphones. Independent of deck activation; multiple decks can be cued.")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.toggle_headphone_cue(index);
-                            cx.notify();
-                        }))).into_any_element();
-        let (display_identity, footer_identity) = if self.settings.four_decks {
-            (Some(identity), None)
+        let headphone_button = Button::new(("headphone-cue", index))
+            .outline()
+            .small()
+            .when(!self.settings.four_decks, |button| button.rounded(ButtonRounded::None).w(px(29.)).h(px(29.)))
+            .icon(IconName::Headphones)
+            .selected(headphone_cued)
+            .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
+            .tooltip("Toggle this deck in headphones. Independent of deck activation; multiple decks can be cued.")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_headphone_cue(index);
+                cx.notify();
+            }));
+        let (controls, display_identity) = if self.settings.four_decks {
+            let controls = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_1()
+                .w(px(64.))
+                .flex_shrink_0()
+                .child(cue_button)
+                .child(sync_button)
+                .child(stems_button)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(play_button)
+                        .child(load_button),
+                );
+            let identity = div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .flex_shrink_0()
+                .flex_col()
+                .child(deck_select)
+                .child(headphone_button)
+                .into_any_element();
+            (controls.into_any_element(), Some(identity))
         } else {
-            (None, Some(identity))
+            let controls = div()
+                .flex()
+                .flex_col()
+                .w(px(62.))
+                .h_full()
+                .flex_shrink_0()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .gap(px(4.))
+                        .when(index == 1, |row| row.flex_row_reverse())
+                        .child(
+                            load_button
+                                .rounded(ButtonRounded::None)
+                                .w(px(29.))
+                                .h(px(29.)),
+                        )
+                        .child(eject_button),
+                )
+                .child(sync_button)
+                .child(cue_button)
+                .child(play_button)
+                .child(
+                    div()
+                        .flex()
+                        .w_full()
+                        .gap(px(4.))
+                        .when(index == 1, |row| row.flex_row_reverse())
+                        .child(deck_select)
+                        .child(headphone_button),
+                );
+            (controls.into_any_element(), None)
         };
+        let display_controls = Some(controls);
+        let footer_identity: Option<AnyElement> = None;
 
         div()
             .id(("deck-drop", index))
@@ -1673,7 +1790,7 @@ impl Shell {
             .flex_1()
             .min_w_0()
             .gap_1()
-            .p_2()
+            .p(px(if self.settings.four_decks { 8. } else { 4. }))
             .min_h_0()
             .when_some(
                 self.pending_load
@@ -1733,10 +1850,20 @@ impl Shell {
                     )
                 },
             )
+            .bg(rgb(0x000000))
             .border_1()
             .border_color(theme.border)
+            .when(!deck_selected && !self.settings.four_decks, |d| d.p(px(4.)))
             .when(deck_selected, |d| {
-                d.border_2().border_color(deck_accent).p(px(7.))
+                d.border_color(deck_accent)
+                    .shadow(vec![BoxShadow {
+                        color: Hsla::from(deck_accent).opacity(0.75),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .p(px(if self.settings.four_decks { 8. } else { 4. }))
             })
             .rounded_lg()
             .child(if self.settings.four_decks {
@@ -1786,6 +1913,7 @@ impl Shell {
             .child(
                 div()
                     .flex()
+                    .when(!self.settings.four_decks, |row| row.gap(px(4.)))
                     .when(index % 2 == 1, |row| row.flex_row_reverse())
                     .items_center()
                     .h(px(if self.settings.four_decks {
@@ -1823,6 +1951,7 @@ impl Shell {
                                     state.cue_appearance.clone(),
                                     index,
                                     self.settings.rgb_waveforms,
+                                    !self.settings.four_decks,
                                 ))
                             })
                             .on_mouse_down(
@@ -1843,67 +1972,61 @@ impl Shell {
                     }),
             )
             .child(self.deck_display(index, state, display_controls, display_identity, cx))
-            .child(
-                div()
-                    .flex()
-                    .when(index % 2 == 1, |d| d.flex_row_reverse())
-                    .flex_wrap()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div().flex().items_center().gap_1().children(
-                            ["Loops", "Effects", "Pads", "Prepare"]
-                                .into_iter()
-                                .enumerate()
-                                .map(|(panel, label)| {
-                                    Button::new(("deck-panel", index * 4 + panel))
-                                        .tooltip("Toggle tools over the other deck on this side.")
-                                        .xsmall()
-                                        .outline()
-                                        .label(label)
-                                        .selected(
-                                            self.deck_panel[index] == panel
-                                                && (!self.settings.four_decks
-                                                    || (self.deck_tools_open
-                                                        && self.deck_tools_deck == index)),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.release_pads(cx);
-                                            if this.settings.four_decks {
-                                                let same_deck = this.deck_tools_deck == index;
-                                                let close = this.deck_tools_open
-                                                    && same_deck
-                                                    && this.deck_panel[index] == panel;
-                                                this.deck_tools_from = if same_deck {
-                                                    this.deck_tools_progress()
-                                                } else {
-                                                    0.
-                                                };
-                                                this.deck_tools_changed = Instant::now();
-                                                this.deck_tools_deck = index;
-                                                this.deck_tools_open = !close;
-                                                this.active_deck = index;
-                                            }
-                                            this.deck_panel[index] = panel;
-                                            cx.notify();
-                                        }))
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                    )
-                    .child(div().flex_1())
-                    .child(div().w(px(10.)).flex_shrink_0())
-                    .children(footer_identity),
-            )
-            .when(!self.settings.four_decks, |deck| {
+            .when(self.settings.four_decks, |deck| {
                 deck.child(
                     div()
-                        .id(("deck-tools-scroll", index))
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .child(self.deck_tools(index, state, cx)),
+                        .flex()
+                        .when(index % 2 == 1, |d| d.flex_row_reverse())
+                        .flex_wrap()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div().flex().items_center().gap_1().children(
+                                ["Loops", "Effects", "Pads"]
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(panel, label)| {
+                                        Button::new(("deck-panel", index * 4 + panel))
+                                            .tooltip(
+                                                "Toggle tools over the other deck on this side.",
+                                            )
+                                            .xsmall()
+                                            .outline()
+                                            .label(label)
+                                            .selected(
+                                                self.deck_panel[index] == panel
+                                                    && (!self.settings.four_decks
+                                                        || (self.deck_tools_open
+                                                            && self.deck_tools_deck == index)),
+                                            )
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.release_pads(cx);
+                                                if this.settings.four_decks {
+                                                    let same_deck = this.deck_tools_deck == index;
+                                                    let close = this.deck_tools_open
+                                                        && same_deck
+                                                        && this.deck_panel[index] == panel;
+                                                    this.deck_tools_from = if same_deck {
+                                                        this.deck_tools_progress()
+                                                    } else {
+                                                        0.
+                                                    };
+                                                    this.deck_tools_changed = Instant::now();
+                                                    this.deck_tools_deck = index;
+                                                    this.deck_tools_open = !close;
+                                                    this.active_deck = index;
+                                                }
+                                                this.deck_panel[index] = panel;
+                                                cx.notify();
+                                            }))
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                        .child(div().flex_1())
+                        .child(div().w(px(10.)).flex_shrink_0())
+                        .children(footer_identity),
                 )
             })
     }
@@ -1925,7 +2048,7 @@ impl Shell {
             .flex_col()
             .flex_1()
             .min_w_0()
-            .gap_2();
+            .gap(px(4.));
         for index in [side, side + 2]
             .into_iter()
             .filter(|&d| d < self.visible_decks())
@@ -2004,7 +2127,13 @@ impl Shell {
     }
 
     fn content(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
-        let body = div().flex().flex_col().flex_1().min_h_0().gap_2().p_2();
+        let body = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .gap(px(4.))
+            .p(px(4.));
         match self.tab {
             Tab::Library => body.child(self.library.clone()),
             Tab::Live => body.child(
@@ -2018,7 +2147,7 @@ impl Shell {
                             .flex_col()
                             .h_full()
                             .min_h(px(780.))
-                            .gap_2()
+                            .gap(px(4.))
                             .child(self.rhythm_panel(decks, cx))
                             .when_some(self.engine_error.clone(), |this, error| {
                                 this.child(div().text_color(cx.theme().danger).child(error))
@@ -2027,16 +2156,8 @@ impl Shell {
                                 div()
                                     .flex()
                                     .flex_shrink_0()
-                                    .h(px(
-                                        if !self.settings.four_decks
-                                            && self.eq_mode == EqMode::Stems
-                                        {
-                                            510.
-                                        } else {
-                                            480.
-                                        },
-                                    ))
-                                    .gap_2()
+                                    .h(px(if self.settings.four_decks { 480. } else { 328. }))
+                                    .gap(px(4.))
                                     .child(self.deck_column(0, decks, cx))
                                     .child(self.mixer_panel(cx))
                                     .child(self.deck_column(1, decks, cx)),
@@ -2072,14 +2193,14 @@ impl Shell {
                                             .flex()
                                             .flex_1()
                                             .min_h_0()
-                                            .gap_2()
+                                            .gap(px(4.))
                                             .child(
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
                                                     .child(self.browser.clone()),
                                             )
-                                            .child(self.automix_panel(cx))
+                                            .child(self.library_side_panel(cx))
                                             .when(
                                                 self.effect_details.iter().any(Option::is_some),
                                                 |row| {
@@ -2090,7 +2211,7 @@ impl Shell {
                                                             .flex_shrink_0()
                                                             .flex()
                                                             .flex_col()
-                                                            .gap_2()
+                                                            .gap(px(4.))
                                                             .overflow_y_scroll()
                                                             .children(
                                                                 decks
@@ -2253,6 +2374,11 @@ impl Render for Shell {
         self.persist_automix();
         self.check_stem_cache(cx);
         let now = Instant::now();
+        for (peak, clip_until) in self.mixer_peaks.iter().zip(&mut self.mixer_clip_until) {
+            if *peak >= 1. {
+                *clip_until = Some(now + std::time::Duration::from_secs(1));
+            }
+        }
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
         for (index, deck) in decks.iter().enumerate() {
@@ -2340,6 +2466,16 @@ impl Render for Shell {
             || decks.iter().any(moving)
             || self.pending_seeks.iter().any(Option::is_some)
             || self.mixer_peaks.iter().any(|peak| *peak > 0.001)
+            || self
+                .mixer_clip_until
+                .iter()
+                .flatten()
+                .any(|until| *until > now)
+            || self
+                .mixer_last_change
+                .iter()
+                .flatten()
+                .any(|at| at.elapsed().as_secs_f32() < 2.)
         {
             window.request_animation_frame();
         }

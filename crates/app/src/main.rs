@@ -93,10 +93,21 @@ fn main() {
             }),
             ..Default::default()
         };
-        // Tracks named on the command line are loaded onto the decks in order.
-        let tracks = std::env::args().skip(1).collect();
+        // -quick skips the stem worker for fast UI checks; other arguments are tracks.
+        let mut quick = false;
+        let tracks = std::env::args()
+            .skip(1)
+            .filter(|arg| {
+                if arg == "-quick" {
+                    quick = true;
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
         gpui_kit::open_window(options, cx, |window, cx| {
-            let shell = cx.new(|cx| shell::Shell::new(tracks, settings, window, cx));
+            let shell = cx.new(|cx| shell::Shell::new(tracks, settings, quick, window, cx));
             let show = |tab: shell::Tab| {
                 let shell = shell.clone();
                 move |cx: &mut App| shell.update(cx, |shell, cx| shell.show(tab, cx))

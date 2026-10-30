@@ -1,7 +1,7 @@
 use super::*;
 use djcraft_protocol::{EFFECT_SLOTS, EffectKind as Kind, EffectState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-const VIEWS: [&str; 5] = ["FX x3", "FX x1", "FX x3 Full", "FX x6", "Pads 16"];
+pub(super) const VIEWS: [&str; 5] = ["FX x3", "FX x1", "FX x3 Full", "FX x6", "Pads 16"];
 const BEATS: [f32; 7] = djcraft_protocol::EFFECT_BEATS;
 const BEAT_LABELS: [&str; 7] = ["1/8", "1/4", "1/2", "1", "2", "4", "8"];
 fn value(fx: EffectState, parameter: u8) -> f32 {
@@ -469,38 +469,44 @@ impl Shell {
             .items_center()
             .gap_1()
             .flex_wrap()
-            .child(
-                Button::new(("fx-cycle", deck))
-                    .tooltip("Cycle through effect layouts.")
-                    .xsmall()
-                    .outline()
-                    .label(VIEWS[view])
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.effect_view[deck] = (this.effect_view[deck] + 1) % VIEWS.len();
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new(("fx-view", deck))
-                    .tooltip("Choose the effect layout.")
-                    .xsmall()
-                    .outline()
-                    .label("▾")
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for (i, name) in VIEWS.into_iter().enumerate() {
-                            let weak = weak.clone();
-                            menu = menu.item(PopupMenuItem::new(name).checked(i == view).on_click(
-                                move |_, _, cx| {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.effect_view[deck] = i;
-                                        cx.notify();
-                                    });
-                                },
-                            ));
-                        }
-                        menu
-                    }),
-            )
+            .when(self.settings.four_decks, |header| {
+                header.child(
+                    Button::new(("fx-cycle", deck))
+                        .tooltip("Cycle through effect layouts.")
+                        .xsmall()
+                        .outline()
+                        .label(VIEWS[view])
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.effect_view[deck] = (this.effect_view[deck] + 1) % VIEWS.len();
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(self.settings.four_decks, |header| {
+                header.child(
+                    Button::new(("fx-view", deck))
+                        .tooltip("Choose the effect layout.")
+                        .xsmall()
+                        .outline()
+                        .label("▾")
+                        .dropdown_menu(move |mut menu, _, _| {
+                            for (i, name) in VIEWS.into_iter().enumerate() {
+                                let weak = weak.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(name).checked(i == view).on_click(
+                                        move |_, _, cx| {
+                                            let _ = weak.update(cx, |this, cx| {
+                                                this.effect_view[deck] = i;
+                                                cx.notify();
+                                            });
+                                        },
+                                    ),
+                                );
+                            }
+                            menu
+                        }),
+                )
+            })
             .child(div().text_size(px(10.)).child(format!(
                     "PRE-FADER · {} active",
                     state

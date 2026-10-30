@@ -1,6 +1,16 @@
 use super::*;
 use gpui_kit::component::tooltip::Tooltip;
 
+fn clock_hundredths(seconds: f64) -> String {
+    let hundredths = (seconds.max(0.) * 100.).floor() as u64;
+    format!(
+        "{}:{:02}.{:02}",
+        hundredths / 6000,
+        (hundredths / 100) % 60,
+        hundredths % 100
+    )
+}
+
 impl Shell {
     pub(super) fn refresh_deck_artwork(&mut self, cx: &mut Context<Self>) {
         for deck in 0..DECKS {
@@ -88,10 +98,11 @@ impl Shell {
         let key_hover = self.key_hover_text(deck, state);
         div()
             .flex()
+            .gap(px(4.))
             .when(deck % 2 == 1, |row| row.flex_row_reverse())
             .items_center()
             .min_w_0()
-            .h(px(72.))
+            .h(px(73.))
             .flex_shrink_0()
             .child(
                 div()
@@ -141,7 +152,8 @@ impl Shell {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .when(deck % 2 == 1, |text| text.text_right())
+                            .when(deck % 2 == 1, |text| text.text_right().pr(px(4.)))
+                            .when(deck % 2 == 0, |text| text.pl(px(4.)))
                             .gap_1()
                             .child(
                                 div()
@@ -161,9 +173,8 @@ impl Shell {
             )
             .child(
                 div()
-                    .w(px(146.))
+                    .w(px(132.))
                     .flex_shrink_0()
-                    .px(px(4.))
                     .h_full()
                     .flex()
                     .flex_col()
@@ -181,7 +192,7 @@ impl Shell {
                             .justify_center()
                             .text_center()
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .p(px(4.))
+                            .py(px(4.))
                             .text_size(px(26.))
                             .line_height(px(26.))
                             .font_weight(FontWeight::BOLD)
@@ -197,21 +208,32 @@ impl Shell {
                         div()
                             .flex()
                             .w_full()
-                            .h(px(28.))
+                            .h(px(29.))
                             .flex_shrink_0()
-                            .justify_center()
-                            .bg(cx.theme().secondary.opacity(0.5))
-                            .p(px(4.))
                             .items_center()
-                            .child(div().id(("header-key-info", deck)).w(relative(0.3)).flex_shrink_0().text_center().text_xs().child("KEY"))
-                            .child(div().flex().w(relative(0.4)).flex_shrink_0().min_w_0().items_center().justify_center().gap(px(2.))
+                            .gap(px(4.))
+                            .child(div().flex().flex_1().min_w_0().items_center().justify_center().gap(px(4.))
                             .children((0..3).map(|position| {
                                 if position == 1 {
                                     let hover = key_hover.clone();
                                     return div()
                                         .id(("header-key-value", deck))
-                                        .text_xs()
-                                        .child(key.clone())
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .justify_center()
+                                        .w(px(33.))
+                                        .flex_shrink_0()
+                                        .min_w_0()
+                                        .h(px(29.))
+                                        .bg(cx.theme().secondary.opacity(0.5))
+                                        .child(div()
+                                            .id(("header-key-info", deck))
+                                            .text_size(px(9.))
+                                            .line_height(px(9.))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("KEY"))
+                                        .child(div().text_xs().line_height(px(12.)).font_weight(FontWeight::SEMIBOLD).child(key.clone()))
                                         .tooltip(move |window, cx| {
                                             Tooltip::new(hover.clone()).build(window, cx)
                                         })
@@ -222,7 +244,10 @@ impl Shell {
                                 Button::new(("header-key-step", deck * 2 + direction))
                                     .xsmall()
                                     .outline()
-                                    .w(px(16.))
+                                    .rounded(ButtonRounded::None)
+                                    .w(px(29.))
+                                    .h(px(29.))
+                                    .min_w_0()
                                     .p_0()
                                     .label(if direction == 0 { "−" } else { "+" })
                                     .disabled(state.track.is_none())
@@ -243,11 +268,14 @@ impl Shell {
                                     .into_any_element()
                             })))
                             .child(
-                                div().flex().w(relative(0.3)).flex_shrink_0().justify_center().child(
+                                div().flex().flex_shrink_0().child(
                                 Button::new(("header-key-lock", deck))
                                     .xsmall()
                                     .outline()
-                                    .w(px(26.))
+                                    .rounded(ButtonRounded::None)
+                                    .w(px(29.))
+                                    .h(px(29.))
+                                    .min_w_0()
                                     .p_0()
                                     .icon(IconName::Lock)
                                     .selected(state.key_lock)
@@ -271,15 +299,21 @@ impl Shell {
 
     pub(super) fn deck_header_times(
         &self,
-        _deck: usize,
+        deck: usize,
         state: &DeckState,
         cx: &Context<Self>,
     ) -> Div {
         let duration = state.track.as_ref().map(|t| t.duration_seconds);
+        let beat = self.grids[deck]
+            .filter(|grid| state.position_seconds >= grid.first_beat_seconds)
+            .map(|grid| {
+                ((state.position_seconds - grid.first_beat_seconds) / grid.beat_seconds()).floor()
+                    as usize
+                    % 4
+            });
         div()
-            .w(px(146.))
+            .w(px(132.))
             .flex_shrink_0()
-            .px(px(4.))
             .h_full()
             .flex()
             .gap(px(4.))
@@ -289,42 +323,90 @@ impl Shell {
                     .flex()
                     .w_full()
                     .h_full()
+                    .flex_col()
                     .items_center()
+                    .justify_center()
+                    .gap(px(2.))
                     .bg(cx.theme().secondary.opacity(0.5))
-                    .children(
-                        [
-                            (
-                                "ELAPSED",
-                                duration.map(|_| clock(state.position_seconds / state.tempo)),
-                            ),
-                            (
-                                "REMAIN",
-                                duration.map(|d| {
-                                    clock((d - state.position_seconds).max(0.) / state.tempo)
-                                }),
-                            ),
-                        ]
-                        .into_iter()
-                        .map(|(label, value)| {
-                            div()
-                                .flex()
-                                .flex_1()
-                                .p(px(4.))
-                                .flex_col()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .text_size(px(9.))
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(label),
+                    .child(
+                        div().flex().w_full().children(
+                            [
+                                (
+                                    "ELAPSED",
+                                    duration.map(|_| {
+                                        clock_hundredths(state.position_seconds / state.tempo)
+                                    }),
+                                ),
+                                (
+                                    "REMAIN",
+                                    duration.map(|d| {
+                                        clock_hundredths(
+                                            (d - state.position_seconds).max(0.) / state.tempo,
+                                        )
+                                    }),
+                                ),
+                            ]
+                            .into_iter()
+                            .map(|(label, value)| {
+                                let (main_time, decimals) = value
+                                    .and_then(|time| {
+                                        time.split_once('.').map(|(main, fraction)| {
+                                            (main.to_owned(), format!(".{fraction}"))
+                                        })
+                                    })
+                                    .unwrap_or_else(|| ("—".into(), String::new()));
+                                div()
+                                    .flex()
+                                    .flex_1()
+                                    .py(px(4.))
+                                    .flex_col()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_size(px(9.))
+                                            .line_height(px(9.))
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(label),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_end()
+                                            .line_height(px(12.))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .child(main_time),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(10.))
+                                                    .relative()
+                                                    .top(px(2.))
+                                                    .text_color(
+                                                        cx.theme().muted_foreground.opacity(0.7),
+                                                    )
+                                                    .child(decimals),
+                                            ),
+                                    )
+                            }),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_center()
+                            .gap_2()
+                            .children((0..4).map(|i| {
+                                div().w(px(22.)).h(px(3.)).rounded_sm().bg(
+                                    if state.track.is_some() && beat == Some(i) {
+                                        deck_colour(deck).into()
+                                    } else {
+                                        cx.theme().border
+                                    },
                                 )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(value.unwrap_or_else(|| "—".into())),
-                                )
-                        }),
+                            })),
                     ),
             )
     }

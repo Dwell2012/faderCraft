@@ -845,6 +845,26 @@ impl Engine {
                 self.decks[deck].loop_region = None;
                 Ok(())
             }
+            DeckAction::Unload => {
+                self.send(Command::Unload { deck })?;
+                let control = &mut self.decks[deck];
+                control.track = None;
+                control.path = None;
+                control.requested_path = None;
+                control.loading = None;
+                control.last_load = None;
+                control.error = None;
+                control.grid = None;
+                control.loop_region = None;
+                control.hot_cues = [None; djcraft_protocol::HOT_CUES];
+                control.cue_appearance = Default::default();
+                control.processed_peak = None;
+                control.loudness_applied = false;
+                if !self.automix.state.transitioning {
+                    self.automix.state.plan = None;
+                }
+                Ok(())
+            }
             DeckAction::Load { path } => {
                 self.decks[deck].requested_path = Some(path.clone());
                 let load_id = self.next_load_id;

@@ -143,6 +143,9 @@ pub(crate) enum Command {
         deck: usize,
         track: Arc<Track>,
     },
+    Unload {
+        deck: usize,
+    },
     Play {
         deck: usize,
     },
@@ -1020,6 +1023,7 @@ impl Mixer {
         // Direct transport and hand movements cancel the automated gesture.
         let cancel = match &command {
             Command::Load { deck, .. }
+            | Command::Unload { deck }
             | Command::Seek { deck, .. }
             | Command::Jump { deck, .. }
             | Command::Cue { deck, .. }
@@ -1378,6 +1382,30 @@ impl Mixer {
                 deck.scratch = None;
                 deck.scratch_position = None;
                 deck.speed = 0.0;
+                deck.stretching = false;
+                deck.prepared_at = None;
+            }
+            Command::Unload { deck } => {
+                self.deck_guards[deck].reset();
+                let deck = &mut self.decks[deck];
+                if let Some(old) = deck.track.take() {
+                    let _ = self.garbage.push(old);
+                }
+                deck.loop_armed = false;
+                deck.loop_region = None;
+                deck.roll_position = None;
+                deck.nudge_frames = 0.;
+                deck.position = 0.;
+                deck.eq.reset();
+                for effect in &mut deck.effects {
+                    effect.clear();
+                }
+                deck.stem_gains = [1.; 4];
+                deck.current_stems = [1.; 4];
+                deck.playing = false;
+                deck.scratch = None;
+                deck.scratch_position = None;
+                deck.speed = 0.;
                 deck.stretching = false;
                 deck.prepared_at = None;
             }

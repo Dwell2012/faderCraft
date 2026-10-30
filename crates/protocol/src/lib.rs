@@ -339,6 +339,8 @@ pub enum DeckAction {
     Load {
         path: String,
     },
+    /// Eject the loaded track and cancel any load still in progress.
+    Unload,
     Play,
     Pause,
     Seek {

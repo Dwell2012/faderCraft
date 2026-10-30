@@ -1,8 +1,8 @@
 use super::*;
 use djcraft_protocol::{EffectKind, EffectState, HOT_CUES, HotCue};
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{
-    WindowExt,
+    Icon, WindowExt,
     input::{Input, InputState},
 };
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -22,7 +22,7 @@ pub(super) enum Page {
     KeyShift,
 }
 impl Page {
-    const ALL: [Self; 13] = [
+    pub(super) const ALL: [Self; 13] = [
         Self::HotCues,
         Self::Loop,
         Self::Roll,
@@ -37,7 +37,7 @@ impl Page {
         Self::AutoScratch,
         Self::KeyShift,
     ];
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::HotCues => "Hot Cues",
             Self::Loop => "Loop",
@@ -82,18 +82,19 @@ pub(super) struct Pads {
     sample_edit: u8,
     sample_hold: Option<usize>,
     sample_level: f32,
-    sample_repeat: bool,
+    pub(super) sample_repeat: bool,
     scratch_over: bool,
-    page: Page,
-    split: Option<Page>,
-    favorites: bool,
+    pub(super) page: Page,
+    pub(super) split: Option<Page>,
+    pub(super) favorites: bool,
     bank: [i32; 13],
     size: [i32; 13],
     step: [i32; 13],
     delete_saved: bool,
-    quantize: bool,
-    locked: bool,
-    stutter: bool,
+    pub(super) quantize: bool,
+    pub(super) quantize_window: f64,
+    pub(super) locked: bool,
+    pub(super) stutter: bool,
     loop_mode: usize,
     held: Option<Held>,
     slicer_anchor: Option<f64>,
@@ -101,6 +102,8 @@ pub(super) struct Pads {
 }
 impl Default for Pads {
     fn default() -> Self {
+        let mut bank = [0; 13];
+        bank[Page::BeatJump as usize] = 2;
         Self {
             sample_edit: 0,
             sample_hold: None,
@@ -110,11 +113,12 @@ impl Default for Pads {
             page: Page::HotCues,
             split: None,
             favorites: false,
-            bank: [0; 13],
+            bank,
             size: [0; 13],
             step: [0; 13],
             delete_saved: false,
             quantize: true,
+            quantize_window: 0.05,
             locked: false,
             stutter: false,
             loop_mode: 0,
@@ -124,15 +128,20 @@ impl Default for Pads {
         }
     }
 }
-fn pad_beats(page: Page, bank: i32, index: usize, alternate: bool) -> f64 {
+fn pad_beats(page: Page, bank: i32, index: usize, _alternate: bool) -> f64 {
     if page == Page::BeatJump {
         return 2f64.powi((bank + (index / 2) as i32).clamp(-5, 7))
             * if index % 2 == 0 { -1. } else { 1. };
     }
-    if page == Page::Roll && alternate {
-        return [0.0625, 0.125, 0.25, 0.5, 0.75, 1., 2., 4.][index % 8];
-    }
-    2f64.powi((bank + index as i32 - if page == Page::Roll { 5 } else { 2 }).clamp(-5, 7))
+    2f64.powi((bank + index as i32 - 2).clamp(-5, 7))
+}
+
+fn cue_loop_length(
+    grid: Option<TempoResult>,
+    region: Option<[f64; 2]>,
+    loop_size: i32,
+) -> Option<f64> {
+    grid.map(|grid| region.map_or(grid.beat_seconds() * 2f64.powi(loop_size), |[a, b]| b - a))
 }
 
 // Absolute offsets from the unshifted track: centre pad restores its key.
@@ -187,14 +196,19 @@ fn snapped(seconds: f64, grid: Option<TempoResult>, enabled: bool) -> f64 {
     seconds
 }
 
-fn hot_cue_position(seconds: f64, grid: Option<TempoResult>, quantize: bool) -> f64 {
+fn hot_cue_position(
+    seconds: f64,
+    grid: Option<TempoResult>,
+    quantize: bool,
+    quantize_window: f64,
+) -> f64 {
     let Some(grid) = grid.filter(|_| quantize) else {
         return seconds;
     };
     let target = snapped(seconds, Some(grid), true);
     let beat = grid.beat_seconds();
     // Include the boundary despite floating-point rounding of grid positions.
-    if (target - seconds).abs() <= beat * 0.05 + beat * 1e-10 {
+    if (target - seconds).abs() <= beat * quantize_window + beat * 1e-10 {
         target
     } else {
         seconds
@@ -455,6 +469,7 @@ impl Shell {
                             cue.seconds,
                             self.grids[deck],
                             self.pads[deck].quantize,
+                            self.pads[deck].quantize_window,
                         );
                         if state
                             .track
@@ -795,8 +810,13 @@ impl Shell {
                             return;
                         }
                         let start = if page == Page::HotCues {
-                            hot_cue_position(state.position_seconds, grid, quantize)
-                                .min(track.loaded_seconds)
+                            hot_cue_position(
+                                state.position_seconds,
+                                grid,
+                                quantize,
+                                self.pads[deck].quantize_window,
+                            )
+                            .min(track.loaded_seconds)
                         } else {
                             start
                         };
@@ -808,7 +828,7 @@ impl Shell {
                     }
                     if existed || page == Page::CueLoop {
                         let loop_length = if page == Page::CueLoop {
-                            step.map(|s| s * 2f64.powi(self.pads[deck].size[page as usize]))
+                            cue_loop_length(grid, state.loop_region, self.loop_size[deck])
                         } else {
                             None
                         };
@@ -1235,7 +1255,11 @@ impl Shell {
                 self.pads[deck].step[page as usize] =
                     (self.pads[deck].step[page as usize] + direction).clamp(-2, 3)
             }
-            Page::CueLoop if parameter == 1 => self.pads[deck].stutter = !self.pads[deck].stutter,
+            Page::CueLoop => {
+                if parameter == 1 {
+                    self.pads[deck].stutter = !self.pads[deck].stutter;
+                }
+            }
             Page::Stems | Page::Fx => {}
             Page::Loop | Page::Roll | Page::BeatJump => {
                 self.pads[deck].bank[page as usize] =
@@ -1276,13 +1300,13 @@ impl Shell {
             }
             Page::Sampler => (
                 if state.sample_loading[index] {
-                    format!("{} · Loading…", index + 1)
+                    "Loading…".to_owned()
                 } else if state.sample_errors[index].is_some() {
-                    format!("{} · Load failed", index + 1)
+                    "Load failed".to_owned()
                 } else if !state.sample_names[index].is_empty() {
-                    format!("{} · {}", index + 1, state.sample_names[index])
+                    state.sample_names[index].clone()
                 } else {
-                    format!("{} · Empty", index + 1)
+                    "Empty".to_owned()
                 },
                 state.samples[index] == 2,
                 !state.sample_loading[index],
@@ -1307,10 +1331,9 @@ impl Shell {
             Page::HotCues | Page::CueLoop => {
                 let cue = state.hot_cues[index];
                 (
-                    cue.map_or(format!("{} · SET", index + 1), |c| {
+                    cue.map_or("SET".to_owned(), |c| {
                         format!(
-                            "{} {}{}",
-                            index + 1,
+                            "{}{}",
                             if c.loop_end.is_some() { "↻ " } else { "" },
                             if state.cue_appearance[index].label.is_empty() {
                                 clock(c.seconds)
@@ -1354,9 +1377,7 @@ impl Shell {
                     .and_then(|p| self.saved_loops.get(&crate::track_identity::key(p)))
                     .and_then(|s| s[index]);
                 (
-                    saved.map_or(format!("{} · SAVE", index + 1), |r| {
-                        format!("{} · {}", index + 1, clock(r[0]))
-                    }),
+                    saved.map_or("SAVE".to_owned(), |r| clock(r[0])),
                     saved.is_some(),
                     loaded && (saved.is_some() || grid || state.loop_region.is_some()),
                 )
@@ -1389,55 +1410,89 @@ impl Shell {
             Page::Fx => (PAD_FX[index].label().into(), held, loaded),
         }
     }
-    fn pad_menu(&self, deck: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let weak = cx.entity().downgrade();
-        let page = self.pads[deck].page;
-        let locked = self.pads[deck].locked;
-        let quantize = self.pads[deck].quantize;
-        let stutter = self.pads[deck].stutter;
-        let repeat = self.pads[deck].sample_repeat;
-        Button::new(("pad-options", deck))
-.tooltip("Configure cue locks, quantization and pad behaviour.")
-            .xsmall()
-            .outline()
-            .label("Options ▾")
-            .dropdown_menu(move |mut menu, _, _| {
-                for (i, label, checked) in [
-                    (0, "Lock cue/loop editing", locked),
-                    (1, if page == Page::HotCues { "Quantize on set (within 5% of beat)" } else { "Quantize on set" }, quantize),
-                    (2, "Cue stutter / hold", stutter),
-                    (3, "Delete saved loop: next pad", false),
-                    (4, "Release held slicer bank", false),
-                    (5, "Loop samples", repeat),
-                    (6, "Sampler volume +10%", false),
-                    (7, "Sampler volume -10%", false),
-                    (8, "Load from disk: next pad", false),
-                    (9, "Restore default: next pad", false),
-                    (10, "Capture deck: next pad", false),
-                ] {
-                    let relevant = match i {
-                        0 => matches!(
-                            page,
-                            Page::HotCues | Page::CueLoop | Page::SavedLoops | Page::Sampler
-                        ),
-                        1 => matches!(
-                            page,
-                            Page::HotCues
-                                | Page::CueLoop
-                                | Page::Loop
-                                | Page::Roll
-                                | Page::ManualLoop
-                        ),
-                        2 => matches!(page, Page::HotCues | Page::CueLoop),
-                        3 => page == Page::SavedLoops,
-                        4 => page == Page::Slicer,
-                        _ => page == Page::Sampler,
-                    };
-                    if !relevant {
-                        continue;
-                    }
-                    let weak = weak.clone();
-                    menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
+    pub(super) fn pad_page_options_menu(
+        mut menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+        weak: WeakEntity<Self>,
+        deck: usize,
+        page: Page,
+        locked: bool,
+        quantize: bool,
+        quantize_window: f64,
+        stutter: bool,
+        repeat: bool,
+    ) -> PopupMenu {
+        for (i, label, checked) in [
+            (0, "Lock cue/loop editing", locked),
+            (1, "Quantize on set", quantize),
+            (2, "Cue stutter / hold", stutter),
+            (3, "Delete saved loop: next pad", false),
+            (4, "Release held slicer bank", false),
+            (5, "Loop samples", repeat),
+            (6, "Sampler volume +10%", false),
+            (7, "Sampler volume -10%", false),
+            (8, "Load from disk: next pad", false),
+            (9, "Restore default: next pad", false),
+            (10, "Capture deck: next pad", false),
+        ] {
+            let relevant = match i {
+                0 => matches!(
+                    page,
+                    Page::HotCues | Page::CueLoop | Page::SavedLoops | Page::Sampler
+                ),
+                1 => matches!(
+                    page,
+                    Page::HotCues | Page::CueLoop | Page::Loop | Page::Roll | Page::ManualLoop
+                ),
+                2 => matches!(page, Page::HotCues | Page::CueLoop),
+                3 => page == Page::SavedLoops,
+                4 => page == Page::Slicer,
+                _ => page == Page::Sampler,
+            };
+            if !relevant {
+                continue;
+            }
+            if i == 1 && page == Page::HotCues {
+                let weak = weak.clone();
+                menu = menu.submenu_with_icon(
+                    quantize.then(|| Icon::new(IconName::Check).xsmall()),
+                    "Quantize on set",
+                    window,
+                    cx,
+                    move |mut submenu, _, _| {
+                        for (label, window) in [
+                            ("No Quantize", None),
+                            ("5% of beat", Some(0.05)),
+                            ("10% of beat", Some(0.10)),
+                            ("20% of beat", Some(0.20)),
+                            ("30% of beat", Some(0.30)),
+                        ] {
+                            let weak = weak.clone();
+                            submenu = submenu.item(
+                                PopupMenuItem::new(label)
+                                    .checked(match window {
+                                        None => !quantize,
+                                        Some(window) => quantize && quantize_window == window,
+                                    })
+                                    .on_click(move |_, _, cx| {
+                                        let _ = weak.update(cx, |this, cx| {
+                                            this.pads[deck].quantize = window.is_some();
+                                            if let Some(window) = window {
+                                                this.pads[deck].quantize_window = window;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }),
+                            );
+                        }
+                        submenu
+                    },
+                );
+                continue;
+            }
+            let weak = weak.clone();
+            menu = menu.item(PopupMenuItem::new(label).checked(checked).on_click(
                         move |_, _, cx| {
                             let _ = weak.update(cx, |this, cx| {
                                 match i {
@@ -1460,9 +1515,72 @@ impl Shell {
                                 cx.notify();
                             });
                         },
-                    ));
+            ));
+        }
+        let controls: &[(usize, &str)] = match page {
+            Page::Loop => &[(0, "Loop bank"), (1, "Loop mode")],
+            Page::Roll | Page::BeatJump => &[(0, "Beat bank")],
+            Page::Slicer => &[(0, "Slice length"), (1, "Slice step")],
+            Page::CueLoop => &[],
+            Page::SavedLoops => &[(0, "Saved loop length"), (1, "Move loop")],
+            Page::ManualLoop => &[(0, "Loop length")],
+            Page::Sampler => &[(0, "Trigger mode"), (1, "Capture length")],
+            Page::AutoScratch => &[(0, "Cut / over"), (1, "Quantize / immediate")],
+            Page::KeyShift => &[(0, "Key layout"), (1, "Key shift")],
+            Page::HotCues | Page::Stems | Page::Fx => &[],
+        };
+        if !controls.is_empty() {
+            menu = menu.separator();
+        }
+        for &(parameter, label) in controls {
+            for (direction, direction_label) in [(-1, "Previous"), (1, "Next")] {
+                if page == Page::AutoScratch && direction < 0 {
+                    continue;
                 }
-                menu
+                let weak = weak.clone();
+                menu = menu.item(
+                    PopupMenuItem::new(if page == Page::AutoScratch {
+                        format!("Toggle {label}")
+                    } else {
+                        format!("{label}: {direction_label}")
+                    })
+                    .on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            this.pad_parameter(deck, page, parameter, direction, cx)
+                        });
+                    }),
+                );
+            }
+        }
+        menu
+    }
+    fn pad_menu(&self, deck: usize, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let weak = cx.entity().downgrade();
+        let page = self.pads[deck].page;
+        let locked = self.pads[deck].locked;
+        let quantize = self.pads[deck].quantize;
+        let quantize_window = self.pads[deck].quantize_window;
+        let stutter = self.pads[deck].stutter;
+        let repeat = self.pads[deck].sample_repeat;
+        Button::new(("pad-options", deck))
+            .tooltip("Configure cue locks, quantization and pad behaviour.")
+            .xsmall()
+            .outline()
+            .label("Options ▾")
+            .dropdown_menu(move |menu, window, cx| {
+                Self::pad_page_options_menu(
+                    menu,
+                    window,
+                    cx,
+                    weak.clone(),
+                    deck,
+                    page,
+                    locked,
+                    quantize,
+                    quantize_window,
+                    stutter,
+                    repeat,
+                )
             })
     }
     pub(super) fn pad_panel(
@@ -1475,16 +1593,22 @@ impl Shell {
         let page = self.pads[deck].page;
         let sixteen = self.effect_view[deck] == 4;
         let split = if sixteen { None } else { self.pads[deck].split };
+        let compact = !self.settings.four_decks && !upper;
         let accent = deck_colour(deck);
         let mut panel = div()
             .flex()
             .flex_col()
             .flex_shrink_0()
-            .gap_1()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().border);
+            .w_full()
+            .gap(px(4.))
+            .when(compact, |panel| panel.h_full())
+            .when(!compact, |panel| {
+                panel
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().border)
+            });
         let weak = cx.entity().downgrade();
         let mut header = div()
             .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
@@ -1501,87 +1625,92 @@ impl Shell {
             .items_center()
             .gap_1()
             .flex_wrap()
-            .child(
-                Button::new(("pad-view", deck * 2 + usize::from(upper)))
-                    .tooltip("Toggle favourite pad pages; in the upper bank, return to effects.")
-                    .xsmall()
-                    .outline()
-                    .label(if upper {
-                        "Pads 16 · FX"
-                    } else if self.pads[deck].favorites {
-                        "Favourites"
-                    } else {
-                        "PADS"
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.release_pad(deck);
-                        if upper {
-                            this.effect_view[deck] = 0;
+            .when(self.settings.four_decks || upper, |header| {
+                header.child(
+                    Button::new(("pad-view", deck * 2 + usize::from(upper)))
+                        .tooltip(
+                            "Toggle favourite pad pages; in the upper bank, return to effects.",
+                        )
+                        .xsmall()
+                        .outline()
+                        .label(if upper {
+                            "Pads 16 · FX"
+                        } else if self.pads[deck].favorites {
+                            "Favourites"
                         } else {
-                            this.pads[deck].favorites = !this.pads[deck].favorites;
-                        }
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new(("pad-page", deck * 2 + usize::from(upper)))
-                    .tooltip("Choose the pad mode.")
-                    .xsmall()
-                    .outline()
-                    .label(page.label())
-                    .dropdown_caret(true)
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for selected in Page::ALL {
-                            let weak = weak.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(selected.label())
-                                    .checked(selected == page)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = weak.update(cx, |this, cx| {
-                                            this.release_pad(deck);
-                                            this.pads[deck].page = selected;
-                                            this.pads[deck].notice.clear();
-                                            cx.notify();
-                                        });
-                                    }),
-                            );
-                        }
-                        if !sixteen {
-                            let weak_off = weak.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new("Single page")
-                                    .checked(split.is_none())
-                                    .on_click(move |_, _, cx| {
-                                        let _ = weak_off.update(cx, |this, cx| {
-                                            this.release_pad(deck);
-                                            this.pads[deck].split = None;
-                                            cx.notify();
-                                        });
-                                    }),
-                            );
+                            "PADS"
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.release_pad(deck);
+                            if upper {
+                                this.effect_view[deck] = 0;
+                            } else {
+                                this.pads[deck].favorites = !this.pads[deck].favorites;
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(self.settings.four_decks || upper, |header| {
+                header.child(
+                    Button::new(("pad-page", deck * 2 + usize::from(upper)))
+                        .tooltip("Choose the pad mode.")
+                        .xsmall()
+                        .outline()
+                        .label(page.label())
+                        .dropdown_caret(true)
+                        .dropdown_menu(move |mut menu, _, _| {
                             for selected in Page::ALL {
                                 let weak = weak.clone();
                                 menu = menu.item(
-                                    PopupMenuItem::new(format!(
-                                        "Split lower: {}",
-                                        selected.label()
-                                    ))
-                                    .checked(split == Some(selected))
-                                    .on_click(
-                                        move |_, _, cx| {
+                                    PopupMenuItem::new(selected.label())
+                                        .checked(selected == page)
+                                        .on_click(move |_, _, cx| {
                                             let _ = weak.update(cx, |this, cx| {
                                                 this.release_pad(deck);
-                                                this.pads[deck].split = Some(selected);
+                                                this.pads[deck].page = selected;
+                                                this.pads[deck].notice.clear();
                                                 cx.notify();
                                             });
-                                        },
-                                    ),
+                                        }),
                                 );
                             }
-                        }
-                        menu
-                    }),
-            );
+                            if !sixteen {
+                                let weak_off = weak.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new("Single page")
+                                        .checked(split.is_none())
+                                        .on_click(move |_, _, cx| {
+                                            let _ = weak_off.update(cx, |this, cx| {
+                                                this.release_pad(deck);
+                                                this.pads[deck].split = None;
+                                                cx.notify();
+                                            });
+                                        }),
+                                );
+                                for selected in Page::ALL {
+                                    let weak = weak.clone();
+                                    menu =
+                                        menu.item(
+                                            PopupMenuItem::new(format!(
+                                                "Split lower: {}",
+                                                selected.label()
+                                            ))
+                                            .checked(split == Some(selected))
+                                            .on_click(move |_, _, cx| {
+                                                let _ = weak.update(cx, |this, cx| {
+                                                    this.release_pad(deck);
+                                                    this.pads[deck].split = Some(selected);
+                                                    cx.notify();
+                                                });
+                                            }),
+                                        );
+                                }
+                            }
+                            menu
+                        }),
+                )
+            });
         if !upper {
             let mut parameters = div().flex().gap_2().flex_wrap();
             for param in 0..2 {
@@ -1590,6 +1719,9 @@ impl Shell {
                 } else {
                     page
                 };
+                if param_page == Page::HotCues {
+                    continue;
+                }
                 let parameter = if split.is_some() { 0 } else { param };
                 let label = match param_page {
                     Page::KeyShift => {
@@ -1660,6 +1792,9 @@ impl Shell {
                             "Latch".into()
                         }
                     }
+                    Page::CueLoop => {
+                        format!("Loop {} beats", 2f64.powi(self.loop_size[deck]))
+                    }
                     Page::ManualLoop => format!("Size {} beats", 2f64.powi(self.loop_size[deck])),
                     Page::SavedLoops if parameter == 1 => "Move 1 beat".into(),
                     Page::Loop | Page::Roll | Page::BeatJump => {
@@ -1679,6 +1814,7 @@ impl Shell {
                     ),
                 };
                 let assigned = !matches!(param_page, Page::Stems | Page::Fx)
+                    && !(param_page == Page::CueLoop && parameter == 0)
                     && !(parameter == 1
                         && matches!(param_page, Page::Roll | Page::BeatJump | Page::ManualLoop));
                 if !assigned {
@@ -1724,14 +1860,18 @@ impl Shell {
                 parameters = parameters.child(control);
             }
             header = header.child(parameters);
-            if !matches!(
-                page,
-                Page::BeatJump | Page::Stems | Page::Fx | Page::KeyShift
-            ) {
+            if (self.settings.four_decks || upper)
+                && !matches!(
+                    page,
+                    Page::BeatJump | Page::Stems | Page::Fx | Page::KeyShift
+                )
+            {
                 header = header.child(self.pad_menu(deck, cx));
             }
         }
-        panel = panel.child(header);
+        if !compact {
+            panel = panel.child(header);
+        }
         if !upper {
             if self.pads[deck].favorites {
                 let mut favorites = div().flex().gap_1().flex_wrap();
@@ -1765,7 +1905,11 @@ impl Shell {
             } else {
                 page
             };
-            let mut pads = div().flex().gap_1();
+            let mut pads = div()
+                .flex()
+                .w_full()
+                .gap(px(4.))
+                .when(compact, |pads| pads.flex_1().min_h_0());
             for col in 0..4 {
                 let index = if split.is_some() {
                     col
@@ -1791,12 +1935,13 @@ impl Shell {
                         ))
                         .flex_1()
                         .min_w_0()
-                        .h(px(43.))
+                        .when(compact, |pad| pad.h_full())
+                        .when(!compact, |pad| pad.h(px(43.)))
                         .flex()
                         .flex_col()
                         .justify_center()
                         .items_center()
-                        .rounded_md()
+                        .when(!compact, |pad| pad.rounded_md())
                         .border_1()
                         .border_color(if active || is_cue {
                             accent.into()
@@ -1890,25 +2035,45 @@ impl Shell {
                         ),
                 );
             }
-            if row == 1 {
-                if let Some(split) = split {
-                    panel = panel.child(
-                        div()
-                            .text_size(px(10.))
-                            .text_color(cx.theme().muted_foreground)
-                            .child(split.label()),
-                    );
+            if compact && split.is_some() {
+                panel = panel.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .h(px(12.))
+                                .flex_shrink_0()
+                                .text_size(px(10.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(rowpage.label()),
+                        )
+                        .child(pads),
+                );
+            } else {
+                if row == 1 {
+                    if let Some(split) = split {
+                        panel = panel.child(
+                            div()
+                                .text_size(px(10.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(split.label()),
+                        );
+                    }
                 }
+                panel = panel.child(pads);
             }
-            panel = panel.child(pads);
         }
         if !upper {
-            if page == Page::KeyShift || split == Some(Page::KeyShift) {
+            if !compact && (page == Page::KeyShift || split == Some(Page::KeyShift)) {
                 panel = panel.child(div().text_size(px(10.)).child(
                     "Latched offsets from the original key · Reset restores 0 · Scale pads follow major or natural minor intervals · Key Lock keeps tempo changes from altering pitch"
                 ));
             }
-            if page == Page::Sampler || split == Some(Page::Sampler) {
+            if !compact && (page == Page::Sampler || split == Some(Page::Sampler)) {
                 let message=state.sample_errors.iter().enumerate().find_map(|(i,e)|e.as_ref().map(|e|format!("Slot {}: {e}",i+1))).unwrap_or_else(||"Drop a library track onto a pad · Options → Load from disk · Bank saved automatically".into());
                 panel = panel.child(div().text_size(px(10.)).child(message));
             }
@@ -1926,7 +2091,9 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{Page, hot_cue_position, pad_beats, sample_capture_region, snapped};
+    use super::{
+        Page, cue_loop_length, hot_cue_position, pad_beats, sample_capture_region, snapped,
+    };
     use djcraft_library::TempoResult;
 
     #[test]
@@ -1956,14 +2123,19 @@ mod tests {
     }
     #[core::prelude::v1::test]
     fn pad_banks_jump_pairs_and_quantization() {
-        assert_eq!(pad_beats(Page::Roll, 0, 0, false), 1. / 32.);
-        assert_eq!(pad_beats(Page::Roll, 0, 4, true), 0.75);
-        for index in 0..8 {
-            assert_eq!(
-                pad_beats(Page::BeatJump, 0, index * 2, false),
-                -pad_beats(Page::BeatJump, 0, index * 2 + 1, false)
-            );
+        for bank in -3..=4 {
+            for index in 0..8 {
+                let loop_beats = pad_beats(Page::Loop, bank, index, false);
+                assert_eq!(pad_beats(Page::Roll, bank, index, false), loop_beats);
+                assert_eq!(pad_beats(Page::Roll, bank, index, true), loop_beats);
+            }
         }
+        assert_eq!(super::Pads::default().bank[Page::BeatJump as usize], 2);
+        for (pair, beats) in [4., 8., 16., 32.].into_iter().enumerate() {
+            assert_eq!(pad_beats(Page::BeatJump, 2, pair * 2, false), -beats);
+            assert_eq!(pad_beats(Page::BeatJump, 2, pair * 2 + 1, false), beats);
+        }
+        assert_eq!(pad_beats(Page::BeatJump, 1, 0, false), -2.);
         let grid = TempoResult {
             bpm: 120.,
             first_beat_seconds: 0.1,
@@ -1972,6 +2144,20 @@ mod tests {
         };
         assert!((snapped(1.42, Some(grid), true) - 1.6).abs() < 1e-8);
         assert_eq!(snapped(1.42, Some(grid), false), 1.42);
+    }
+
+    #[test]
+    fn cue_loop_uses_the_current_loop_length() {
+        let grid = TempoResult {
+            bpm: 120.,
+            first_beat_seconds: 0.,
+            downbeat: 0,
+            confidence: 1.,
+        };
+        assert_eq!(cue_loop_length(Some(grid), None, 2), Some(2.));
+        assert_eq!(cue_loop_length(Some(grid), None, 3), Some(4.));
+        assert_eq!(cue_loop_length(Some(grid), Some([1., 2.5]), 2), Some(1.5));
+        assert_eq!(cue_loop_length(None, None, 2), None);
     }
 
     #[core::prelude::v1::test]
@@ -2014,17 +2200,26 @@ mod tests {
             let target = grid.first_beat_seconds + 3. * beat;
             for offset in [-0.05, -0.02, 0., 0.02, 0.05] {
                 assert!(
-                    (hot_cue_position(target + offset * beat, Some(grid), true) - target).abs()
+                    (hot_cue_position(target + offset * beat, Some(grid), true, 0.05) - target)
+                        .abs()
                         < 1e-9
                 );
             }
             for offset in [-0.5, -0.051, 0.051, 0.5] {
                 let position = target + offset * beat;
-                assert_eq!(hot_cue_position(position, Some(grid), true), position);
+                assert_eq!(hot_cue_position(position, Some(grid), true, 0.05), position);
             }
             let close = target + 0.01 * beat;
-            assert_eq!(hot_cue_position(close, Some(grid), false), close);
-            assert_eq!(hot_cue_position(close, None, true), close);
+            assert_eq!(hot_cue_position(close, Some(grid), false, 0.05), close);
+            assert_eq!(hot_cue_position(close, None, true, 0.05), close);
+            assert_eq!(
+                hot_cue_position(target + 0.15 * beat, Some(grid), true, 0.10),
+                target + 0.15 * beat
+            );
+            assert_eq!(
+                hot_cue_position(target + 0.15 * beat, Some(grid), true, 0.20),
+                target
+            );
         }
     }
 }

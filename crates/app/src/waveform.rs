@@ -50,8 +50,19 @@ struct DisplayColumn {
 }
 
 // Symmetric display-only filter: no temporal lag or shift of beat positions.
+#[cfg(test)]
 fn smooth_columns(raw: &[Option<DisplayColumn>]) -> Vec<Option<DisplayColumn>> {
     const WEIGHTS: [f32; 5] = [0.1, 0.2, 0.4, 0.2, 0.1];
+    smooth_columns_weighted(raw, WEIGHTS)
+}
+
+fn smooth_columns_weighted(
+    raw: &[Option<DisplayColumn>],
+    weights: [f32; 5],
+) -> Vec<Option<DisplayColumn>> {
+    if weights == [0., 0., 1., 0., 0.] {
+        return raw[2..raw.len() - 2].to_vec();
+    }
     raw.windows(5)
         .map(|neighbours| {
             neighbours[2]?; // Never extend the waveform beyond available audio.
@@ -60,7 +71,7 @@ fn smooth_columns(raw: &[Option<DisplayColumn>]) -> Vec<Option<DisplayColumn>> {
                 attack: neighbours[2]?.attack,
                 ..DisplayColumn::default()
             };
-            for (column, weight) in neighbours.iter().zip(WEIGHTS) {
+            for (column, weight) in neighbours.iter().zip(weights) {
                 if let Some(column) = column {
                     for (sum, energy) in result.energy.iter_mut().zip(column.energy) {
                         *sum += energy * weight;
@@ -94,6 +105,26 @@ fn display_source_columns(
     step: f64,
     stem: Option<usize>,
     attacks: &[djcraft_analysis::BassAttack],
+) -> Vec<Option<DisplayColumn>> {
+    display_source_columns_weighted(
+        track,
+        first,
+        count,
+        step,
+        stem,
+        attacks,
+        [0.1, 0.2, 0.4, 0.2, 0.1],
+    )
+}
+
+fn display_source_columns_weighted(
+    track: &Track,
+    first: i64,
+    count: usize,
+    step: f64,
+    stem: Option<usize>,
+    attacks: &[djcraft_analysis::BassAttack],
+    weights: [f32; 5],
 ) -> Vec<Option<DisplayColumn>> {
     let ready = track.peak_count() as i64;
     let dt = track.frames_per_peak() as f64 / track.sample_rate as f64;
@@ -140,7 +171,7 @@ fn display_source_columns(
             })
         })
         .collect();
-    smooth_columns(&raw)
+    smooth_columns_weighted(&raw, weights)
 }
 
 fn paint_columns(
@@ -620,6 +651,7 @@ pub(crate) struct OverviewCache {
     attacks: Arc<OnceLock<Vec<djcraft_analysis::BassAttack>>>,
     attacks_started: bool,
     overview_has_attacks: bool,
+    detailed_overview: bool,
     scrolling: [Option<ScrollColumns>; 5],
 }
 
@@ -717,6 +749,7 @@ pub fn overview(
     styles: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     deck: usize,
     rgb_waveforms: bool,
+    detailed: bool,
 ) -> impl IntoElement {
     let duration = track.frames() as f64 / track.sample_rate as f64;
     let flags = cue_flags(cues, &styles, deck, 0., duration, false);
@@ -748,20 +781,27 @@ pub fn overview(
                         || cached.ready != ready
                         || cached.frames != frames
                         || cached.overview_has_attacks != has_attacks
+                        || cached.detailed_overview != detailed
                     {
-                        cached.columns = display_source_columns(
+                        cached.columns = display_source_columns_weighted(
                             &track,
                             0,
                             columns,
                             COLUMN_WIDTH as f64 / width as f64 * total as f64,
                             None,
                             cached.attacks.get().map(Vec::as_slice).unwrap_or_default(),
+                            if detailed {
+                                [0., 0., 1., 0., 0.]
+                            } else {
+                                [0.1, 0.2, 0.4, 0.2, 0.1]
+                            },
                         );
                         cached.track = Some(track.clone());
                         cached.width = width;
                         cached.ready = ready;
                         cached.frames = frames;
                         cached.overview_has_attacks = has_attacks;
+                        cached.detailed_overview = detailed;
                         cached.mesh = None;
                     }
                     window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -776,7 +816,7 @@ pub fn overview(
                             columns,
                             0.,
                             deck_palette(deck),
-                            [1.; 3],
+                            if detailed { [0.7; 3] } else { [1.; 3] },
                             mesh,
                             false,
                             rgb_waveforms,
@@ -1059,6 +1099,26 @@ mod tests {
             }
         }
         assert!(smooth_columns(&[None; 5])[0].is_none());
+    }
+
+    #[test]
+    fn unsmoothed_overview_keeps_each_source_column() {
+        let raw: Vec<_> = (0..9)
+            .map(|i| {
+                Some(DisplayColumn {
+                    energy: [i as f32, 0., 0.],
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let columns = super::smooth_columns_weighted(&raw, [0., 0., 1., 0., 0.]);
+        assert_eq!(
+            columns
+                .iter()
+                .map(|column| column.unwrap().energy[0])
+                .collect::<Vec<_>>(),
+            vec![2., 3., 4., 5., 6.]
+        );
     }
 
     #[test]

@@ -3,9 +3,9 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 #[derive(Clone, Copy)]
 pub(super) struct LoopOptions {
-    smart: bool,
-    quantize: bool,
-    backward: bool,
+    pub(super) smart: bool,
+    pub(super) quantize: bool,
+    pub(super) backward: bool,
 }
 impl Default for LoopOptions {
     fn default() -> Self {
@@ -16,7 +16,7 @@ impl Default for LoopOptions {
         }
     }
 }
-const VIEWS: [&str; 5] = ["Main", "Adjust", "Saved", "Record", "Direct"];
+pub(super) const VIEWS: [&str; 3] = ["Main", "Saved", "Direct"];
 const MIN_LOOP_EXPONENT: i32 = -4;
 fn snap(time: f64, grid: TempoResult) -> f64 {
     (grid.first_beat_seconds
@@ -62,6 +62,105 @@ fn manual_region(
 }
 
 impl Shell {
+    pub(super) fn saved_loops_panel(&self, deck: usize, cx: &mut Context<Self>) -> Div {
+        let path = self.deck_paths[deck].as_ref();
+        let slots = path
+            .and_then(|path| self.saved_loops.get(&crate::track_identity::key(path)))
+            .copied()
+            .unwrap_or([None; 16]);
+        let first_empty = slots.iter().position(Option::is_none);
+        let title = path
+            .and_then(|path| std::path::Path::new(path).file_stem())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "No track loaded".into());
+        let mut rows = div().flex().flex_col().gap(px(4.));
+        for (slot, region) in slots.into_iter().enumerate() {
+            if let Some([start, end]) = region {
+                rows = rows.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            Button::new(("saved-loop-recall", deck * 16 + slot))
+                                .small()
+                                .outline()
+                                .rounded(ButtonRounded::None)
+                                .flex_1()
+                                .min_w_0()
+                                .label(format!("{} · {:.2}–{:.2}s", slot + 1, start, end))
+                                .tooltip("Recall this saved loop")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.loop_saved_slot(deck, slot, false, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(("saved-loop-delete", deck * 16 + slot))
+                                .small()
+                                .outline()
+                                .rounded(ButtonRounded::None)
+                                .w(px(29.))
+                                .label("×")
+                                .tooltip("Delete this saved loop")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.loop_saved_slot(deck, slot, true, cx)
+                                })),
+                        ),
+                );
+            }
+        }
+        if slots.iter().all(Option::is_none) {
+            rows = rows.child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No saved loops for this track."),
+            );
+        }
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .p(px(4.))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::BOLD)
+                    .child(format!("SAVED LOOPS · DECK {}", deck_label(deck))),
+            )
+            .child(div().truncate().text_size(px(10.)).child(title))
+            .child(
+                Button::new(("save-current-loop", deck))
+                    .small()
+                    .outline()
+                    .rounded(ButtonRounded::None)
+                    .label("Save loop")
+                    .disabled(path.is_none() || first_empty.is_none())
+                    .tooltip("Save the current loop in the next empty slot")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(slot) = first_empty {
+                            this.loop_saved_slot(deck, slot, false, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .id("saved-loops-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(rows),
+            )
+            .when(!self.loop_notice[deck].is_empty(), |panel| {
+                panel.child(
+                    div()
+                        .text_size(px(10.))
+                        .child(self.loop_notice[deck].clone()),
+                )
+            })
+    }
     pub(super) fn controller_loop_pad(
         &mut self,
         deck: usize,
@@ -271,6 +370,7 @@ impl Shell {
         &self,
         deck: usize,
         roll: bool,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let view = cx.weak_entity();
@@ -281,6 +381,16 @@ impl Shell {
             .outline()
             .label("Options")
             .dropdown_caret(true)
+            .when(compact, |button| {
+                button
+                    .rounded(ButtonRounded::None)
+                    .w(px(29.))
+                    .h(px(29.))
+                    .min_w_0()
+                    .p_0()
+                    .label("⋯")
+                    .dropdown_caret(false)
+            })
             .dropdown_menu(move |mut menu, _, _| {
                 for (index, label, checked) in [
                     (0, "Smart Loop", options.smart),
@@ -306,6 +416,270 @@ impl Shell {
                 }
                 menu
             })
+    }
+    pub(super) fn compact_loop_panel(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let loaded = state.track.is_some();
+        let active = state.loop_region.is_some();
+        let beats = state
+            .loop_region
+            .and_then(|[a, b]| self.grids[deck].map(|grid| (b - a) / grid.beat_seconds()))
+            .unwrap_or(2f64.powi(self.loop_size[deck]));
+        let size_label =
+            if beats > 0. && beats < 1. && ((1. / beats) - (1. / beats).round()).abs() < 0.001 {
+                format!("1/{}", (1. / beats).round() as i32)
+            } else {
+                format!("{beats:.2}")
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_owned()
+            };
+        let size_label = format!("{size_label} BEATS");
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap(px(4.))
+                    .child(
+                        Button::new(("loop-half", deck))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .w(px(29.))
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label("<")
+                            .tooltip("Half loop length")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.resize_loop(deck, -1, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new(("loop-toggle", deck))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .flex_1()
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label(size_label)
+                            .selected(active)
+                            .disabled(!loaded || (!active && self.grids[deck].is_none()))
+                            .tooltip("Activate or exit the loop; scroll to change its length.")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.auto_loop(deck, true, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new(("loop-double", deck))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .w(px(29.))
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label(">")
+                            .tooltip("Double loop length")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.resize_loop(deck, 1, cx)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap(px(4.))
+                    .child(
+                        Button::new(("loop-in", deck))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .flex_1()
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label("IN")
+                            .disabled(!loaded)
+                            .tooltip("Set the loop start at the playhead.")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(state) = this.loop_state(deck) {
+                                    this.loop_in[deck] = Some(state.position_seconds);
+                                }
+                                this.send(deck, DeckAction::ClearLoop);
+                                this.loop_notice[deck].clear();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new(("loop-out", deck))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .flex_1()
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label("OUT")
+                            .disabled(!loaded || self.loop_in[deck].is_none())
+                            .tooltip("Set the loop end and activate the loop.")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let (Some(start), Some(state)) =
+                                    (this.loop_in[deck], this.loop_state(deck))
+                                {
+                                    let [a, b] = manual_region(
+                                        start,
+                                        state.position_seconds,
+                                        this.grids[deck],
+                                        this.loop_options[deck],
+                                    );
+                                    this.apply_loop(deck, a, b, cx);
+                                }
+                            })),
+                    ),
+            )
+            .child(
+                Button::new(("reloop", deck))
+                    .xsmall()
+                    .outline()
+                    .rounded(ButtonRounded::None)
+                    .w_full()
+                    .h(px(29.))
+                    .min_w_0()
+                    .p_0()
+                    .label("RELOOP")
+                    .disabled(self.loop_last[deck].is_none())
+                    .tooltip("Return to the most recent loop.")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some([start, end]) = this.loop_last[deck] {
+                            this.apply_loop(deck, start, end, cx);
+                        }
+                    })),
+            )
+    }
+    pub(super) fn compact_direct_loop_panel(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let loaded = state.track.is_some();
+        let active = state.loop_region.is_some();
+        let beats = state
+            .loop_region
+            .and_then(|[a, b]| self.grids[deck].map(|grid| (b - a) / grid.beat_seconds()))
+            .unwrap_or(2f64.powi(self.loop_size[deck]));
+        let size_label =
+            if beats > 0. && beats < 1. && ((1. / beats) - (1. / beats).round()).abs() < 0.001 {
+                format!("1/{}", (1. / beats).round() as i32)
+            } else {
+                format!("{beats:.2}")
+                    .trim_end_matches('0')
+                    .trim_end_matches('.')
+                    .to_owned()
+            };
+        let size_label = format!("{size_label} BEATS");
+        let mut panel = div().flex().flex_col().gap(px(4.)).child(
+            div()
+                .flex()
+                .w_full()
+                .gap(px(4.))
+                .child(
+                    Button::new(("loop-half", deck))
+                        .xsmall()
+                        .outline()
+                        .rounded(ButtonRounded::None)
+                        .w(px(29.))
+                        .h(px(29.))
+                        .min_w_0()
+                        .p_0()
+                        .label("<")
+                        .tooltip("Half loop length")
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.resize_loop(deck, -1, cx)),
+                        ),
+                )
+                .child(
+                    Button::new(("loop-toggle", deck))
+                        .xsmall()
+                        .outline()
+                        .rounded(ButtonRounded::None)
+                        .flex_1()
+                        .h(px(29.))
+                        .min_w_0()
+                        .p_0()
+                        .label(size_label)
+                        .selected(active)
+                        .disabled(!loaded || (!active && self.grids[deck].is_none()))
+                        .tooltip("Activate or exit the loop; scroll to change its length.")
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.auto_loop(deck, true, cx)),
+                        ),
+                )
+                .child(
+                    Button::new(("loop-double", deck))
+                        .xsmall()
+                        .outline()
+                        .rounded(ButtonRounded::None)
+                        .w(px(29.))
+                        .h(px(29.))
+                        .min_w_0()
+                        .p_0()
+                        .label(">")
+                        .tooltip("Double loop length")
+                        .on_click(cx.listener(move |this, _, _, cx| this.resize_loop(deck, 1, cx))),
+                ),
+        );
+        for row in 0..2 {
+            let mut buttons = div().flex().w_full().gap(px(4.));
+            for column in 0..5 {
+                let exponent = MIN_LOOP_EXPONENT + row * 5 + column;
+                let length = 2f64.powi(exponent);
+                let label = match exponent {
+                    -4 => "⅟₁₆".to_owned(),
+                    -3 => "⅛".to_owned(),
+                    -2 => "¼".to_owned(),
+                    -1 => "½".to_owned(),
+                    _ => format!("{}", 1 << exponent),
+                };
+                let selected = active && (beats - length).abs() < 0.001;
+                buttons = buttons.child(
+                    Button::new((
+                        "direct-loop",
+                        deck * 10 + (exponent - MIN_LOOP_EXPONENT) as usize,
+                    ))
+                    .xsmall()
+                    .outline()
+                    .rounded(ButtonRounded::None)
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(29.))
+                    .p_0()
+                    .accessibility_label(format!("{length} beats"))
+                    .label(label)
+                    .selected(selected)
+                    .disabled(!loaded || self.grids[deck].is_none())
+                    .tooltip(format!("Activate a {length}-beat loop"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.loop_size[deck] = exponent;
+                        this.auto_loop(deck, selected, cx);
+                    })),
+                );
+            }
+            panel = panel.child(buttons);
+        }
+        panel
     }
     pub(super) fn loop_panel(&self, deck: usize, state: &DeckState, cx: &mut Context<Self>) -> Div {
         let active = state.loop_region.is_some();
@@ -361,6 +735,18 @@ impl Shell {
                                         PopupMenuItem::new(label).checked(view == i).on_click(
                                             move |_, _, cx| {
                                                 let _ = weak.update(cx, |this, cx| {
+                                                    if i == 1 {
+                                                        if let Some(previous) =
+                                                            this.saved_loops_deck
+                                                        {
+                                                            this.loop_view[previous] = 0;
+                                                        }
+                                                        this.saved_loops_deck = Some(deck);
+                                                        this.library_side_tab = 1;
+                                                    } else if this.saved_loops_deck == Some(deck) {
+                                                        this.saved_loops_deck = None;
+                                                        this.library_side_tab = 0;
+                                                    }
                                                     this.loop_view[deck] = i;
                                                     cx.notify();
                                                 });
@@ -371,7 +757,7 @@ impl Shell {
                                 menu
                             }),
                     )
-                    .child(self.loop_menu(deck, state.loop_roll, cx)),
+                    .child(self.loop_menu(deck, state.loop_roll, false, cx)),
             )
             .child(
                 div()
@@ -448,7 +834,7 @@ impl Shell {
                 .h(px(3.))
                 .w_full(),
             );
-        match view {
+        match if view == 2 { 4 } else { 0 } {
             0 => {
                 panel = panel.child(
                     div()

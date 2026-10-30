@@ -28,7 +28,7 @@ fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
 }
 
 // Preserve A/B and bus control IDs; C/D append their own independent controls.
-pub(super) const CONTROL_COUNT: usize = 45;
+pub(super) const CONTROL_COUNT: usize = 46;
 pub(super) fn channel_index(deck: usize) -> usize {
     if deck < 2 {
         deck * 5
@@ -83,6 +83,7 @@ pub(super) fn initial_values() -> [f32; CONTROL_COUNT] {
     values[10] = 1.;
     values[20] = 1.;
     values[21] = std::f32::consts::FRAC_1_SQRT_2;
+    values[45] = std::f32::consts::FRAC_1_SQRT_2;
     values[22] = 0.;
     values
 }
@@ -122,6 +123,18 @@ fn control_action(index: usize, value: f32) -> Action {
     }
 }
 fn value_label(index: usize, value: f32) -> String {
+    if index == 45 {
+        return if value <= 0.001 {
+            "−∞".into()
+        } else {
+            let db = 20. * (value * value).log10();
+            if db.abs() < 0.05 {
+                "0".into()
+            } else {
+                format!("{db:+.1}")
+            }
+        };
+    }
     if index >= 41 {
         return if (value - 0.5).abs() < 0.0001 {
             "Off".into()
@@ -141,14 +154,24 @@ fn value_label(index: usize, value: f32) -> String {
         return if value <= 0.001 {
             "−∞".into()
         } else {
-            format!("{:+.1}", 20. * (value * value).log10())
+            let db = 20. * (value * value).log10();
+            if db.abs() < 0.05 {
+                "0".into()
+            } else {
+                format!("{db:+.1}")
+            }
         };
     }
     if index == 11 {
         return format!("L  {:3.0}%  R", value * 100.);
     }
     if control_deck(index).is_some_and(|deck| index == channel_index(deck)) {
-        return format!("{:+.1}", value * 24. - 12.);
+        let db = value * 24. - 12.;
+        return if db.abs() < 0.05 {
+            "0".into()
+        } else {
+            format!("{db:+.1}")
+        };
     }
     if value <= 0.001 {
         return if is_knob(index) { "KILL" } else { "−∞" }.into();
@@ -162,10 +185,240 @@ fn value_label(index: usize, value: f32) -> String {
     } else {
         value * value
     };
-    format!("{:+.1}", 20. * gain.log10())
+    let db = 20. * gain.log10();
+    if db.abs() < 0.05 {
+        "0".into()
+    } else {
+        format!("{db:+.1}")
+    }
 }
 
 impl Shell {
+    pub(super) fn master_header_meters(&self) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(div().text_size(px(9.)).child("MASTER"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .children((0..2).map(|channel| {
+                        let index = DECKS + channel;
+                        let peak = self.mixer_peaks[index];
+                        let level = ((20. * peak.max(0.00001).log10() + 48.) / 48.).clamp(0., 1.);
+                        let clip_lit = self.mixer_clip_until[index]
+                            .is_some_and(|until| until > Instant::now());
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(3.))
+                            .child(div().text_size(px(8.)).child(if channel == 0 {
+                                "L"
+                            } else {
+                                "R"
+                            }))
+                            .child(
+                                canvas(
+                                    |_, _, _| (),
+                                    move |bounds, _, window, _| {
+                                        let step = (bounds.size.width.as_f32() - 12.) / 24.;
+                                        for segment in 0..24 {
+                                            let color = if segment as f32 / 24. >= level {
+                                                rgb(0x252b33)
+                                            } else if segment >= 21 {
+                                                rgb(0xf15b58)
+                                            } else if segment >= 17 {
+                                                rgb(0xe8c65c)
+                                            } else {
+                                                rgb(0xc8ff38)
+                                            };
+                                            window.paint_quad(fill(
+                                                Bounds::new(
+                                                    bounds.origin
+                                                        + point(px(segment as f32 * step), px(0.)),
+                                                    size(px((step - 1.).max(1.)), px(5.)),
+                                                ),
+                                                color,
+                                            ));
+                                        }
+                                        window.paint_quad(fill(
+                                            Bounds::new(
+                                                bounds.origin
+                                                    + point(bounds.size.width - px(6.), px(0.)),
+                                                size(px(6.), px(5.)),
+                                            ),
+                                            if clip_lit {
+                                                rgb(0xff5555)
+                                            } else {
+                                                rgb(0x3d2527)
+                                            },
+                                        ));
+                                    },
+                                )
+                                .w(px(110.))
+                                .h(px(5.)),
+                            )
+                    })),
+            )
+    }
+
+    fn mixer_tabs(&self, cx: &mut Context<Self>) -> Div {
+        div().flex().w_full().h(px(29.)).flex_shrink_0().children(
+            ["MIXER", "OUTPUT"]
+                .into_iter()
+                .enumerate()
+                .map(|(tab, label)| {
+                    div()
+                        .id(("mixer-tab", tab))
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .h(px(29.))
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(11.))
+                        .when(tab == 0, |tab| tab.border_r_1())
+                        .border_color(cx.theme().border)
+                        .when(self.mixer_tab == tab, |tab| tab.bg(cx.theme().background))
+                        .when(self.mixer_tab != tab, |tab| {
+                            tab.bg(cx.theme().secondary.opacity(0.5)).border_b_1()
+                        })
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.mixer_tab = tab;
+                            cx.notify();
+                        }))
+                }),
+        )
+    }
+
+    fn mixer_output_panel(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .h(px(184.))
+                    .flex_shrink_0()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .p(px(4.))
+                                    .bg(cx.theme().secondary.opacity(0.5))
+                                    .child(div().text_size(px(10.)).child("MASTER"))
+                                    .child(self.mixer_control(10, "VOL", cx)),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .p(px(4.))
+                                    .bg(cx.theme().secondary.opacity(0.5))
+                                    .child(div().text_size(px(10.)).child("SAMPLER"))
+                                    .child(self.mixer_control(20, "VOL", cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .items_center()
+                            .gap(px(4.))
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(div().text_size(px(10.)).child("HEADPHONES"))
+                            .child(self.mixer_control(21, "VOL", cx))
+                            .child(div().flex_1())
+                            .child(self.mixer_control(22, "MIX", cx))
+                            .child(
+                                div()
+                                    .text_size(px(8.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("CUE / MASTER"),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .justify_center()
+                    .gap(px(4.))
+                    .p(px(4.))
+                    .bg(cx.theme().secondary.opacity(0.5))
+                    .child(div().w_full().text_center().text_size(px(10.)).child("MIC"))
+                    .child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .id("mic-toggle")
+                                    .flex()
+                                    .h(px(29.))
+                                    .items_center()
+                                    .justify_center()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .when(self.mic_enabled, |button| button.bg(rgb(0x1a4b34)))
+                                    .when(!self.mic_enabled, |button| {
+                                        button.bg(cx.theme().background)
+                                    })
+                                    .text_size(px(10.))
+                                    .child(if self.mic_enabled { "ON" } else { "OFF" })
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new("Microphone input is not yet routed to the audio engine.").build(window, cx)
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.mic_enabled = !this.mic_enabled;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .justify_center()
+                                    .child(self.mixer_control(45, "VOL", cx)),
+                            ),
+                    ),
+            )
+    }
+
     fn crossfader_selectors(&self, right: bool, cx: &mut Context<Self>) -> Div {
         let mask = if right {
             self.crossfader_routing.right
@@ -224,6 +477,14 @@ impl Shell {
 
     fn set_mixer_control(&mut self, index: usize, value: f32, cx: &mut Context<Self>) {
         let value = value.clamp(0., 1.);
+        if index == 45 {
+            if (self.mixer_values[index] - value).abs() > 0.0001 {
+                self.mixer_last_change[index] = Some(Instant::now());
+            }
+            self.mixer_values[index] = value;
+            cx.notify();
+            return;
+        }
         let action = if index == 20 {
             Action::Mixer {
                 action: MixerAction::SetSamplerGain {
@@ -280,7 +541,12 @@ impl Shell {
         };
         if let Some(engine) = &mut self.engine {
             match engine.apply(Role::Host, action) {
-                Ok(()) => self.mixer_values[index] = value,
+                Ok(()) => {
+                    if (self.mixer_values[index] - value).abs() > 0.0001 {
+                        self.mixer_last_change[index] = Some(Instant::now());
+                    }
+                    self.mixer_values[index] = value;
+                }
                 Err(reason) => eprintln!("mixer action rejected: {reason:?}"),
             }
         }
@@ -291,7 +557,7 @@ impl Shell {
             return;
         };
         let area = self.mixer_areas[index].get();
-        let value = if is_knob(index) || (index == 10 && self.settings.four_decks) {
+        let value = if is_knob(index) || index == 10 {
             start_value + (start_y - position.y.as_f32()) / 140.
         } else if index == 11 {
             (position.x - area.origin.x - px(8.)).as_f32()
@@ -310,7 +576,7 @@ impl Shell {
     ) -> AnyElement {
         let value = self.mixer_values[index];
         let area = self.mixer_areas[index].clone();
-        let knob = is_knob(index) || (index == 10 && self.settings.four_decks);
+        let knob = is_knob(index) || index == 10;
         let enabled = !is_stem(index)
             || self
                 .engine
@@ -318,6 +584,7 @@ impl Shell {
                 .and_then(|e| e.track(control_deck(index).unwrap()))
                 .is_some_and(|t| t.stems_ready());
         let horizontal = index == 11;
+        let four_decks = self.settings.four_decks;
         let accent = control_deck(index)
             .map(deck_colour)
             .unwrap_or_else(|| rgb(0x79d9aa));
@@ -336,41 +603,138 @@ impl Shell {
                     ));
                 };
                 if knob {
-                    // Dial outline and a radial pointer, with neutral at twelve o'clock.
-                    let radius = 11.;
-                    for step in 0..48 {
-                        let angle = step as f32 / 48. * std::f32::consts::TAU;
-                        rect(
-                            w / 2. + angle.sin() * radius - 1.,
-                            h / 2. - angle.cos() * radius - 1.,
-                            2.,
-                            2.,
-                            rgb(0x646b75),
-                        );
+                    if four_decks {
+                        let radius = 11.;
+                        for step in 0..48 {
+                            let angle = step as f32 / 48. * std::f32::consts::TAU;
+                            rect(
+                                w / 2. + angle.sin() * radius - 1.,
+                                h / 2. - angle.cos() * radius - 1.,
+                                2.,
+                                2.,
+                                rgb(0x646b75),
+                            );
+                        }
+                        let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
+                        for distance in 2..10 {
+                            rect(
+                                w / 2. + angle.sin() * distance as f32 - 1.,
+                                h / 2. - angle.cos() * distance as f32 - 1.,
+                                2.,
+                                2.,
+                                accent,
+                            );
+                        }
+                        rect(w / 2. - 1., 0., 2., 2., rgb(0xbac1ca));
+                    } else {
+                        let at = |radius: f32, angle: f32| {
+                            bounds.origin
+                                + point(
+                                    px(w / 2. + angle.sin() * radius),
+                                    px(h / 2. - angle.cos() * radius),
+                                )
+                        };
+                        let neutral = match index {
+                            10 | 20 => 1.,
+                            21 | 45 => std::f32::consts::FRAC_1_SQRT_2,
+                            22 => 0.,
+                            _ => 0.5,
+                        };
+                        let active = (value - neutral).abs() > 0.001;
+                        let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
+                        let neutral_angle = (neutral - 0.5) * std::f32::consts::PI * 1.5;
+                        let mut travel = PathBuilder::stroke(px(1.6));
+                        for step in 0..=72 {
+                            let a = (-0.75 + 1.5 * step as f32 / 72.) * std::f32::consts::PI;
+                            if step == 0 {
+                                travel.move_to(at(20., a));
+                            } else {
+                                travel.line_to(at(20., a));
+                            }
+                        }
+                        if let Ok(path) = travel.build() {
+                            window.paint_path(path, rgb(0x454c55));
+                        }
+                        if active {
+                            let mut fill = PathBuilder::fill();
+                            for step in 0..=72 {
+                                let a = step as f32 / 72. * std::f32::consts::TAU;
+                                if step == 0 {
+                                    fill.move_to(at(14.3, a));
+                                } else {
+                                    fill.line_to(at(14.3, a));
+                                }
+                            }
+                            fill.close();
+                            if let Ok(path) = fill.build() {
+                                window.paint_path(path, Hsla::from(accent).opacity(0.2));
+                            }
+                            let steps = ((angle - neutral_angle).abs() * 24.).ceil() as usize;
+                            let mut progress = PathBuilder::stroke(px(2.2));
+                            for step in 0..=steps.max(2) {
+                                let a = neutral_angle
+                                    + (angle - neutral_angle) * step as f32 / steps.max(2) as f32;
+                                if step == 0 {
+                                    progress.move_to(at(20., a));
+                                } else {
+                                    progress.line_to(at(20., a));
+                                }
+                            }
+                            if let Ok(path) = progress.build() {
+                                window.paint_path(path, accent);
+                            }
+                        }
+                        let mut outline = PathBuilder::stroke(px(1.6));
+                        for step in 0..=72 {
+                            let a = step as f32 / 72. * std::f32::consts::TAU;
+                            if step == 0 {
+                                outline.move_to(at(15., a));
+                            } else {
+                                outline.line_to(at(15., a));
+                            }
+                        }
+                        outline.close();
+                        if let Ok(path) = outline.build() {
+                            window.paint_path(path, rgb(0x727a83));
+                        }
+                        let mut pointer = PathBuilder::stroke(px(2.));
+                        pointer.move_to(at(3., angle));
+                        pointer.line_to(at(22., angle));
+                        if let Ok(path) = pointer.build() {
+                            window.paint_path(path, accent);
+                        }
                     }
-                    let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
-                    for distance in 2..10 {
-                        rect(
-                            w / 2. + angle.sin() * distance as f32 - 1.,
-                            h / 2. - angle.cos() * distance as f32 - 1.,
-                            2.,
-                            2.,
-                            accent,
-                        );
-                    }
-                    rect(w / 2. - 1., 0., 2., 2., rgb(0xbac1ca));
                 } else if horizontal {
                     rect(8., h / 2. - 2., w - 16., 4., rgb(0x303640));
-                    rect(w / 2. - 1., 3., 2., h - 6., rgb(0x747b85));
+                    if four_decks {
+                        rect(w / 2. - 1., 3., 2., h - 6., rgb(0x747b85));
+                    } else {
+                        for step in 0..=10 {
+                            let major = step == 0 || step == 5 || step == 10;
+                            let tick_h = if major { 16. } else { 10. };
+                            let tick_w = if major { 2. } else { 1. };
+                            rect(
+                                8. + step as f32 * (w - 16.) / 10. - tick_w / 2.,
+                                h / 2. - tick_h / 2.,
+                                tick_w,
+                                tick_h,
+                                rgb(0x747b85),
+                            );
+                        }
+                    }
                     rect(8. + value * (w - 16.) - 5., 2., 10., h - 4., accent);
                 } else {
                     rect(w / 2. - 2., 8., 4., h - 16., rgb(0x303640));
-                    for step in 0..5 {
+                    let tick_count = if four_decks { 4 } else { 10 };
+                    for step in 0..=tick_count {
+                        let major = !four_decks && (step == 0 || step == 5 || step == 10);
+                        let tick_w = if major { 28. } else { 20. };
+                        let tick_h = if major { 2. } else { 1. };
                         rect(
-                            w / 2. - 10.,
-                            8. + step as f32 * (h - 16.) / 4.,
-                            20.,
-                            1.,
+                            w / 2. - tick_w / 2.,
+                            8. + step as f32 * (h - 16.) / tick_count as f32,
+                            tick_w,
+                            tick_h,
                             rgb(0x4c535d),
                         );
                     }
@@ -386,7 +750,7 @@ impl Shell {
         )
         .w_full()
         .when(knob, |this| {
-            this.h(px(if self.settings.four_decks { 22. } else { 28. }))
+            this.h(px(if self.settings.four_decks { 22. } else { 46. }))
         })
         .when(horizontal, |this| this.h(px(22.)))
         .when(!knob && !horizontal, |this| {
@@ -411,7 +775,8 @@ impl Shell {
                     _ => "Cue / master blend: centre is both at full volume; either end fades out the opposite source. Double-click resets to cue only.",
                 }).build(window, cx)
             }))
-            .when(index >= 41, |control| control.tooltip(|window, cx| Tooltip::new("Always-on FX slot 1 filter. Left: low-pass; right: high-pass. Double-click for neutral. Resonance is in FX settings.").build(window, cx)))
+            .when((41..=44).contains(&index), |control| control.tooltip(|window, cx| Tooltip::new("Always-on FX slot 1 filter. Left: low-pass; right: high-pass. Double-click for neutral. Resonance is in FX settings.").build(window, cx)))
+            .when(index == 45, |control| control.tooltip(|window, cx| Tooltip::new("Microphone input is not yet routed to the audio engine.").build(window, cx)))
             .when(!enabled, |this| this.opacity(0.35))
             .when(!knob && !horizontal, |this| this.h_full().min_h_0())
             .flex()
@@ -423,13 +788,17 @@ impl Shell {
                     .w_full()
                     .text_center()
                     .text_size(px(10.))
-                    .when(index >= 41, |label_box| {
+                    .when(index >= 41 && self.settings.four_decks, |label_box| {
                         label_box
                             .child(div().child(label))
                             .child(div().child(value_label(index, value)))
                     })
-                    .when(index < 41, |label_box| {
+                    .when(index < 41 && self.settings.four_decks, |label_box| {
                         label_box.child(format!("{label} {}", value_label(index, value)))
+                    })
+                    .when(!self.settings.four_decks && !matches!(index, 4 | 9 | 11), |label_box| {
+                        let show_value = self.mixer_last_change[index].is_some_and(|at| at.elapsed().as_secs_f32() < 2.);
+                        label_box.child(if show_value { value_label(index, value) } else { label.to_owned() })
                     }),
             )
             .child(drawing)
@@ -455,9 +824,9 @@ impl Shell {
                     if event.click_count == 2 {
                         this.set_mixer_control(
                             index,
-                            if index == 20 {
+                            if index == 20 || index == 10 {
                                 1.
-                            } else if index == 21 {
+                            } else if index == 21 || index == 45 {
                                 std::f32::consts::FRAC_1_SQRT_2
                             } else if index == 22 {
                                 0.
@@ -484,33 +853,44 @@ impl Shell {
     fn meter(&self, index: usize) -> AnyElement {
         let peak = self.mixer_peaks[index];
         let level = ((20. * peak.max(0.00001).log10() + 48.) / 48.).clamp(0., 1.);
+        let clip_lit = self.mixer_clip_until[index].is_some_and(|until| until > Instant::now());
+        let four_decks = self.settings.four_decks;
         div()
             .flex()
             .flex_col()
             .items_center()
-            .gap_1()
+            .when(four_decks, |meter| meter.gap_1())
             .min_h_0()
             .when(index >= DECKS, |meter| meter.flex_1())
             .when(index < DECKS, |meter| meter.h_full().flex_shrink_0())
-            .child(
-                div()
-                    .text_size(px(8.))
-                    .text_color(if peak >= 1. {
-                        rgb(0xff5555)
-                    } else {
-                        rgb(0x69717d)
-                    })
-                    .child(if index >= DECKS && self.settings.four_decks {
-                        ""
-                    } else {
-                        "CLIP"
-                    }),
-            )
+            .when(four_decks, |meter| {
+                meter.child(
+                    div()
+                        .text_size(px(8.))
+                        .text_color(if peak >= 1. {
+                            rgb(0xff5555)
+                        } else {
+                            rgb(0x69717d)
+                        })
+                        .child(if index >= DECKS { "" } else { "CLIP" }),
+                )
+            })
             .child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _| {
-                        let step = bounds.size.height.as_f32() / 24.;
+                        let clip_space = if four_decks { 0. } else { 8. };
+                        let step = (bounds.size.height.as_f32() - clip_space).max(0.) / 24.;
+                        if !four_decks {
+                            window.paint_quad(fill(
+                                Bounds::new(bounds.origin, size(px(7.), px(5.))),
+                                if clip_lit {
+                                    rgb(0xff5555)
+                                } else {
+                                    rgb(0x3d2527)
+                                },
+                            ));
+                        }
                         for segment in 0..24 {
                             let color = if segment as f32 / 24. >= level {
                                 rgb(0x252b33)
@@ -523,7 +903,11 @@ impl Shell {
                             };
                             window.paint_quad(fill(
                                 Bounds::new(
-                                    bounds.origin + point(px(0.), px((23 - segment) as f32 * step)),
+                                    bounds.origin
+                                        + point(
+                                            px(0.),
+                                            px(clip_space + (23 - segment) as f32 * step),
+                                        ),
                                     size(px(7.), px((step - 1.).max(1.))),
                                 ),
                                 color,
@@ -537,6 +921,57 @@ impl Shell {
             )
             .into_any_element()
     }
+    fn two_deck_eq_group(&self, deck: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let controls = match self.deck_eq_modes[deck] {
+            EqMode::Classic => ["HIGH", "MID", "LOW"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, label)| self.mixer_control(channel_index(deck) + i + 1, label, cx))
+                .collect::<Vec<_>>(),
+            mode => {
+                let labels: &[&'static str] = match mode {
+                    EqMode::EzRemix => &["VOCAL", "INSTR", "BEAT"],
+                    EqMode::Modern => &["DRUMS", "MEL/VOX", "BASS"],
+                    _ => &["VOCAL", "INSTR", "BASS", "DRUMS"],
+                };
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &label)| self.mixer_control(stem_index(deck) + i, label, cx))
+                    .collect()
+            }
+        };
+        div()
+            .id(("two-deck-eq", deck))
+            .flex()
+            .flex_col()
+            .w(px(52.))
+            .h_full()
+            .gap(px(4.))
+            .p(px(4.))
+            .bg(cx.theme().secondary.opacity(0.5))
+            .when(controls.len() > 3, |group| group.overflow_y_scroll())
+            .children(controls)
+    }
+
+    fn two_deck_channel_group(&self, deck: usize, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .w(px(52.))
+            .h_full()
+            .min_h_0()
+            .gap(px(4.))
+            .p(px(4.))
+            .bg(cx.theme().secondary.opacity(0.5))
+            .child(self.mixer_control(channel_index(deck), "TRIM", cx))
+            .child(div().flex_1().min_h_0().w_full().child(self.mixer_control(
+                channel_index(deck) + 4,
+                "VOL",
+                cx,
+            )))
+    }
+
     pub(super) fn mixer_panel(&self, cx: &mut Context<Self>) -> Div {
         let knobs = |deck: usize, cx: &mut Context<Self>| {
             div()
@@ -715,180 +1150,93 @@ impl Shell {
                     ),
                 );
         }
-        div()
+        let panel = div()
             .flex()
             .flex_col()
-            .w(px(398.))
+            .w(px(252.))
             .flex_shrink_0()
-            .p_2()
-            .gap_2()
             .border_1()
             .border_color(cx.theme().border)
             .rounded_lg()
-            .child(
+            .child(self.mixer_tabs(cx));
+        if self.mixer_tab == 1 {
+            return panel.child(
                 div()
-                    .flex()
-                    .justify_between()
-                    .h(px(if self.eq_mode == EqMode::Stems {
-                        258.
-                    } else {
-                        210.
-                    }))
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .w(px(64.))
-                            .gap_1()
-                            .child(div().text_size(px(10.)).child("SAMPLER"))
-                            .child(self.mixer_control(20, "VOL", cx))
-                            .h_full()
-                            .child(div().flex_1())
-                            .child(
-                                div()
-                                    .w_full()
-                                    .border_t_1()
-                                    .border_color(cx.theme().border)
-                                    .pt_2()
-                                    .child(self.mixer_control(41, "FILTER", cx)),
-                            ),
-                    )
-                    .child(knobs(0, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .w(px(60.))
-                            .h_full()
-                            .gap_1()
-                            .child(div().text_size(px(10.)).child("MASTER"))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .h_full()
-                                            .child(div().text_size(px(9.)).child("L"))
-                                            .child(self.meter(DECKS)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .h_full()
-                                            .child(div().text_size(px(9.)).child("R"))
-                                            .child(self.meter(DECKS + 1)),
-                                    ),
-                            ),
-                    )
-                    .child(knobs(1, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .w(px(64.))
-                            .gap_1()
-                            .child(div().text_size(px(10.)).child("CUE"))
-                            .child(self.mixer_control(21, "VOL", cx))
-                            .child(self.mixer_control(22, "MIX", cx))
-                            .child(
-                                div()
-                                    .text_size(px(8.))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("CUE / MASTER"),
-                            )
-                            .h_full()
-                            .child(div().flex_1())
-                            .child(
-                                div()
-                                    .w_full()
-                                    .border_t_1()
-                                    .border_color(cx.theme().border)
-                                    .pt_2()
-                                    .child(self.mixer_control(42, "FILTER", cx)),
-                            ),
-                    ),
-            )
+                    .flex_1()
+                    .min_h_0()
+                    .p(px(4.))
+                    .child(self.mixer_output_panel(cx)),
+            );
+        }
+        let content = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .p(px(4.))
+            .gap(px(4.))
             .child(
                 div()
                     .flex()
                     .flex_1()
-                    .min_h(px(100.))
-                    .px(px(72.))
-                    .justify_between()
+                    .min_h_0()
+                    .gap(px(4.))
+                    .child(self.two_deck_eq_group(0, cx))
+                    .child(self.two_deck_channel_group(0, cx))
                     .child(
                         div()
                             .flex()
-                            .w(px(78.))
+                            .w(px(18.))
                             .h_full()
-                            .gap_1()
+                            .justify_center()
+                            .gap(px(4.))
                             .child(self.meter(0))
-                            .child(self.mixer_control(4, "VOL", cx)),
-                    )
-                    .child(
-                        div()
-                            .w(px(60.))
-                            .h_full()
-                            .child(self.mixer_control(10, "dB", cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .w(px(78.))
-                            .h_full()
-                            .gap_1()
-                            .child(self.mixer_control(9, "VOL", cx))
                             .child(self.meter(1)),
-                    ),
+                    )
+                    .child(self.two_deck_channel_group(1, cx))
+                    .child(self.two_deck_eq_group(1, cx)),
             )
-            .child(self.mixer_control(11, "CROSSFADE", cx))
             .child(
-                div().flex().justify_center().gap_1().children(
-                    [
-                        (CrossfaderCurve::Smooth, "Smooth"),
-                        (CrossfaderCurve::EqualPower, "Equal power"),
-                        (CrossfaderCurve::Cut, "Cut"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (curve, label))| {
-                        Button::new(("cross-curve", index))
-                            .tooltip(label)
-                            .xsmall()
-                            .outline()
-                            .child(curve_icon(curve))
-                            .selected(self.mixer_curve == curve)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(engine) = &mut this.engine {
-                                    if engine
-                                        .apply(
-                                            Role::Host,
-                                            Action::Mixer {
-                                                action: MixerAction::SetCrossfaderCurve { curve },
-                                            },
-                                        )
-                                        .is_ok()
-                                    {
-                                        this.mixer_curve = curve;
-                                    }
-                                }
-                                cx.notify();
-                            }))
-                    })
-                    .collect::<Vec<_>>(),
-                ),
-            )
+                div()
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .w(px(52.))
+                            .h(px(64.))
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(self.mixer_control(41, "FILTER", cx)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(64.))
+                            .flex()
+                            .items_center()
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(self.mixer_control(11, "CROSSFADE", cx)),
+                    )
+                    .child(
+                        div()
+                            .w(px(52.))
+                            .h(px(64.))
+                            .flex()
+                            .flex_col()
+                            .justify_center()
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(self.mixer_control(42, "FILTER", cx)),
+                    ),
+            );
+        panel.child(content)
     }
 }
 
