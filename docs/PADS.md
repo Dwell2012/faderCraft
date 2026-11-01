@@ -16,6 +16,8 @@ the additional eight pads disabled.
 
 ## Pages
 
+- **Stem FX:** top row selects Vocals, Melody, Bass or Drums. Bottom row toggles effects on that stem; selecting another type replaces that stem's effect. Effect bank arrows expose all 16 Pad FX types in four banks. Wet arrows adjust the selected stem's mix in 5% steps. Effects latch until toggled off, independently on each stem, and restore on restart. Prepare stems first. Source inserts run before the stem mix and deck rack; changing tempo/pitch also transforms their sound. The regular Stems page still controls mute/solo.
+
 - **Hot Cues:** click an empty pad to save; click a saved pad to jump and play.
   Shift-click or right-click deletes unless editing is locked. Setting inside a
   loop stores a loop cue. Quantize on set snaps to the nearest analysed beat.

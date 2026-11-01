@@ -1,5 +1,47 @@
 # djcraft feature list
 
+- [x] Stem preparation progress overlays the top edge of each deck overview waveform: 3px, deck colour at 50% opacity, no added layout height. Uses existing per-deck progress and refresh; queued/loading jobs show a short marker, and completion/failure/timeout clears it.
+
+- [x] Right-deck performance boxes mirror the left-deck arrangement: Effects/Pads outside, Loops inside, label strips on the right. Controls inside each box retain their original order.
+
+- [x] Serial FX order: deck rack → Pink/White Noise generators → Bitcrusher → Flanger → Reverb → Echo → Filter. CFX processes in reverse menu order, with Filter affecting all preceding audio and tails.
+
+- [x] Deck FX names show a small muted, baseline-aligned beat duration (for example Echo (1/2 beat)) when beat sync and a track beat grid are available; free-running effects omit it.
+
+- [x] Tempo-neutral gain fix: auto-trim remains based on source loudness across tempo/key-lock changes. Processed peak reports no longer lower track trim; the existing audio-side peak guard handles timestretch overshoots.
+
+- [x] Main mixer knobs use antialiased SVG rings, arcs and pointers in two- and four-deck layouts, preserving each control’s neutral position and existing interactions.
+
+- [x] Stopped decks scrub audibly from the jog rim with Scratch mode on or off; playing rim behaviour remains pitch bend. Mini FX knobs use antialiased SVG arcs and pointers matching the EQ/CFX design.
+
+- [x] Deck FX 1 controls grey out and stop accepting edits when that deck's controller FX 1 is routed to CFX. FX dials use the shared smooth EQ/CFX renderer at miniature size.
+
+- [x] With FX 1 routed to CFX, its pad centres the shared knob and kills all CFX/noise tails while retaining selections; the encoder engages the combination again on movement.
+
+- [x] CFX selector is a persistent checkbox popout: combine effects without reopening; click outside to close. Mixer CFX text and spaced arrow share a vertically centred header.
+
+- [x] Separate per-deck Colour FX chain: Filter/Echo/Reverb/Flanger/Bitcrusher plus stereo White/Pink Noise, multi-select from the mixer CFX arrow and one shared centre-neutral knob. Controller Settings route FX 1 button/encoder/LED to Deck Effects or selected CFX. Selections persist; noise starts neutral after launch.
+
+- [x] Compact FX x3 layout uses three rows with click-to-toggle highlighted effect names, selector arrows, amount dials and detail access; Effects box aligns with the pads below, with beat timing in the cog popout. Other FX layouts remain available.
+
+- [x] Deck FX beat timing lives in the Effects options cog popout; the compact box header has no beat selector.
+
+- [x] Controller Hot Cue/Loop/Sampler pad presses select the matching on-screen page per deck, including empty decks. [Mode switch alone remains undetectable on Mixtrack; first pad press establishes mode.]
+
+- [x] One unambiguous controller matching the loaded mapping connects automatically at startup/reconnect; splash shows the loaded mapping and actual connection status. Multiple matching devices retain the chooser prompt.
+
+- [x] Stem FX pad page: select Vocals/Melody/Bass/Drums, toggle an independent source-insert effect per stem from four banks, adjust wet amount, persist assignments; requires prepared stems.
+
+- [x] Mixtrack pitch-zero lamps follow each deck's neutral tempo; physical centre remains exact 0% even when the opposite-deck BPM match rounds to that position.
+
+- [x] Per-deck hot-cue Quantize on set and its 5/10/20/30% beat window persist with deck setup.
+
+- [x] Machine-local per-deck Scratch on/off and loaded effect slots (parameters, enabled state and shared beat timing) restore on startup; controller Scratch mode/LEDs survive reconnection.
+
+- [x] Playing vinyl jogs retain fast forward/backward spins, then recover to playback speed once released motion slows to playback speed or below; residual wheel packets are ignored until idle or a fresh touch. Paused decks retain free spins.
+
+- [x] Settings > Mixer crossfader controls: Slow–Fast adjustment, Linear/Power response, Reverse, Disable and per-deck side assignments; applies live and persists on this computer.
+
 - [x] Select downloadable Fast or Detailed (fine-tuned) stem models in Audio settings, with model-specific caches and persistent GPU/CPU processing.
 
 - [x] Preload a persistent stem model at startup with a splash screen; reuse the worker and GPU weights across tracks, with CPU override/fallback and worker recovery.
@@ -838,3 +880,15 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Two-deck title/overview and BPM/key/timing blocks keep a 4px inner gap while sharing the same outer inset.
 
 - [x] Two-deck transport controls stack beside the tempo fader at the header block width: Load/Eject, Sync, Cue, Play; square buttons, forest-green Play, red Cue text. Eject unloads the track through the protocol.
+
+- [x] Active loop toggles use the deck colour in compact, direct and full loop panels, including four-deck colours.
+
+- [x] Bottom-right Sampler tab alongside Automix/Saved Loops: 16-pad and list views, named independent sample banks, On/Off/Hold/Stutter, loop toggle, drag/drop or disk loading, edit lock, selected-slot clear, master level and Stop All. Shares the global sampler bus with deck/controller pads. [No per-sample playback progress, groups or sample editor yet.]
+
+- [x] Named Sampler banks: New/Rename/select with persistent names and active selection; independent panel playback controls and protocol actions. Bank switching stops sampler voices only and preserves deck playback. Existing samples stay in My Samples. Bundled MS-20 Drums and Synth FX banks include 32 CC0 Frequency 303 recordings with source/licence manifests; starter edits survive restart.
+
+- [x] Separate stems in both track-browser context menus, including unloaded tracks. Deck loads automatically reuse cached stems or queue separation; automatic processing stops after 20% of track duration (worker startup included, queue wait excluded), terminates the worker and keeps normal deck playback. Manual preparation remains available without the automatic short limit.
+
+- [x] Sampler captures one deck's enabled stem mix into a named-bank slot. Source A–D and active-loop/1–32 beat length controls; selection and gain levels are frozen, stereo is preserved, and other decks/master are excluded. Existing deck-pad captures also respect stem gains. [Source-time/pre-fader capture; deck FX, EQ and tempo changes are not baked in.]
+
+- [x] Vinyl jog held-stop discards accumulated unread travel after 80 ms without wheel motion while touch remains down. Audio holds at the actual read head; resumed movement rebases there and lifting after the hold does not seek ahead. Waveform prediction is disabled during scratching. [Hardware retest pending.]

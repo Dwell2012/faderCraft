@@ -18,7 +18,7 @@ for implemented features, limitations, and the broader roadmap.
   headphone cueing. Windows output includes WASAPI exclusive and installed ASIO
   drivers; see [WASAPI](docs/WASAPI.md) and [ASIO setup](docs/ASIO.md).
 - **Performance tools:** hot cues, loops, effects, key-shift pads and a polyphonic
-  sampler. See [pads](docs/PADS.md), [loops](docs/LOOPS.md) and
+  sampler with named banks and bundled CC0 drum/FX sounds. See [pads](docs/PADS.md), [loops](docs/LOOPS.md) and
   [effects](docs/EFFECTS.md).
 - **Automix:** playlist playback, loudness matching and intro-aware EQ
   transitions, with saved preparation overrides. See [Automix](docs/AUTOMIX.md)
@@ -118,3 +118,6 @@ MIT; see [LICENSE](LICENSE). faderCraft builds on the original
 [DJCraft project by danielchim](https://github.com/danielchim/djcraft).
 Dependency licences and sources are checked with `cargo deny check licenses sources`.
 See the ASIO and stem setup documents for the separate SDK and model requirements.
+
+Bundled starter sampler recordings are CC0-1.0, separately from the MIT code.
+See [starter sound sources and licence](assets/sampler/frequency303/README.md).

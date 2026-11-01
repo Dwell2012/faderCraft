@@ -2,17 +2,11 @@
 
 Reference: https://virtualdj.com/manuals/virtualdj/interface/decks/decksadvanced/effects.html
 
-Six persistent serial effect slots per deck, after EQ/stems and before the volume
-fader/crossfader. Slot 1 is reserved for the always-on Filter, with a linked FILTER
-knob in each mixer channel. Centre is neutral; double-click the mixer knob to
-return to centre. The FX button and controller toggle also reset it to centre,
-shown as OFF in the UI and controller LED; turning the sweep engages it again.
-Resonance is preserved when resetting. Slots 2–6 remain assignable. Click their effect name to toggle; use the adjacent arrow to
-select an effect. FX x3 shows three slots with mix dials, FX x1 shows the selected
-slot with two dials, FX x3 Full shows three with two dials each, and FX x6 shows all
-six in two columns. Switch views using the FX label or its view dropdown. Hidden
-slots keep running. The active count includes all six slots.
+Six persistent, fully assignable serial deck-effect slots run after EQ/stems and Colour FX, before the channel volume and crossfader. Click an effect name to toggle it and use its arrow to select a type. FX x3 is the compact three-row layout; FX x1, FX x3 Full and FX x6 retain expanded choices. Hidden slots keep running.
 
+Colour FX is separate. Use the small arrow beside the mixer CFX knob to check any combination of Filter, Echo, Reverb, Flanger, Bitcrusher, White Noise and Pink Noise. The one knob controls all checked CFX; centre is dry/silent. Filter is bipolar; the other effects and noise increase with distance from centre. White/Pink Noise are standalone stereo generators and can be combined with the processing effects. Double-click centres the knob. CFX combinations persist, with noise-containing combinations starting neutral on launch.
+
+Settings > Controllers > FX 1 controls chooses Deck Effects (first rack slot) or Selected CFX (the complete selected combination), including button, encoder and LED. When routed to CFX, pressing FX 1 centres the knob and kills every selected CFX, including noise and effect tails, without clearing the combination. Turning the encoder engages it again. FX 2/3 are unchanged.
 The ellipsis opens the slot's details beside the music browser. Closing details
 never disables the effect. Details expose mix, the main parameter, feedback where
 applicable, beat sync and tails. Drag dials vertically or scroll, with Shift-wheel
