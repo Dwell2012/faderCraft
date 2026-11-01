@@ -1,0 +1,33 @@
+file,display_name,original_archive_path,sha256
+assets/sampler/frequency303/drums/00.wav,Kick - 1,ms20/MS-20-drums/Kick - 1.wav,2bd67e81d6bc789c7ec3fa0f6eb181a46d21163015e07b6fae27f56d07114d26
+assets/sampler/frequency303/drums/01.wav,Kick - 2,ms20/MS-20-drums/Kick - 2.wav,07ca759c73e49b27e337724d70f91152dffce27fad0f94a7777535565375e7a7
+assets/sampler/frequency303/drums/02.wav,Kick - 3,ms20/MS-20-drums/Kick - 3.wav,2b169a90663427c4b329629967e9245100e9487f1005973fb88ea0c7e0a1e24e
+assets/sampler/frequency303/drums/03.wav,Kick - 5,ms20/MS-20-drums/Kick - 5.wav,2b84294a55b5b253e8d794e68597f27feed875120648c3026a87c73bed101eaa
+assets/sampler/frequency303/drums/04.wav,Clap - 1,ms20/MS-20-drums/Clap - 1.wav,d82055cbe5bae0cc1da113785c05743ac096ca06045f2322f151c3caa8772944
+assets/sampler/frequency303/drums/05.wav,Clap - 2,ms20/MS-20-drums/Clap - 2.wav,6606a6b6f3208f62038882c7b40747cb40636515d198d0f76064728d074c2faf
+assets/sampler/frequency303/drums/06.wav,Snare - 1,ms20/MS-20-drums/Snare - 1.wav,e712537ae40cf6c14e2a2a0ceed731d5d8593bfddd042cc2ffe22cbb5a0f73f5
+assets/sampler/frequency303/drums/07.wav,Closed Hat - 1,ms20/MS-20-drums/Closed Hat - 1.wav,39c8670d4fb62372db5c9480dc4cde8b9e2174c4a30f16f6a5204267cf6c5b4e
+assets/sampler/frequency303/drums/08.wav,Closed Hat - 2,ms20/MS-20-drums/Closed Hat - 2.wav,60e396b8ae3a8ec5653558b1581e1f0db28071350b07b7659f0a1a3f5f37bd1d
+assets/sampler/frequency303/drums/09.wav,Closed Hat - 3,ms20/MS-20-drums/Closed Hat - 3.wav,09103f6b56fb5ce1004ab2a4b28b87b7bb1e5d9ffcac2c20b2324db6e0e000ba
+assets/sampler/frequency303/drums/10.wav,Closed Hat - 4,ms20/MS-20-drums/Closed Hat - 4.wav,671adbdf98e0e5f7ee9214e1c2eed36b10bea95cba7ab61d6605a31328f2747e
+assets/sampler/frequency303/drums/11.wav,Open Hat - 1,ms20/MS-20-drums/Open Hat - 1.wav,9b86d5b2dff6cf75a0eb0699b32cf5c4062d0f3ac7cb52dc6d88c0e02b15be2a
+assets/sampler/frequency303/drums/12.wav,Open Hat - 3,ms20/MS-20-drums/Open Hat - 3.wav,b5dc0de675e3f51b7d847f36b480729c978d84895508901b129fb1e91d37e8eb
+assets/sampler/frequency303/drums/13.wav,Open Hat - 4,ms20/MS-20-drums/Open Hat - 4.wav,c157e324b1a364c029d0213e91cb0a25a9c2297975267f2e46da3ecd23be20c3
+assets/sampler/frequency303/drums/14.wav,Open Hat - 5,ms20/MS-20-drums/Open Hat - 5.wav,c4f1a4d27ad7fdb2dd749d5ba3a82ada028a402d3bf0f0ed97748c4b841e740c
+assets/sampler/frequency303/drums/15.wav,Open Hat - 6,ms20/MS-20-drums/Open Hat - 6.wav,f93451664584d62babbdb5168b895150bf97ce17f005325ea712c868bf9a54a5
+assets/sampler/frequency303/fx/00.wav,Alarm 1,synth/MS-20-AllanLegemaate/MS-20-FX/Alarm_1.wav,6401e96d9589b0951a271317fb9c2bdc1eb71bf6f30e843f1bf9a221b0bf20fb
+assets/sampler/frequency303/fx/01.wav,Alarm 2,synth/MS-20-AllanLegemaate/MS-20-FX/Alarm_2.wav,38287e4ca880d9692ccf583ee3a9f83f5c1de0f42eb175ad31429f195f43ecdf
+assets/sampler/frequency303/fx/02.wav,Alarm 3,synth/MS-20-AllanLegemaate/MS-20-FX/Alarm_3.wav,f17f4ea254dc9df8d557fcc600c5d1082f4683c243f63cc151f156b3992b0992
+assets/sampler/frequency303/fx/03.wav,Filter fall 1,synth/MS-20-AllanLegemaate/MS-20-FX/Filter_fall_1.wav,0beb2f1c4db0318eb00a3a70c1edc1ccabfc6ba48ef1fee8afb7ab5b9d3bac14
+assets/sampler/frequency303/fx/04.wav,Filter fall 2,synth/MS-20-AllanLegemaate/MS-20-FX/Filter_fall_2.wav,cb061592d379d470a41537dcaf3984772166e76b0eaffb84489b642b4801de54
+assets/sampler/frequency303/fx/05.wav,Filter rise 1,synth/MS-20-AllanLegemaate/MS-20-FX/Filter_rise_1.wav,641462822a71e7dce160e5bb457ce10312f4cf05d70480eddaeeb6987495623a
+assets/sampler/frequency303/fx/06.wav,Laser 1,synth/MS-20-AllanLegemaate/MS-20-FX/Laser_1.wav,c6adc23d3e7f1634301277c043cee04c5f33b44ed72b222eab0b861986279ed3
+assets/sampler/frequency303/fx/07.wav,Laser 2,synth/MS-20-AllanLegemaate/MS-20-FX/Laser_2.wav,97dac7ec5a96b410b0f13726a1f92bd099bef9f92e5fe93bacd7acce9b5045c5
+assets/sampler/frequency303/fx/08.wav,Laser drop,synth/MS-20-AllanLegemaate/MS-20-FX/Laser_drop.wav,6e0e17fb6d5c7706b5799de6f7ea3f94d3ee08a9d6acf80f67348fbe5c5a5fb2
+assets/sampler/frequency303/fx/09.wav,Whoosh 1,synth/MS-20-AllanLegemaate/MS-20-FX/Whoosh_1.wav,f31b2a850b6493bf5888046d44213c65c74e57d6d0887060ee885525432dbea6
+assets/sampler/frequency303/fx/10.wav,Acid Bass C3,synth/MS-20-AllanLegemaate/MS-20-acid-bass/MS-20-acid-bass - C3.wav,fab0fbb9bb5a8cff89e86f8506ca208eb48d865e1a0900e4c835742fe9122fec
+assets/sampler/frequency303/fx/11.wav,Detuned Saws C3,synth/MS-20-AllanLegemaate/MS-20-detuned-saws/MS-20-detuned-saws - C3.wav,baa6fe1a759163a2af3e8214a70d7612c287ce48db5cd93cea6e638ab4396217
+assets/sampler/frequency303/fx/12.wav,Punchy Saw Bass C3,synth/MS-20-AllanLegemaate/MS-20-punchy-saw-bass/MS-20-punchy-saw-bass - C3.wav,8d1c838aa9da2794b0b5642a88b433c1f735d7f7aec989a7b2cf6276626f09be
+assets/sampler/frequency303/fx/13.wav,Reso Bass C3,synth/MS-20-AllanLegemaate/MS-20-reso-bass/MS-20-reso-bass - C3.wav,84fd16a609648b87cafd60a0aa6ab218d7d27f6dd0d2550c3cbf55a1b39b5a4b
+assets/sampler/frequency303/fx/14.wav,Saw C3,synth/MS-20-AllanLegemaate/MS-20-saw/MS-20-saw - C3.wav,4fb0bc89c1acf48f48c29ac2095253b51500edf2114ae18156198794e0f5f792
+assets/sampler/frequency303/fx/15.wav,Square C3,synth/MS-20-AllanLegemaate/MS-20-square/MS-20-square - C3.wav,6086b7a94aedc08642e0661ed5ed89b496022b4db37252ff5d832a2207664f7e
