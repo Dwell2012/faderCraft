@@ -6,9 +6,41 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use djcraft_engine::Track;
+
+pub const AUTO_TIMEOUT: &str = "Stopped: automatic stem separation exceeded 20% of track duration";
+
+pub fn automatic_budget(seconds: f64) -> Duration {
+    if seconds.is_finite() && seconds > 0. {
+        Duration::from_secs_f64((seconds * 0.2).min(7200.))
+    } else {
+        Duration::ZERO
+    }
+}
+
+fn check_deadline(deadline: Option<Instant>) -> Result<(), String> {
+    if deadline.is_some_and(|at| Instant::now() >= at) {
+        Err(AUTO_TIMEOUT.into())
+    } else {
+        Ok(())
+    }
+}
+
+fn worker_message(
+    messages: &Receiver<String>,
+    deadline: Option<Instant>,
+    idle: Duration,
+) -> Result<String, String> {
+    check_deadline(deadline)?;
+    let wait = deadline.map_or(idle, |at| {
+        at.saturating_duration_since(Instant::now()).min(idle)
+    });
+    let result = messages.recv_timeout(wait);
+    check_deadline(deadline)?;
+    result.map_err(|e| format!("Stem worker stopped responding: {e}"))
+}
 
 // One separator at a time, avoiding GPU-memory contention between queued decks.
 static PREPARATION: Mutex<Option<Worker>> = Mutex::new(None);
@@ -29,7 +61,8 @@ impl Drop for Worker {
 }
 
 impl Worker {
-    fn start(prefer_gpu: bool, model: &str) -> Result<Self, String> {
+    fn start(prefer_gpu: bool, model: &str, deadline: Option<Instant>) -> Result<Self, String> {
+        check_deadline(deadline)?;
         let runtime = runtime_dir();
         let python = runtime.join(if cfg!(windows) {
             "Scripts/python.exe"
@@ -79,17 +112,21 @@ impl Worker {
             if started.elapsed() > Duration::from_secs(1800) {
                 return Err("Stem startup exceeded 30 minutes".into());
             }
-            let line = worker
-                .messages
-                .recv_timeout(Duration::from_secs(120))
-                .map_err(|e| format!("Stem startup failed ({e}); see {}", log_path.display()))?;
+            let line = worker_message(&worker.messages, deadline, Duration::from_secs(120))
+                .map_err(|e| format!("{e}; see {}", log_path.display()))?;
             if line == "DJCRAFT_READY" {
                 return Ok(worker);
             }
         }
     }
 
-    fn prepare(&mut self, request: serde_json::Value, progress: &AtomicU8) -> Result<(), String> {
+    fn prepare(
+        &mut self,
+        request: serde_json::Value,
+        progress: &AtomicU8,
+        deadline: Option<Instant>,
+    ) -> Result<(), String> {
+        check_deadline(deadline)?;
         writeln!(self.input, "{request}").map_err(|e| e.to_string())?;
         self.input.flush().map_err(|e| e.to_string())?;
         let started = std::time::Instant::now();
@@ -97,10 +134,7 @@ impl Worker {
             if started.elapsed() > Duration::from_secs(7200) {
                 return Err("Stem preparation exceeded two hours".into());
             }
-            let line = self
-                .messages
-                .recv_timeout(Duration::from_secs(180))
-                .map_err(|e| format!("Stem worker stopped responding: {e}"))?;
+            let line = worker_message(&self.messages, deadline, Duration::from_secs(180))?;
             match line.as_str() {
                 "DJCRAFT_DONE" => return Ok(()),
                 "DJCRAFT_ERROR" => {
@@ -123,7 +157,7 @@ impl Worker {
 pub fn warm_up(prefer_gpu: bool, model: &str) -> Result<(), String> {
     let mut worker = PREPARATION.lock().map_err(|e| e.to_string())?;
     if worker.is_none() {
-        *worker = Some(Worker::start(prefer_gpu, model)?);
+        *worker = Some(Worker::start(prefer_gpu, model, None)?);
     }
     Ok(())
 }
@@ -284,6 +318,20 @@ pub fn load_or_prepare(
     prefer_gpu: bool,
     model: &str,
 ) -> Result<bool, String> {
+    load_or_prepare_with_limit(track, root, prepare, progress, prefer_gpu, model, None)
+}
+
+/// The optional processing budget excludes waiting for another job, and includes
+/// cold worker startup. Completed cached stems always bypass the budget.
+pub fn load_or_prepare_with_limit(
+    track: &Track,
+    root: &Path,
+    prepare: bool,
+    progress: &AtomicU8,
+    prefer_gpu: bool,
+    model: &str,
+    limit: Option<Duration>,
+) -> Result<bool, String> {
     if track.stems_ready() {
         return Ok(true);
     }
@@ -299,24 +347,34 @@ pub fn load_or_prepare(
         return Ok(false);
     }
     let mut worker = PREPARATION.lock().map_err(|e| e.to_string())?;
+    let deadline = limit.map(|limit| Instant::now() + limit);
     progress.store(0, Ordering::Relaxed);
     if directory.join("complete").exists() && attach(track, &directory).is_ok() {
         return Ok(true);
     }
     if worker.is_none() {
-        *worker = Some(Worker::start(prefer_gpu, model)?);
+        *worker = Some(Worker::start(prefer_gpu, model, deadline)?);
     }
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     // A marker is published only after all four sources have been validated.
     let _ = fs::remove_file(directory.join("complete"));
     let input = directory.join("input.f32");
-    let mut file = BufWriter::new(File::create(&input).map_err(|e| e.to_string())?);
-    for sample in samples {
-        file.write_all(&sample.to_le_bytes())
-            .map_err(|e| e.to_string())?;
+    let writing = (|| -> Result<(), String> {
+        let mut file = BufWriter::new(File::create(&input).map_err(|e| e.to_string())?);
+        for (index, sample) in samples.into_iter().enumerate() {
+            if index % 65536 == 0 {
+                check_deadline(deadline)?;
+            }
+            file.write_all(&sample.to_le_bytes())
+                .map_err(|e| e.to_string())?;
+        }
+        file.flush().map_err(|e| e.to_string())?;
+        check_deadline(deadline)
+    })();
+    if let Err(error) = writing {
+        let _ = fs::remove_file(&input);
+        return Err(error);
     }
-    file.flush().map_err(|e| e.to_string())?;
-    drop(file);
     let result = worker.as_mut().unwrap().prepare(
         serde_json::json!({
             "input": input, "output": directory, "sample_rate": track.sample_rate,
@@ -324,13 +382,19 @@ pub fn load_or_prepare(
             "log": directory.join("prepare.log"), "model": model,
         }),
         progress,
+        deadline,
     );
-    let _ = fs::remove_file(input);
     if let Err(error) = result {
         // Discard broken processes; the next request starts a clean worker.
         *worker = None;
+        let _ = fs::remove_file(&input);
+        for source in SOURCES {
+            let _ = fs::remove_file(directory.join(format!("{source}.f32")));
+        }
         return Err(error);
     }
+    let _ = fs::remove_file(&input);
+    check_deadline(deadline)?;
     attach(track, &directory)?;
     fs::write(directory.join("complete"), format!("{model}-v1")).map_err(|e| e.to_string())?;
     progress.store(100, Ordering::Relaxed);
@@ -410,5 +474,118 @@ mod tests {
         );
         assert!(!reloaded.stems_ready());
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod automatic_limit_tests {
+    use super::*;
+    #[test]
+    fn budget_is_twenty_percent_of_audio_duration() {
+        assert_eq!(automatic_budget(300.), Duration::from_secs(60));
+        assert_eq!(automatic_budget(240.), Duration::from_secs(48));
+        assert_eq!(automatic_budget(1.), Duration::from_millis(200));
+        for value in [0., -1., f64::NAN, f64::INFINITY] {
+            assert_eq!(automatic_budget(value), Duration::ZERO);
+        }
+    }
+    #[test]
+    fn silence_is_bounded_by_job_deadline_not_idle_timeout() {
+        let (_sender, receiver) = mpsc::channel();
+        let started = Instant::now();
+        let result = worker_message(
+            &receiver,
+            Some(started + Duration::from_millis(25)),
+            Duration::from_secs(180),
+        );
+        assert_eq!(result.unwrap_err(), AUTO_TIMEOUT);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn cached_stems_bypass_even_a_zero_processing_budget() {
+        let track = Track::from_samples("cached", 48000, vec![0.; 100]);
+        track
+            .attach_stems(std::array::from_fn(|_| vec![0.; 100].into_boxed_slice()))
+            .unwrap();
+        assert!(
+            load_or_prepare_with_limit(
+                &track,
+                Path::new("unused"),
+                true,
+                &AtomicU8::new(0),
+                true,
+                "htdemucs",
+                Some(Duration::ZERO)
+            )
+            .unwrap()
+        );
+    }
+    #[test]
+    fn zero_budget_does_not_start_a_worker_or_attach_partial_stems() {
+        let root =
+            std::env::temp_dir().join(format!("fadercraft-stem-zero-{}", std::process::id()));
+        let track = Track::from_samples("uncached", 48000, vec![0.; 100]);
+        let result = load_or_prepare_with_limit(
+            &track,
+            &root,
+            true,
+            &AtomicU8::new(0),
+            true,
+            "htdemucs",
+            Some(Duration::ZERO),
+        );
+        assert!(result.unwrap_err().contains(AUTO_TIMEOUT));
+        assert!(!track.stems_ready());
+        assert!(!root.exists());
+    }
+    #[test]
+    #[ignore = "child-process fixture, run only by the timeout test"]
+    fn worker_timeout_child() {
+        loop {
+            println!("DJCRAFT_BUSY");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    #[test]
+    fn timed_out_worker_is_terminated_even_while_sending_heartbeats() {
+        // Run the test executable as a harmless protocol fixture; no Python/model/GPU.
+        let _guard = PREPARATION.lock().unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "stems::automatic_limit_tests::worker_timeout_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().unwrap();
+        let input = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (sender, messages) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        *PROCESS.lock().unwrap() = Some(child);
+        let mut worker = Worker { input, messages };
+        let result = worker.prepare(
+            serde_json::json!({}),
+            &AtomicU8::new(0),
+            Some(Instant::now() + Duration::from_millis(150)),
+        );
+        assert!(result.unwrap_err().contains(AUTO_TIMEOUT));
+        drop(worker);
+        assert!(PROCESS.lock().unwrap().is_none());
     }
 }

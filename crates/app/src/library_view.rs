@@ -191,6 +191,9 @@ fn controller_row(current: Option<usize>, len: usize, steps: i32) -> Option<usiz
 /// What the library asks the rest of the app to do.
 pub enum LibraryEvent {
     NewSet,
+    SeparateStems {
+        path: PathBuf,
+    },
     Queue(Vec<djcraft_protocol::QueueTrack>),
     /// A track was chosen (double-clicked, or sent to a deck from its menu).
     /// On the decks that loads it onto `deck`, or onto whichever is free.
@@ -517,6 +520,13 @@ impl TableDelegate for TrackTable {
             ));
         }
         menu = menu.item(item("Add to Automix".into(), LibraryView::queue_track, 0));
+        if !track.missing {
+            menu = menu.item(item(
+                "Separate stems".into(),
+                LibraryView::separate_stems,
+                0,
+            ));
+        }
         if track.missing {
             menu = menu
                 .separator()
@@ -1356,6 +1366,24 @@ impl LibraryView {
             })
             .collect();
         cx.emit(LibraryEvent::Queue(tracks));
+    }
+    pub fn stem_notice(&mut self, message: String, cx: &mut Context<Self>) {
+        self.notice = Some(message.into());
+        cx.notify();
+    }
+    fn separate_stems(&mut self, track: i64, _: i64, cx: &mut Context<Self>) {
+        if let Some(track) = self
+            .table
+            .read(cx)
+            .delegate()
+            .tracks
+            .iter()
+            .find(|t| t.id == track)
+        {
+            cx.emit(LibraryEvent::SeparateStems {
+                path: track.path.clone(),
+            });
+        }
     }
     fn load_to_deck(&mut self, track: i64, deck: i64, cx: &mut Context<Self>) {
         let tracks = &self.table.read(cx).delegate().tracks;

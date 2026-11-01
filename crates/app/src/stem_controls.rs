@@ -14,6 +14,8 @@ impl Shell {
                 percent if self.settings.four_decks => format!("{percent}%"),
                 percent => format!("Stems {percent}%"),
             }
+        } else if self.stem_status[deck].contains(crate::stems::AUTO_TIMEOUT) {
+            "Stopped".to_owned()
         } else if ready {
             if self.settings.four_decks {
                 "Ready"
@@ -29,7 +31,8 @@ impl Shell {
             .outline()
             .label(label)
             .tooltip(if self.stem_status[deck].is_empty() {
-                "Prepare and cache stems locally for this deck.".to_owned()
+                "Prepare and cache stems locally. Manual retry has no automatic 20% cutoff."
+                    .to_owned()
             } else {
                 self.stem_status[deck].clone()
             })
@@ -38,7 +41,7 @@ impl Shell {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 if let Some(track) = this.engine.as_ref().and_then(|e| e.track(deck)).cloned() {
-                    this.start_stem_job(deck, track, true, cx);
+                    this.start_stem_job(deck, track, true, false, cx);
                 }
             }))
     }
@@ -108,8 +111,102 @@ impl Shell {
             self.mixer_values
                 [mixer_controls::stem_index(deck)..mixer_controls::stem_index(deck) + 4]
                 .fill(0.5);
-            self.start_stem_job(deck, track, false, cx);
+            self.start_stem_job(deck, track, true, true, cx);
         }
+    }
+
+    fn stem_library_notice(&mut self, message: String, cx: &mut Context<Self>) {
+        let view = if self.tab == Tab::Library {
+            self.library.clone()
+        } else {
+            self.browser.clone()
+        };
+        view.update(cx, |view, cx| view.stem_notice(message, cx));
+    }
+
+    pub(super) fn prepare_library_stems(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if let Some(deck) = self
+            .deck_paths
+            .iter()
+            .position(|p| p.as_ref() == Some(&path))
+        {
+            if let Some(track) = self
+                .engine
+                .as_ref()
+                .and_then(|engine| engine.track(deck))
+                .cloned()
+            {
+                if track.stems_ready() {
+                    self.stem_library_notice("Stems already ready for this track.".into(), cx);
+                    return;
+                }
+                if self.stem_busy[deck] {
+                    self.stem_library_notice("This track's stems are already being prepared. You can retry manually after it finishes or stops.".into(), cx);
+                    return;
+                }
+                if track.is_complete() {
+                    self.start_stem_job(deck, track, true, false, cx);
+                    self.stem_library_notice(
+                        "Separating stems; follow progress on the loaded deck.".into(),
+                        cx,
+                    );
+                    return;
+                }
+            }
+        }
+        if !self.library_stem_jobs.insert(path.clone()) {
+            self.stem_library_notice(
+                "This track is already queued for stem separation.".into(),
+                cx,
+            );
+            return;
+        }
+        self.stem_library_notice(
+            format!(
+                "Separating stems for {}…",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            cx,
+        );
+        let worker_path = path.clone();
+        let rate = self
+            .engine
+            .as_ref()
+            .map_or(48000, |engine| engine.sample_rate());
+        let root = data_dir().join("stems");
+        let waves = crate::settings::waveform_dir();
+        let prefer_gpu = self.settings.stem_gpu;
+        let model = self.settings.stem_model.name();
+        let work = cx.background_executor().spawn(async move {
+            let track = Track::decode_cached(&worker_path, rate, Some(&waves))
+                .map_err(|e| e.to_string())?;
+            crate::stems::load_or_prepare(&track, &root, true, &AtomicU8::new(0), prefer_gpu, model)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.library_stem_jobs.remove(&path);
+                if result.is_ok() {
+                    // A deck may have loaded this file while the menu job ran.
+                    // Recheck its cache without reloading or moving its transport.
+                    for deck in 0..DECKS {
+                        if this.deck_paths[deck].as_ref() == Some(&path) {
+                            this.stem_tracks[deck] = None;
+                        }
+                    }
+                }
+                let message = match result {
+                    Ok(_) => format!(
+                        "Stems ready: {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    Err(error) => format!("Stem separation failed: {error}"),
+                };
+                this.stem_library_notice(message, cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn prepare_stems(&mut self, cx: &mut Context<Self>) {
@@ -117,7 +214,7 @@ impl Shell {
             let track = self.engine.as_ref().and_then(|e| e.track(deck)).cloned();
             if let Some(track) = track {
                 if track.is_complete() && !track.stems_ready() && !self.stem_busy[deck] {
-                    self.start_stem_job(deck, track, true, cx);
+                    self.start_stem_job(deck, track, true, false, cx);
                 }
             }
         }
@@ -128,6 +225,7 @@ impl Shell {
         deck: usize,
         track: Arc<djcraft_engine::Track>,
         prepare: bool,
+        automatic: bool,
         cx: &mut Context<Self>,
     ) {
         self.stem_busy[deck] = true;
@@ -164,16 +262,18 @@ impl Shell {
         })
         .detach();
         let worker_track = track.clone();
+        let completed_progress = progress.clone();
         let prefer_gpu = self.settings.stem_gpu;
         let model = self.settings.stem_model.name();
         let work = cx.background_executor().spawn(async move {
-            let ready = crate::stems::load_or_prepare(
+            let ready = crate::stems::load_or_prepare_with_limit(
                 &worker_track,
                 &root,
                 prepare,
                 &progress,
                 prefer_gpu,
                 model,
+                automatic.then(|| crate::stems::automatic_budget(worker_track.duration_seconds())),
             )?;
             if ready && worker_track.vocal_regions().is_none() {
                 if let Some(vocals) = worker_track.vocal_stem() {
@@ -187,16 +287,18 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                if this
-                    .engine
-                    .as_ref()
-                    .and_then(|e| e.track(deck))
-                    .is_some_and(|current| Arc::ptr_eq(current, &track))
+                if Arc::ptr_eq(&this.stem_progress[deck], &completed_progress)
+                    && this
+                        .engine
+                        .as_ref()
+                        .and_then(|e| e.track(deck))
+                        .is_some_and(|current| Arc::ptr_eq(current, &track))
                 {
                     this.stem_busy[deck] = false;
                     this.stem_status[deck] = match result {
                         Ok(true) => "Stems ready · vocal map ready".into(),
                         Ok(false) => "Prepare stems".into(),
+                        Err(error) if error.contains(crate::stems::AUTO_TIMEOUT) => error,
                         Err(error) => {
                             eprintln!("Stem preparation: {error}");
                             format!("Retry stems: {error}")
