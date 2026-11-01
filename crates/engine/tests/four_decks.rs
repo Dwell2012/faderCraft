@@ -8,6 +8,75 @@ use djcraft_protocol::{
 const RATE: u32 = 48_000;
 const LEVELS: [f32; DECKS] = [0.04, 0.08, 0.12, 0.16];
 
+#[test]
+fn adjustable_crossfader_has_slow_fast_power_reverse_and_bypass_responses() {
+    use djcraft_engine::crossfader_gains;
+    let curve = |sharpness, power, reverse, disabled| CrossfaderCurve::Adjustable {
+        sharpness,
+        power,
+        reverse,
+        disabled,
+    };
+    assert_eq!(
+        crossfader_gains(0.5, curve(0, false, false, false)),
+        [0.5, 0.5]
+    );
+    assert_eq!(
+        crossfader_gains(0.5, curve(0, true, false, false)),
+        [0.25, 0.25]
+    );
+    for power in [false, true] {
+        for sharpness in [0, 25, 50, 75, 100] {
+            let normal = curve(sharpness, power, false, false);
+            assert_eq!(crossfader_gains(0., normal), [1., 0.]);
+            assert_eq!(crossfader_gains(1., normal), [0., 1.]);
+            let mut previous = [1., 0.];
+            for step in 0..=100 {
+                let position = step as f32 / 100.;
+                let gains = crossfader_gains(position, normal);
+                assert!(gains[0] <= previous[0] && gains[1] >= previous[1]);
+                let reversed = crossfader_gains(position, curve(sharpness, power, true, false));
+                assert!((reversed[0] - gains[1]).abs() < 1e-5);
+                assert!((reversed[1] - gains[0]).abs() < 1e-5);
+                assert_eq!(
+                    crossfader_gains(position, curve(sharpness, power, true, true)),
+                    [1., 1.]
+                );
+                previous = gains;
+            }
+        }
+        assert_eq!(
+            crossfader_gains(0.01, curve(100, power, false, false)),
+            [1., 1.]
+        );
+    }
+}
+
+#[test]
+fn adjustable_crossfader_settings_apply_to_live_audio_without_moving_the_fader() {
+    let (mut engine, mut mixer) = playing_decks();
+    let mut output = [0.; 2048];
+    mixer_action(&mut engine, MixerAction::SetCrossfader { position: 0. });
+    for (reverse, disabled, expected) in [
+        (false, false, 0.16),
+        (true, false, 0.24),
+        (true, true, 0.40),
+    ] {
+        let curve = CrossfaderCurve::Adjustable {
+            sharpness: 100,
+            power: false,
+            reverse,
+            disabled,
+        };
+        mixer_action(&mut engine, MixerAction::SetCrossfaderCurve { curve });
+        mixer.render(&mut output);
+        mixer.render(&mut output);
+        assert!((output[2046] - expected).abs() < 1e-4);
+        assert_eq!(engine.state().crossfader, 0.);
+        assert_eq!(engine.state().crossfader_curve, curve);
+    }
+}
+
 fn deck(engine: &mut Engine, index: usize, action: DeckAction) {
     engine
         .apply(

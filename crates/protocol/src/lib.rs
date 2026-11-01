@@ -482,6 +482,30 @@ pub enum CrossfaderCurve {
     Smooth,
     EqualPower,
     Cut,
+    Adjustable {
+        sharpness: u8,
+        power: bool,
+        reverse: bool,
+        disabled: bool,
+    },
+}
+
+impl CrossfaderCurve {
+    /// Editable equivalents of legacy presets. Legacy audio remains unchanged
+    /// until a setting is edited.
+    pub fn parameters(self) -> (u8, bool, bool, bool) {
+        match self {
+            Self::Smooth => (22, false, false, false),
+            Self::EqualPower => (22, true, false, false),
+            Self::Cut => (58, false, false, false),
+            Self::Adjustable {
+                sharpness,
+                power,
+                reverse,
+                disabled,
+            } => (sharpness.min(100), power, reverse, disabled),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

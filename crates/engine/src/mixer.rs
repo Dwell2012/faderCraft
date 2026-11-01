@@ -284,6 +284,28 @@ pub fn crossfader_gains(position: f32, curve: CrossfaderCurve) -> [f32; 2] {
             (position * std::f32::consts::FRAC_PI_2).sin(),
         ],
         CrossfaderCurve::Cut => [((1. - position) * 20.).min(1.), (position * 20.).min(1.)],
+        CrossfaderCurve::Adjustable {
+            sharpness,
+            power,
+            reverse,
+            disabled,
+        } => {
+            if disabled {
+                return [1., 1.];
+            }
+            let position = if reverse { 1. - position } else { position }.clamp(0., 1.);
+            let amount = sharpness.min(100) as f32 / 100.;
+            let slope = 1. + 99. * amount * amount * amount;
+            let gains = [
+                ((1. - position) * slope).min(1.),
+                (position * slope).min(1.),
+            ];
+            if power {
+                gains.map(|gain| gain * gain)
+            } else {
+                gains
+            }
+        }
     }
 }
 
