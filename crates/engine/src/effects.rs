@@ -172,11 +172,22 @@ impl Effect {
         self.tail_left = 0;
         self.history_left = 0;
     }
+    pub fn kill(&mut self) {
+        self.clear();
+        self.wet = 0.;
+        self.tail_mix = 0.;
+        self.idle = true;
+    }
+
     pub fn tail_active(&self) -> bool {
         self.state.kind.has_tail()
             && self.history_left > 0
             && self.amount > 0.00001
             && (self.state.enabled || self.tail_left > 0 || self.wet > 0.00001)
+    }
+
+    pub fn processing(&self) -> bool {
+        self.state.enabled || self.wet > 0.00001 || self.tail_active()
     }
     pub fn set(&mut self, state: EffectState) {
         if self.state.kind != state.kind {

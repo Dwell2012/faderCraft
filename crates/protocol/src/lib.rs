@@ -207,18 +207,80 @@ impl Default for EffectState {
 pub fn default_effects() -> [EffectState; EFFECT_SLOTS] {
     std::array::from_fn(|slot| EffectState {
         kind: match slot {
-            1 => EffectKind::Echo,
-            2 => EffectKind::Cut,
-            _ => EffectKind::Filter,
+            0 => EffectKind::Echo,
+            1 => EffectKind::Reverb,
+            2 => EffectKind::Flanger,
+            _ => EffectKind::Echo,
         },
-        enabled: slot == 0,
-        amount: if slot == 0 { 1. } else { 0.5 },
+        enabled: false,
+        amount: 0.5,
         ..EffectState::default()
     })
 }
 
 pub fn default_effect_beats() -> f32 {
     0.5
+}
+
+pub fn default_stem_effects() -> [EffectState; 4] {
+    [EffectState {
+        kind: EffectKind::Echo,
+        enabled: false,
+        ..EffectState::default()
+    }; 4]
+}
+
+pub const COLOUR_FX_KINDS: [EffectKind; 5] = [
+    EffectKind::Filter,
+    EffectKind::Echo,
+    EffectKind::Reverb,
+    EffectKind::Flanger,
+    EffectKind::Bitcrusher,
+];
+pub const COLOUR_FX_LABELS: [&str; 7] = [
+    "Filter",
+    "Echo",
+    "Reverb",
+    "Flanger",
+    "Bitcrusher",
+    "White Noise",
+    "Pink Noise",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColourFxState {
+    pub position: f32,
+    pub selected: u8,
+    pub enabled: bool,
+}
+impl Default for ColourFxState {
+    fn default() -> Self {
+        Self {
+            position: 0.5,
+            selected: 1,
+            enabled: true,
+        }
+    }
+}
+impl ColourFxState {
+    pub fn active(self) -> bool {
+        self.enabled && self.selected != 0 && (self.position - 0.5).abs() > 0.0001
+    }
+    pub fn effects(self) -> [EffectState; 5] {
+        let travel = ((self.position - 0.5).abs() * 2.).clamp(0., 1.);
+        std::array::from_fn(|index| EffectState {
+            kind: COLOUR_FX_KINDS[index],
+            enabled: self.enabled && self.selected & (1 << index) != 0 && travel > 0.0001,
+            amount: if index == 0 { 1. } else { travel * 0.65 },
+            parameter: if index == 0 {
+                self.position
+            } else {
+                0.25 + travel * 0.5
+            },
+            ..EffectState::default()
+        })
+    }
 }
 
 pub const EFFECT_BEATS: [f32; 7] = [0.125, 0.25, 0.5, 1., 2., 4., 8.];
@@ -326,6 +388,13 @@ pub enum DeckAction {
         slot: u8,
         effect: EffectState,
     },
+    SetStemEffect {
+        stem: u8,
+        effect: EffectState,
+    },
+    SetColourFx {
+        state: ColourFxState,
+    },
     /// Loop bounds in original-track seconds, independent of playback tempo.
     SetLoop {
         start: f64,
@@ -396,6 +465,9 @@ pub enum DeckAction {
     ScratchTo {
         seconds: f64,
     },
+    /// Freeze a stationary touched jog at the audio head, discarding pending travel.
+    /// The touch remains grabbed until Scratch { speed: None }.
+    HoldJog,
     /// Timestamped physical jog movement: position plus measured source-seconds
     /// per output-second. Interval supplies a packet-sized following buffer.
     JogScratch {
@@ -414,6 +486,9 @@ pub enum DeckAction {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MixerAction {
+    Sampler {
+        action: SamplerAction,
+    },
     SetSamplerGain {
         level: f32,
     },
@@ -663,8 +738,82 @@ impl Default for AutomixState {
     }
 }
 
+/// Global sampler bus: deliberately independent of every music deck.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SamplerAction {
+    /// Capture one deck's selected stems, independently of the master mix.
+    Capture {
+        deck: DeckId,
+        slot: u8,
+        start: f64,
+        end: f64,
+    },
+    SelectBank {
+        id: String,
+    },
+    CreateBank {
+        name: String,
+    },
+    RenameBank {
+        id: String,
+        name: String,
+    },
+    Load {
+        slot: u8,
+        path: String,
+    },
+    Clear {
+        slot: u8,
+    },
+    Play {
+        slot: u8,
+        play: bool,
+        restart: bool,
+        repeat: bool,
+        level: f32,
+    },
+    StopAll,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SampleBank {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SamplerState {
+    pub banks: Vec<SampleBank>,
+    pub selected_bank: String,
+    pub names: [String; 16],
+    pub loading: [bool; 16],
+    pub errors: [Option<String>; 16],
+    pub slots: [u8; 16],
+    pub error: Option<String>,
+}
+impl Default for SamplerState {
+    fn default() -> Self {
+        Self {
+            banks: vec![SampleBank {
+                id: "default".into(),
+                name: "My Samples".into(),
+            }],
+            selected_bank: "default".into(),
+            names: Default::default(),
+            loading: [false; 16],
+            errors: Default::default(),
+            slots: [0; 16],
+            error: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
+    #[serde(default)]
+    pub sampler: SamplerState,
     #[serde(default = "unity_gain")]
     pub sampler_gain: f32,
     #[serde(default)]
@@ -780,6 +929,8 @@ pub struct DeckState {
     #[serde(default)]
     pub auto_scratch: bool,
     #[serde(default)]
+    pub scratching: bool,
+    #[serde(default)]
     pub hot_cues: [Option<HotCue>; HOT_CUES],
     #[serde(default)]
     pub cue_appearance: [CueAppearance; HOT_CUES],
@@ -787,6 +938,10 @@ pub struct DeckState {
     pub effect_tail: bool,
     #[serde(default = "default_effects")]
     pub effects: [EffectState; EFFECT_SLOTS],
+    #[serde(default = "default_stem_effects")]
+    pub stem_effects: [EffectState; 4],
+    #[serde(default)]
+    pub colour_fx: ColourFxState,
     #[serde(default = "default_effect_beats")]
     pub effect_beats: f32,
     pub loop_region: Option<[f64; 2]>,
@@ -991,8 +1146,8 @@ mod resonance_compatibility_tests {
 
 impl EffectState {
     /// The reserved filter is displayed as off at its neutral centre.
-    pub fn active_in_slot(&self, slot: usize) -> bool {
-        self.enabled && (slot != 0 || (self.parameter - 0.5).abs() > 0.0001)
+    pub fn active_in_slot(&self, _slot: usize) -> bool {
+        self.enabled && (self.kind != EffectKind::Filter || (self.parameter - 0.5).abs() > 0.0001)
     }
 
     /// Nominal cutoff shared by DSP and UI. Separate power curves ease into

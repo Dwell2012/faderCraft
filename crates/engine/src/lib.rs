@@ -10,7 +10,9 @@ mod output;
 mod peak_guard;
 mod processed_peak;
 pub use processed_peak::measure_key_lock_peak;
+mod sample_banks;
 mod sampler;
+mod sampler_assets;
 mod spectrum;
 mod track;
 mod transition;
@@ -70,6 +72,8 @@ struct DeckControl {
     hot_cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     cue_appearance: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     effects: [djcraft_protocol::EffectState; djcraft_protocol::EFFECT_SLOTS],
+    stem_effects: [djcraft_protocol::EffectState; 4],
+    colour_fx: djcraft_protocol::ColourFxState,
     effect_beats: f32,
     loop_roll: bool,
     loop_region: Option<[f64; 2]>,
@@ -113,6 +117,8 @@ pub struct Engine {
     sample_loading: [bool; 16],
     sample_errors: [Option<String>; 16],
     sample_pending: Option<sampler::Ready>,
+    sample_banks: sample_banks::Banks,
+    sampler_error: Option<String>,
     sample_rate: u32,
     commands: rtrb::Producer<Command>,
     garbage: rtrb::Consumer<Arc<Track>>,
@@ -229,6 +235,8 @@ impl Engine {
             sample_loading: [false; 16],
             sample_errors: std::array::from_fn(|_| None),
             sample_pending: None,
+            sample_banks: Default::default(),
+            sampler_error: None,
             sample_rate,
             commands,
             garbage,
@@ -258,6 +266,8 @@ impl Engine {
                 hot_cues: [None; djcraft_protocol::HOT_CUES],
                 cue_appearance: Default::default(),
                 effects: djcraft_protocol::default_effects(),
+                stem_effects: djcraft_protocol::default_stem_effects(),
+                colour_fx: Default::default(),
                 effect_beats: djcraft_protocol::default_effect_beats(),
                 stem_gains: [1.; 4],
             }),
@@ -289,9 +299,27 @@ impl Engine {
         if self.sample_worker.is_some() {
             return;
         }
-        self.sample_worker = Some(sampler::Worker::new(self.sample_rate, Some(dir.into())));
+        match sample_banks::Banks::open(dir.into()) {
+            Ok(mut banks) => {
+                if let Err(error) = banks.install_starters() {
+                    self.sampler_error = Some(error);
+                    return;
+                }
+                self.sample_banks = banks;
+            }
+            Err(error) => {
+                self.sampler_error = Some(error);
+                return;
+            }
+        }
+        self.sample_worker = Some(sampler::Worker::new(self.sample_rate));
         for slot in 0..16 {
-            let _ = self.request_sample(slot, sampler::Source::Restore);
+            let source = if self.sample_banks.selected == "default" {
+                sampler::Source::Restore
+            } else {
+                sampler::Source::RestoreEmpty
+            };
+            let _ = self.request_sample(slot, source);
         }
     }
     fn request_sample(&mut self, slot: usize, source: sampler::Source) -> Result<(), Rejection> {
@@ -300,15 +328,16 @@ impl Engine {
         }
         let worker = self
             .sample_worker
-            .get_or_insert_with(|| sampler::Worker::new(self.sample_rate, None));
+            .get_or_insert_with(|| sampler::Worker::new(self.sample_rate));
         let revision = self.sample_revision[slot] + 1;
         worker
             .tx
-            .try_send(sampler::Request {
+            .try_send(vec![sampler::Request {
                 slot,
                 revision,
                 source,
-            })
+                root: self.sample_banks.path(),
+            }])
             .map_err(|_| Rejection::Busy)?;
         self.sample_revision[slot] = revision;
         self.sample_loading[slot] = true;
@@ -395,6 +424,9 @@ impl Engine {
             return Err(Rejection::NotPermitted);
         }
         match action {
+            Action::Mixer {
+                action: MixerAction::Sampler { action },
+            } => self.apply_sampler(action),
             Action::Mixer {
                 action: MixerAction::SetTrackPreparation { path, preparation },
             } => {
@@ -516,6 +548,144 @@ impl Engine {
         }
     }
 
+    fn apply_sampler(&mut self, action: djcraft_protocol::SamplerAction) -> Result<(), Rejection> {
+        use djcraft_protocol::SamplerAction;
+        match action {
+            SamplerAction::Capture {
+                deck,
+                slot,
+                start,
+                end,
+            } => {
+                let control = self
+                    .decks
+                    .get(deck as usize)
+                    .ok_or(Rejection::UnknownDeck)?;
+                if !control.track.as_ref().is_some_and(|t| t.stems_ready())
+                    || control.stem_gains.iter().all(|g| *g == 0.)
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.apply_deck(
+                    deck as usize,
+                    DeckAction::CaptureSample { slot, start, end },
+                )
+            }
+            SamplerAction::Load { slot, path } => {
+                self.request_sample(slot as usize, sampler::Source::File(path.into()))
+            }
+            SamplerAction::Clear { slot } => {
+                self.request_sample(slot as usize, sampler::Source::Clear)
+            }
+            SamplerAction::Play {
+                slot,
+                play,
+                restart,
+                repeat,
+                level,
+            } => {
+                if slot >= 16 || !level.is_finite() || !(0. ..=1.).contains(&level) {
+                    return Err(Rejection::InvalidValue);
+                }
+                if self.sample_loading[slot as usize] {
+                    return Err(Rejection::Busy);
+                }
+                self.send(Command::Sample {
+                    slot: slot as usize,
+                    play,
+                    restart,
+                    repeat,
+                    level,
+                })
+            }
+            SamplerAction::StopAll => {
+                if self.commands.slots() < 16 {
+                    return Err(Rejection::Busy);
+                }
+                for slot in 0..16 {
+                    self.send(Command::Sample {
+                        slot,
+                        play: false,
+                        restart: false,
+                        repeat: false,
+                        level: 0.,
+                    })?;
+                }
+                Ok(())
+            }
+            SamplerAction::RenameBank { id, name } => {
+                let mut banks = self.sample_banks.clone();
+                if let Err(error) = banks.rename(&id, name).and_then(|_| banks.save()) {
+                    self.sampler_error = Some(error);
+                    return Err(Rejection::InvalidValue);
+                }
+                self.sample_banks = banks;
+                self.sampler_error = None;
+                Ok(())
+            }
+            action => {
+                let mut banks = self.sample_banks.clone();
+                match action {
+                    SamplerAction::SelectBank { id } => {
+                        if !banks.entries.iter().any(|b| b.id == id) {
+                            return Err(Rejection::InvalidValue);
+                        }
+                        if banks.selected == id {
+                            return Ok(());
+                        }
+                        banks.selected = id;
+                    }
+                    SamplerAction::CreateBank { name } => {
+                        if let Err(error) = banks.create(name) {
+                            self.sampler_error = Some(error);
+                            return Err(Rejection::InvalidValue);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                if self.commands.slots() < 16 {
+                    return Err(Rejection::Busy);
+                }
+                if let Err(error) = banks.save() {
+                    self.sampler_error = Some(error);
+                    return Err(Rejection::InvalidValue);
+                }
+                let requests = (0..16)
+                    .map(|slot| sampler::Request {
+                        slot,
+                        revision: self.sample_revision[slot] + 1,
+                        source: if banks.selected == "default" {
+                            sampler::Source::Restore
+                        } else {
+                            sampler::Source::RestoreEmpty
+                        },
+                        root: banks.path(),
+                    })
+                    .collect();
+                let worker = self
+                    .sample_worker
+                    .get_or_insert_with(|| sampler::Worker::new(self.sample_rate));
+                if worker.tx.try_send(requests).is_err() {
+                    let _ = self.sample_banks.save();
+                    return Err(Rejection::Busy);
+                }
+                // A single ordered worker serializes old writes before new bank restores.
+                // Only the sampler voices stop; music decks and Automix remain untouched.
+                self.sample_pending = None;
+                for slot in 0..16 {
+                    self.sample_revision[slot] += 1;
+                    self.sample_loading[slot] = true;
+                    self.sample_names[slot].clear();
+                    self.sample_errors[slot] = None;
+                    self.send(Command::ClearSample { slot })?;
+                }
+                self.sample_banks = banks;
+                self.sampler_error = None;
+                Ok(())
+            }
+        }
+    }
+
     fn apply_deck(&mut self, deck: usize, action: DeckAction) -> Result<(), Rejection> {
         match action {
             DeckAction::SetBeatGrid { grid } => {
@@ -538,6 +708,8 @@ impl Engine {
                 self.request_sample(slot as usize, sampler::Source::Default)
             }
             DeckAction::CaptureSample { slot, start, end } => {
+                // Snapshot the selection now: saved samples never follow later deck changes.
+                let gains = self.decks[deck].stem_gains;
                 let track = self.decks[deck]
                     .track
                     .as_ref()
@@ -559,15 +731,18 @@ impl Engine {
                             track: track.clone(),
                             start,
                             end,
+                            gains,
                         },
                     );
                 }
-                self.sample_names[slot as usize] = track.title.clone();
+                self.sample_names[slot as usize] =
+                    sampler::capture_name(&track.title, start, gains);
                 self.send(Command::CaptureSample {
                     slot: slot as usize,
                     track: track.clone(),
                     start: start * self.sample_rate as f64,
                     end: end * self.sample_rate as f64,
+                    gains,
                 })
             }
             DeckAction::Sample {
@@ -795,6 +970,44 @@ impl Engine {
                 for effect in &mut self.decks[deck].effects {
                     effect.beats = beats;
                 }
+                for effect in &mut self.decks[deck].stem_effects {
+                    effect.beats = beats;
+                }
+                Ok(())
+            }
+            DeckAction::SetColourFx { state } => {
+                if !state.position.is_finite()
+                    || !(0.0..=1.).contains(&state.position)
+                    || state.selected & !127 != 0
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::ColourFx { deck, state })?;
+                self.decks[deck].colour_fx = state;
+                Ok(())
+            }
+            DeckAction::SetStemEffect { stem, mut effect } => {
+                if stem >= 4
+                    || !effect.feedback.is_finite()
+                    || !(0.0..=0.9).contains(&effect.feedback)
+                    || !effect.resonance.is_finite()
+                    || !(0.0..=1.0).contains(&effect.resonance)
+                    || !effect.beats.is_finite()
+                    || !(0.125..=8.).contains(&effect.beats)
+                    || !effect.amount.is_finite()
+                    || !(0.0..=1.).contains(&effect.amount)
+                    || !effect.parameter.is_finite()
+                    || !(0.0..=1.).contains(&effect.parameter)
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                effect.beats = self.decks[deck].effect_beats;
+                self.send(Command::StemEffect {
+                    deck,
+                    stem: stem as usize,
+                    effect,
+                })?;
+                self.decks[deck].stem_effects[stem as usize] = effect;
                 Ok(())
             }
             DeckAction::SetEffect { slot, mut effect } => {
@@ -811,15 +1024,6 @@ impl Engine {
                     || !(0.0..=1.0).contains(&effect.parameter)
                 {
                     return Err(Rejection::InvalidValue);
-                }
-                if slot == 0 {
-                    if effect.kind != djcraft_protocol::EffectKind::Filter {
-                        return Err(Rejection::InvalidValue);
-                    }
-                    if !effect.enabled {
-                        effect.parameter = 0.5;
-                    }
-                    effect.enabled = true;
                 }
                 effect.beats = self.decks[deck].effect_beats;
                 self.send(Command::Effect {
@@ -1095,6 +1299,7 @@ impl Engine {
                     mixer::loop_at(self.decks[deck].loop_region, seconds);
                 Ok(())
             }
+            DeckAction::HoldJog => self.send(Command::HoldJog { deck }),
             DeckAction::JogScratch {
                 seconds,
                 speed,
@@ -1162,6 +1367,7 @@ impl Engine {
                             slot,
                             start: 0.,
                             end: track.decoded_frames() as f64,
+                            gains: [1.; 4],
                             track,
                         }
                     } else {
@@ -1225,6 +1431,21 @@ impl Engine {
         self.tick_automix();
         let sample_rate = self.sample_rate as f64;
         SessionState {
+            sampler: djcraft_protocol::SamplerState {
+                banks: self.sample_banks.entries.clone(),
+                selected_bank: self.sample_banks.selected.clone(),
+                names: self.sample_names.clone(),
+                loading: self.sample_loading,
+                errors: self.sample_errors.clone(),
+                slots: std::array::from_fn(|i| {
+                    if self.sample_loading[i] {
+                        0
+                    } else {
+                        self.shared.sample_states()[i]
+                    }
+                }),
+                error: self.sampler_error.clone(),
+            },
             automix: self.automix.state.clone(),
             decks: self
                 .decks
@@ -1241,9 +1462,12 @@ impl Engine {
                     sample_loading: self.sample_loading,
                     sample_errors: self.sample_errors.clone(),
                     auto_scratch: shared.auto_scratch(),
+                    scratching: shared.scratching(),
                     loop_region: control.loop_region,
                     loop_roll: control.loop_roll,
                     effects: control.effects,
+                    stem_effects: control.stem_effects,
+                    colour_fx: control.colour_fx,
                     effect_beats: control.effect_beats,
                     hot_cues: control.hot_cues,
                     cue_appearance: control.cue_appearance.clone(),

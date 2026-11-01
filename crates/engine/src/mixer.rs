@@ -30,6 +30,15 @@ const BLOCK: usize = 512;
 const SPEED_SMOOTHING_SECONDS: f64 = 0.004;
 
 pub(crate) enum Command {
+    ColourFx {
+        deck: usize,
+        state: djcraft_protocol::ColourFxState,
+    },
+    StemEffect {
+        deck: usize,
+        stem: usize,
+        effect: djcraft_protocol::EffectState,
+    },
     SamplerGain {
         level: f32,
     },
@@ -55,6 +64,7 @@ pub(crate) enum Command {
         track: Arc<Track>,
         start: f64,
         end: f64,
+        gains: [f32; 4],
     },
     Sample {
         slot: usize,
@@ -176,6 +186,9 @@ pub(crate) enum Command {
         deck: usize,
         speed: Option<f64>,
     },
+    HoldJog {
+        deck: usize,
+    },
     ScratchTo {
         deck: usize,
         frame: f64,
@@ -214,6 +227,7 @@ pub(crate) struct DeckShared {
     /// Audible position in frames, as `f64` bits.
     position: AtomicU64,
     playing: AtomicBool,
+    scratching: AtomicBool,
     peak: AtomicU32,
 }
 
@@ -241,6 +255,9 @@ impl DeckShared {
         f64::from_bits(self.position.load(Ordering::Relaxed))
     }
 
+    pub(crate) fn scratching(&self) -> bool {
+        self.scratching.load(Ordering::Relaxed)
+    }
     pub(crate) fn playing(&self) -> bool {
         self.playing.load(Ordering::Relaxed)
     }
@@ -338,6 +355,13 @@ struct Deck {
     eq: Eq,
     effect_bpm: Option<f64>,
     effects: [crate::effects::Effect; djcraft_protocol::EFFECT_SLOTS],
+    stem_effects: [crate::effects::Effect; 4],
+    colour_fx: [crate::effects::Effect; 5],
+    colour_state: djcraft_protocol::ColourFxState,
+    noise_seed: u32,
+    pink_rows: [[f32; 12]; 2],
+    pink_counter: u32,
+    noise_gains: [f32; 2],
     stem_gains: [f32; 4],
     current_stems: [f32; 4],
     cross_gain: f32,
@@ -401,6 +425,21 @@ impl Deck {
                 effect
             }),
             stem_gains: [1.; 4],
+            colour_fx: std::array::from_fn(|index| {
+                let mut effect = crate::effects::Effect::new(sample_rate);
+                effect.set(djcraft_protocol::ColourFxState::default().effects()[index]);
+                effect
+            }),
+            colour_state: Default::default(),
+            noise_seed: 0x9e3779b9,
+            pink_rows: [[0.; 12]; 2],
+            pink_counter: 0,
+            noise_gains: [0.; 2],
+            stem_effects: std::array::from_fn(|_| {
+                let mut effect = crate::effects::Effect::new(sample_rate);
+                effect.set(djcraft_protocol::default_stem_effects()[0]);
+                effect
+            }),
             current_stems: [1.; 4],
             cross_gain: 1.,
             scratch: None,
@@ -459,7 +498,13 @@ impl Deck {
                     armed = false;
                 }
                 position = armed_position(position, region, armed);
-                frame.copy_from_slice(&interpolate(track, available, position, self.current_stems));
+                frame.copy_from_slice(&interpolate_stem_fx(
+                    track,
+                    available,
+                    position,
+                    self.current_stems,
+                    &mut self.stem_effects,
+                ));
                 position = armed_position(position + 1., region, armed);
             }
             if pass == 0 {
@@ -480,6 +525,12 @@ impl Deck {
     /// Fills `out` with the deck's signal before gain. Returns false, leaving
     /// `out` untouched, when the deck is silent.
     fn render(&mut self, out: &mut [f32]) -> bool {
+        for effect in &mut self.stem_effects {
+            effect.clock(
+                self.effect_bpm,
+                self.playing || self.scratch.is_some() || self.auto.is_some(),
+            );
+        }
         // Controller bends must expire even if the UI stalls. Sync and ordinary
         // one-shot nudges retain their existing completion behavior.
         if let Some(remaining) = &mut self.nudge_timeout {
@@ -549,7 +600,13 @@ impl Deck {
                     }
                 }
                 let dry = if self.playing {
-                    interpolate(track, available, self.position, self.current_stems)
+                    interpolate_stem_fx(
+                        track,
+                        available,
+                        self.position,
+                        self.current_stems,
+                        &mut self.stem_effects,
+                    )
                 } else {
                     [0.; 2]
                 };
@@ -559,11 +616,12 @@ impl Deck {
                 } else if scratch.elapsed < scratch.beat * 4. {
                     let phase = scratch.elapsed / scratch.beat;
                     let (offset, gate) = scratch_motion(scratch.pattern, phase);
-                    let signal = interpolate(
+                    let signal = interpolate_stem_fx(
                         track,
                         available,
                         scratch.anchor + offset * scratch.beat,
                         self.current_stems,
+                        &mut self.stem_effects,
                     );
                     let edge = (scratch.elapsed / 64.)
                         .min((scratch.beat * 4. - scratch.elapsed) / 64.)
@@ -639,11 +697,12 @@ impl Deck {
                     self.stem_gains,
                     self.speed_smoothing,
                 );
-                frame.copy_from_slice(&interpolate(
+                frame.copy_from_slice(&interpolate_stem_fx(
                     track,
                     available,
                     self.position,
                     self.current_stems,
+                    &mut self.stem_effects,
                 ));
                 self.position = armed_position(self.position + 1., region, self.loop_armed);
                 if !complete {
@@ -717,11 +776,12 @@ impl Deck {
                     self.loop_armed = false;
                 }
                 self.position = armed_position(self.position, region, self.loop_armed);
-                frame.copy_from_slice(&interpolate(
+                frame.copy_from_slice(&interpolate_stem_fx(
                     track,
                     available,
                     self.position,
                     self.current_stems,
+                    &mut self.stem_effects,
                 ));
                 if self.scratch_position.is_some() {
                     for sample in frame.iter_mut() {
@@ -786,6 +846,28 @@ fn smooth_stems(current: &mut [f32; 4], target: [f32; 4], smoothing: f64) {
 
 /// Cubic Hermite interpolation of the first `frames` frames of a track.
 /// Positions outside that range read as silence.
+fn interpolate_stem_fx(
+    track: &Track,
+    frames: usize,
+    position: f64,
+    gains: [f32; 4],
+    effects: &mut [crate::effects::Effect; 4],
+) -> [f32; CHANNELS] {
+    if !track.stems_ready() || !effects.iter().any(|fx| fx.processing()) {
+        return interpolate(track, frames, position, gains);
+    }
+    let mut mixed = [0.; CHANNELS];
+    for (stem, effect) in effects.iter_mut().enumerate() {
+        let mut isolated = [0.; 4];
+        isolated[stem] = 1.;
+        let signal = effect.process(interpolate(track, frames, position, isolated));
+        for channel in 0..CHANNELS {
+            mixed[channel] += signal[channel] * gains[stem];
+        }
+    }
+    mixed
+}
+
 fn interpolate(track: &Track, frames: usize, position: f64, gains: [f32; 4]) -> [f32; CHANNELS] {
     let base = position.floor();
     let t = (position - base) as f32;
@@ -871,6 +953,7 @@ struct SampleVoice {
     // Fixed storage: overlapping hits never allocate on the audio thread.
     tails: [Option<(f64, f32)>; 15],
     track: Option<Arc<Track>>,
+    stem_gains: [f32; 4],
     start: f64,
     end: f64,
     position: f64,
@@ -891,7 +974,7 @@ impl SampleVoice {
                     continue;
                 };
                 *gain += ((if self.playing { self.level } else { 0. }) - *gain) * 0.02;
-                let signal = interpolate(track, track.decoded_frames(), *position, [1.; 4]);
+                let signal = interpolate(track, track.decoded_frames(), *position, self.stem_gains);
                 let edge = ((self.end - *position) / 64.).clamp(0., 1.) as f32;
                 for c in 0..CHANNELS {
                     frame[c] += signal[c] * *gain * edge;
@@ -910,7 +993,12 @@ impl SampleVoice {
             if self.gain < 0.00001 && !self.playing {
                 continue;
             }
-            let signal = interpolate(track, track.decoded_frames(), self.position, [1.; 4]);
+            let signal = interpolate(
+                track,
+                track.decoded_frames(),
+                self.position,
+                self.stem_gains,
+            );
             let edge = ((self.end - self.position) / 64.).clamp(0., 1.) as f32;
             for c in 0..CHANNELS {
                 frame[c] += signal[c] * self.gain * edge;
@@ -1030,7 +1118,11 @@ impl Mixer {
             commands,
             garbage,
             shared,
-            decks: std::array::from_fn(|_| Deck::new(sample_rate)),
+            decks: std::array::from_fn(|index| {
+                let mut deck = Deck::new(sample_rate);
+                deck.noise_seed ^= (index as u32 + 1).wrapping_mul(0x85ebca6b);
+                deck
+            }),
             master_gain: 1.0,
             current_master: 1.,
             crossfader: 0.5,
@@ -1051,6 +1143,7 @@ impl Mixer {
             | Command::Cue { deck, .. }
             | Command::Scratch { deck, .. }
             | Command::ScratchTo { deck, .. }
+            | Command::HoldJog { deck }
             | Command::Pause { deck } => Some(*deck),
             _ => None,
         };
@@ -1064,6 +1157,7 @@ impl Mixer {
             | Command::Jump { deck, .. }
             | Command::Scratch { deck, .. }
             | Command::ScratchTo { deck, .. }
+            | Command::HoldJog { deck }
             | Command::StemGains { deck, .. }
             | Command::ArmLoop { deck, .. }
             | Command::PadLoop { deck, .. }
@@ -1171,12 +1265,14 @@ impl Mixer {
                 track,
                 start,
                 end,
+                gains,
             } => {
                 if let Some(old) = self.samples[slot].track.take() {
                     let _ = self.garbage.push(old);
                 }
                 self.samples[slot] = SampleVoice {
                     track: Some(track),
+                    stem_gains: gains,
                     start,
                     end,
                     position: start,
@@ -1282,7 +1378,12 @@ impl Mixer {
                 if frame < 0. {
                     deck.auto = None;
                     deck.eq.reset();
-                    for effect in &mut deck.effects {
+                    for effect in deck
+                        .effects
+                        .iter_mut()
+                        .chain(deck.stem_effects.iter_mut())
+                        .chain(deck.colour_fx.iter_mut())
+                    {
                         effect.clear();
                     }
                 }
@@ -1337,11 +1438,31 @@ impl Mixer {
             Command::EffectTempo { deck, bpm } => {
                 self.decks[deck].effect_bpm = bpm;
             }
+            Command::ColourFx { deck, state } => {
+                self.decks[deck].colour_state = state;
+                for (effect, settings) in self.decks[deck].colour_fx.iter_mut().zip(state.effects())
+                {
+                    effect.set(settings);
+                    if !state.enabled {
+                        effect.kill();
+                    }
+                }
+                if !state.enabled {
+                    self.decks[deck].noise_gains = [0.; 2];
+                }
+            }
+            Command::StemEffect { deck, stem, effect } => {
+                self.decks[deck].stem_effects[stem].set(effect);
+            }
             Command::Effect { deck, slot, effect } => {
                 self.decks[deck].effects[slot].set(effect);
             }
             Command::EffectBeats { deck, beats } => {
-                for effect in &mut self.decks[deck].effects {
+                for effect in self.decks[deck]
+                    .effects
+                    .iter_mut()
+                    .chain(self.decks[deck].stem_effects.iter_mut())
+                {
                     effect.set_beats(beats);
                 }
             }
@@ -1395,7 +1516,12 @@ impl Mixer {
                 deck.nudge_frames = 0.;
                 deck.position = 0.0;
                 deck.eq.reset();
-                for effect in &mut deck.effects {
+                for effect in deck
+                    .effects
+                    .iter_mut()
+                    .chain(deck.stem_effects.iter_mut())
+                    .chain(deck.colour_fx.iter_mut())
+                {
                     effect.clear();
                 }
                 deck.stem_gains = [1.; 4];
@@ -1419,7 +1545,12 @@ impl Mixer {
                 deck.nudge_frames = 0.;
                 deck.position = 0.;
                 deck.eq.reset();
-                for effect in &mut deck.effects {
+                for effect in deck
+                    .effects
+                    .iter_mut()
+                    .chain(deck.stem_effects.iter_mut())
+                    .chain(deck.colour_fx.iter_mut())
+                {
                     effect.clear();
                 }
                 deck.stem_gains = [1.; 4];
@@ -1471,7 +1602,12 @@ impl Mixer {
                     if frame < 0. {
                         deck.auto = None;
                         deck.eq.reset();
-                        for effect in &mut deck.effects {
+                        for effect in deck
+                            .effects
+                            .iter_mut()
+                            .chain(deck.stem_effects.iter_mut())
+                            .chain(deck.colour_fx.iter_mut())
+                        {
                             effect.clear();
                         }
                     }
@@ -1572,6 +1708,16 @@ impl Mixer {
                 self.decks[deck].scratch_position = None;
                 self.decks[deck].scratch_velocity = None;
             }
+            Command::HoldJog { deck } => {
+                let deck = &mut self.decks[deck];
+                deck.position = deck.audible_position();
+                deck.stretching = false;
+                deck.scratch = Some(0.);
+                deck.scratch_position = Some(deck.position);
+                deck.scratch_velocity = None;
+                deck.speed = 0.;
+                deck.nudge_frames = 0.;
+            }
             Command::ScratchTo {
                 deck,
                 frame,
@@ -1603,11 +1749,34 @@ impl Mixer {
                         deck.prepared_at = None;
                         deck.auto = None;
                         deck.eq.reset();
-                        for effect in &mut deck.effects {
+                        for effect in deck
+                            .effects
+                            .iter_mut()
+                            .chain(deck.stem_effects.iter_mut())
+                            .chain(deck.colour_fx.iter_mut())
+                        {
                             effect.clear();
                         }
                     } else {
-                        deck.scratch_position = Some(frame.min(track.decoded_frames() as f64));
+                        let frame = if let Some((speed, following)) = velocity {
+                            let distance = frame - deck.position;
+                            let window = (speed.abs() * following * 2.).max(1.);
+                            if speed != 0.
+                                && (distance.abs() > window || distance.signum() != speed.signum())
+                            {
+                                // Coalesced/over-speed packets can put the cumulative
+                                // target seconds ahead of audible motion. Follow only
+                                // a bounded packet horizon in the measured direction;
+                                // never keep chasing that stale travel after stopping.
+                                deck.position + speed * following
+                            } else {
+                                frame
+                            }
+                        } else {
+                            frame
+                        };
+                        deck.scratch_position =
+                            Some(frame.clamp(0., track.decoded_frames() as f64));
                     }
                 }
             }
@@ -1697,10 +1866,31 @@ impl Mixer {
                 }
                 if !source_running {
                     buffer.fill(0.);
+                    if deck.track.as_ref().is_some_and(|track| track.stems_ready()) {
+                        for effect in &mut deck.stem_effects {
+                            effect.clock(deck.effect_bpm, false);
+                        }
+                        for frame in buffer.chunks_exact_mut(CHANNELS) {
+                            for (stem, effect) in deck.stem_effects.iter_mut().enumerate() {
+                                let signal = effect.process([0.; CHANNELS]);
+                                for channel in 0..CHANNELS {
+                                    frame[channel] += signal[channel] * deck.current_stems[stem];
+                                }
+                            }
+                        }
+                    }
                 }
                 let bpm = deck.effect_bpm.map(|bpm| bpm * deck.tempo);
-                for effect in &mut deck.effects {
-                    effect.clock(bpm, source_running);
+                for effect in deck
+                    .effects
+                    .iter_mut()
+                    .chain(deck.colour_fx.iter_mut().rev())
+                {
+                    effect.clock(
+                        bpm,
+                        source_running
+                            || (deck.colour_state.active() && deck.colour_state.selected & 96 != 0),
+                    );
                 }
                 let step = (target - deck.gain) / frames as f32;
                 let cue_target = if self.monitor.cue_enabled(index) {
@@ -1722,7 +1912,39 @@ impl Mixer {
                     deck.gain += step;
                     deck.cross_gain += cross_step;
                     let mut signal = deck.eq.process(input);
+                    // Deck inserts precede the independent CFX generators and
+                    // reverse-menu CFX chain; Filter is the final processor.
                     for effect in &mut deck.effects {
+                        signal = effect.process(signal);
+                    }
+                    let noise_amount = if deck.colour_state.active() {
+                        (deck.colour_state.position - 0.5).abs() * 0.4
+                    } else {
+                        0.
+                    };
+                    for (index, gain) in deck.noise_gains.iter_mut().enumerate() {
+                        let target = if deck.colour_state.selected & (32 << index) != 0 {
+                            noise_amount
+                        } else {
+                            0.
+                        };
+                        *gain += (target - *gain) * deck.speed_smoothing as f32;
+                    }
+                    if deck.noise_gains.iter().any(|gain| *gain > 0.000001) {
+                        deck.pink_counter = deck.pink_counter.wrapping_add(1);
+                        let row = deck.pink_counter.trailing_zeros().min(11) as usize;
+                        for channel in 0..CHANNELS {
+                            deck.noise_seed ^= deck.noise_seed << 13;
+                            deck.noise_seed ^= deck.noise_seed >> 17;
+                            deck.noise_seed ^= deck.noise_seed << 5;
+                            let white = (deck.noise_seed as f64 / u32::MAX as f64 * 2. - 1.) as f32;
+                            deck.pink_rows[channel][row] = white;
+                            let pink = deck.pink_rows[channel].iter().sum::<f32>() / 4.;
+                            signal[channel] +=
+                                deck.noise_gains[0] * white + deck.noise_gains[1] * pink;
+                        }
+                    }
+                    for effect in deck.colour_fx.iter_mut().rev() {
                         signal = effect.process(signal);
                     }
                     if deck.start_attack > 0 {
@@ -1747,7 +1969,12 @@ impl Mixer {
                     Ordering::Relaxed,
                 );
                 self.shared.decks[index].effect_tail.store(
-                    deck.effects.iter().any(|fx| fx.tail_active()),
+                    deck.effects
+                        .iter()
+                        .chain(deck.stem_effects.iter())
+                        .chain(deck.colour_fx.iter())
+                        .any(|fx| fx.tail_active())
+                        || (deck.colour_state.active() && deck.colour_state.selected & 96 != 0),
                     Ordering::Relaxed,
                 );
             }
@@ -1843,6 +2070,9 @@ impl Mixer {
                 .position
                 .store(deck.audible_position().to_bits(), Ordering::Relaxed);
             shared.playing.store(deck.playing, Ordering::Relaxed);
+            shared
+                .scratching
+                .store(deck.scratch.is_some(), Ordering::Relaxed);
             for (shared, gain) in shared.eq_gains.iter().zip(deck.eq.gains) {
                 shared.store(gain.to_bits(), Ordering::Relaxed);
             }

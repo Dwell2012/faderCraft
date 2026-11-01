@@ -1506,9 +1506,9 @@ fn shared_effect_beats_are_deck_local_preserved_by_slot_edits_and_reach_audio() 
                 .iter()
                 .map(|fx| fx.kind)
                 .collect::<Vec<_>>(),
-            vec![EffectKind::Filter, EffectKind::Echo, EffectKind::Cut]
+            vec![EffectKind::Echo, EffectKind::Reverb, EffectKind::Flanger]
         );
-        assert!(deck.effects[0].enabled);
+        assert!(!deck.effects[0].enabled);
         assert!(deck.effects[1..].iter().all(|fx| !fx.enabled));
     }
     for beats in [0., 0.0625, 8.01, f32::NAN, f32::INFINITY] {
@@ -3683,68 +3683,44 @@ fn filter_resonance_is_validated_and_isolated_per_slot_and_deck() {
 }
 
 #[test]
-fn first_filter_slot_is_reserved_always_on_and_neutral_by_default() {
-    use djcraft_protocol::{EffectKind, EffectState};
+fn first_effect_slot_is_assignable_and_colour_filter_is_separate() {
+    use djcraft_protocol::{ColourFxState, EffectKind, EffectState};
     let (mut engine, mut mixer) = engine_with(sine(1000., 3., RATE));
-    let initial = engine.state().decks[0].effects[0];
-    assert!(initial.enabled);
-    assert_eq!(initial.resonance, 0.5);
-    assert_eq!(initial.parameter, 0.5);
-    assert_eq!(initial.amount, 1.);
-    assert_eq!(
-        engine.apply(
-            Role::Host,
-            deck(DeckAction::SetEffect {
-                slot: 0,
-                effect: EffectState {
-                    kind: EffectKind::Echo,
-                    ..initial
-                }
-            })
-        ),
-        Err(Rejection::InvalidValue)
-    );
-    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
-    let neutral = render(&mut mixer, 0.3);
-    let power = |s: &[f32]| s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32;
+    assert!(!engine.state().decks[0].colour_fx.active());
+    let effect = EffectState {
+        kind: EffectKind::Reverb,
+        enabled: true,
+        ..Default::default()
+    };
+    engine
+        .apply(Role::Host, deck(DeckAction::SetEffect { slot: 0, effect }))
+        .unwrap();
+    assert_eq!(engine.state().decks[0].effects[0], effect);
     engine
         .apply(
             Role::Host,
-            deck(DeckAction::SetEffect {
-                slot: 0,
-                effect: EffectState {
-                    enabled: true,
-                    parameter: 0.,
-                    ..initial
+            deck(DeckAction::SetColourFx {
+                state: ColourFxState {
+                    position: 0.1,
+                    ..Default::default()
                 },
             }),
         )
         .unwrap();
-    assert!(engine.state().decks[0].effects[0].enabled);
-    render(&mut mixer, 0.2);
-    assert!(power(&render(&mut mixer, 0.3)) < power(&neutral) * 0.01);
+    assert!(engine.state().decks[0].colour_fx.active());
+    assert_eq!(engine.state().decks[0].effects[0], effect);
+    render(&mut mixer, 0.1);
     engine
         .apply(
             Role::Host,
-            deck(DeckAction::SetEffect {
-                slot: 0,
-                effect: EffectState {
-                    enabled: false,
-                    parameter: 0.,
-                    ..initial
-                },
+            deck(DeckAction::SetColourFx {
+                state: ColourFxState::default(),
             }),
         )
         .unwrap();
-    let reset = engine.state().decks[0].effects[0];
-    assert_eq!(reset.parameter, 0.5);
-    assert_eq!(reset.resonance, initial.resonance);
-    assert!(!reset.active_in_slot(0));
-    assert!(reset.enabled);
-    render(&mut mixer, 0.2);
-    assert!((power(&render(&mut mixer, 0.3)) - power(&neutral)).abs() < 0.01);
+    assert!(!engine.state().decks[0].colour_fx.active());
+    assert_eq!(engine.state().decks[0].effects[0], effect);
 }
-
 #[test]
 fn eject_clears_loaded_track_and_stops_audio() {
     let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 2]);
@@ -3760,6 +3736,660 @@ fn eject_clears_loaded_track_and_stops_audio() {
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
     mixer.render(&mut output);
     assert!(output.iter().all(|sample| sample.abs() < 1e-6));
+}
+
+fn sampler_action(action: djcraft_protocol::SamplerAction) -> Action {
+    Action::Mixer {
+        action: MixerAction::Sampler { action },
+    }
+}
+fn wait_bank(engine: &mut Engine, mixer: &mut Mixer) -> djcraft_protocol::SamplerState {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let state = engine.state().sampler;
+        mixer.render(&mut [0.; CALLBACK * 2]);
+        if !state.loading.iter().any(|v| *v) {
+            return engine.state().sampler;
+        }
+        assert!(Instant::now() < deadline, "bank load timed out");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+#[test]
+fn named_sampler_banks_preserve_legacy_samples_isolate_writes_and_restore_selection() {
+    use djcraft_protocol::SamplerAction as S;
+    let root = std::env::temp_dir().join(format!(
+        "fadercraft-bank-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    engine.set_sampler_dir(root.clone());
+    let original = wait_bank(&mut engine, &mut mixer);
+    assert_eq!(original.names[0], "Kick");
+    assert_eq!(original.selected_bank, "default");
+    assert_eq!(
+        engine.apply(
+            Role::Viewer,
+            sampler_action(S::CreateBank {
+                name: "Drops".into()
+            })
+        ),
+        Err(Rejection::NotPermitted)
+    );
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::CreateBank {
+                name: "Drops".into(),
+            }),
+        )
+        .unwrap();
+    let empty = wait_bank(&mut engine, &mut mixer);
+    let id = empty.selected_bank.clone();
+    assert!(empty.slots.iter().all(|v| *v == 0));
+    assert!(empty.names.iter().all(String::is_empty));
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            sampler_action(S::CreateBank {
+                name: "drops".into()
+            })
+        ),
+        Err(Rejection::InvalidValue)
+    );
+    let path = write_wav("bank-isolation", 24000, &vec![0.2; 2400]);
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::Load {
+                slot: 0,
+                path: path.to_string_lossy().into_owned(),
+            }),
+        )
+        .unwrap();
+    // Switch before the import completes: old work must save to its original bank.
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::SelectBank {
+                id: "default".into(),
+            }),
+        )
+        .unwrap();
+    assert_eq!(wait_bank(&mut engine, &mut mixer).names[0], "Kick");
+    engine
+        .apply(Role::Host, sampler_action(S::SelectBank { id: id.clone() }))
+        .unwrap();
+    let loaded = wait_bank(&mut engine, &mut mixer);
+    assert!(loaded.names[0].contains("bank-isolation"));
+    assert_eq!(loaded.slots[0], 1);
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::RenameBank {
+                id: id.clone(),
+                name: "Vocal Drops".into(),
+            }),
+        )
+        .unwrap();
+    engine
+        .apply(Role::Host, sampler_action(S::Clear { slot: 0 }))
+        .unwrap();
+    assert_eq!(wait_bank(&mut engine, &mut mixer).slots[0], 0);
+    drop(engine);
+    drop(mixer);
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    engine.set_sampler_dir(root.clone());
+    let restored = wait_bank(&mut engine, &mut mixer);
+    assert_eq!(restored.selected_bank, id);
+    assert!(restored.banks.iter().any(|b| b.name == "Vocal Drops"));
+    assert_eq!(restored.slots[0], 0);
+    drop(engine);
+    drop(mixer);
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn standalone_sampler_ignores_deck_faders_crossfader_and_transport() {
+    use djcraft_protocol::SamplerAction as S;
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    let path = write_wav("sampler-bus", 24000, &vec![0.25; 2400]);
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::Load {
+                slot: 0,
+                path: path.to_string_lossy().into_owned(),
+            }),
+        )
+        .unwrap();
+    wait_bank(&mut engine, &mut mixer);
+    for deck in 0..4 {
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck,
+                    action: DeckAction::SetVolume { level: 0. },
+                },
+            )
+            .unwrap();
+    }
+    engine
+        .apply(
+            Role::Host,
+            Action::Mixer {
+                action: MixerAction::SetCrossfader { position: 1. },
+            },
+        )
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            sampler_action(S::Play {
+                slot: 0,
+                play: true,
+                restart: true,
+                repeat: true,
+                level: 1.,
+            }),
+        )
+        .unwrap();
+    let mut block = [0.; CALLBACK * 2];
+    for _ in 0..3 {
+        mixer.render(&mut block);
+    }
+    let full: f32 = block.iter().map(|v| v.abs()).sum::<f32>() / block.len() as f32;
+    assert!(full > 0.1, "sampler was affected by deck routing: {full}");
+    engine
+        .apply(
+            Role::Host,
+            Action::Mixer {
+                action: MixerAction::SetSamplerGain { level: 0.5 },
+            },
+        )
+        .unwrap();
+    for _ in 0..3 {
+        mixer.render(&mut block);
+    }
+    let half: f32 = block.iter().map(|v| v.abs()).sum::<f32>() / block.len() as f32;
+    assert!((half / full - 0.5).abs() < 0.02);
+    engine
+        .apply(Role::Host, sampler_action(S::StopAll))
+        .unwrap();
+    for _ in 0..4 {
+        mixer.render(&mut block);
+    }
+    assert!(block.iter().all(|v| v.abs() < 0.001));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn bundled_cc0_banks_decode_and_user_edits_survive_restart() {
+    use djcraft_protocol::SamplerAction as S;
+    let root = std::env::temp_dir().join(format!(
+        "fadercraft-starter-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    engine.set_sampler_dir(root.clone());
+    let original = wait_bank(&mut engine, &mut mixer);
+    assert_eq!(original.names[0], "Kick");
+    let mut selected = String::new();
+    for name in ["MS-20 Drums", "Synth FX"] {
+        let id = original
+            .banks
+            .iter()
+            .find(|b| b.name == name)
+            .expect("missing starter bank")
+            .id
+            .clone();
+        engine
+            .apply(Role::Host, sampler_action(S::SelectBank { id: id.clone() }))
+            .unwrap();
+        let bank = wait_bank(&mut engine, &mut mixer);
+        assert!(
+            bank.errors.iter().all(Option::is_none),
+            "{name}: {:?}",
+            bank.errors
+        );
+        assert!(
+            bank.slots.iter().all(|v| *v == 1),
+            "{name}: {:?}",
+            bank.slots
+        );
+        assert!(bank.names.iter().all(|n| !n.is_empty()));
+        selected = id;
+    }
+    engine
+        .apply(Role::Host, sampler_action(S::Clear { slot: 0 }))
+        .unwrap();
+    wait_bank(&mut engine, &mut mixer);
+    drop(engine);
+    drop(mixer);
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    engine.set_sampler_dir(root.clone());
+    let restored = wait_bank(&mut engine, &mut mixer);
+    assert_eq!(restored.selected_bank, selected);
+    assert_eq!(restored.banks.len(), original.banks.len());
+    assert_eq!(
+        restored.slots[0], 0,
+        "starter seeding overwrote a user's cleared slot"
+    );
+    assert!(root.join("CC0-1.0.txt").exists());
+    drop(engine);
+    drop(mixer);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn deck_stem_capture_freezes_selected_sources_and_survives_reload() {
+    use djcraft_protocol::SamplerAction as S;
+    for persisted in [false, true] {
+        for gains in [[1., 0., 0., 0.], [1., 0., 0., 1.], [0.5, 0., 0., 1.]] {
+            let root = std::env::temp_dir().join(format!(
+                "fadercraft-stem-capture-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let (mut engine, mut mixer) = Engine::headless(RATE);
+            if persisted {
+                engine.set_sampler_dir(root.clone());
+                wait_bank(&mut engine, &mut mixer);
+            }
+            let frames = RATE as usize;
+            let stereo = |left, right| {
+                (0..frames)
+                    .flat_map(|_| [left, right])
+                    .collect::<Vec<f32>>()
+            };
+            let source = Arc::new(Track::from_samples("Target", RATE, stereo(0.53, 0.70)));
+            source
+                .attach_stems([
+                    stereo(0.08, 0.16).into_boxed_slice(),
+                    stereo(0.1, 0.12).into_boxed_slice(),
+                    stereo(0.15, 0.17).into_boxed_slice(),
+                    stereo(0.2, 0.25).into_boxed_slice(),
+                ])
+                .unwrap();
+            engine.load_track(2, source).unwrap();
+            engine
+                .load_track(
+                    0,
+                    Arc::new(Track::from_samples("Other deck", RATE, stereo(0.4, 0.4))),
+                )
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    Action::Deck {
+                        deck: 0,
+                        action: DeckAction::Play,
+                    },
+                )
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    Action::Deck {
+                        deck: 2,
+                        action: DeckAction::SetStemGains { gains },
+                    },
+                )
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    sampler_action(S::Capture {
+                        deck: 2,
+                        slot: 15,
+                        start: 0.1,
+                        end: 0.6,
+                    }),
+                )
+                .unwrap();
+            // Changing the deck while the request is queued must not change the capture.
+            engine
+                .apply(
+                    Role::Host,
+                    Action::Deck {
+                        deck: 2,
+                        action: DeckAction::SetStemGains { gains: [1.; 4] },
+                    },
+                )
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    Action::Deck {
+                        deck: 2,
+                        action: DeckAction::Unload,
+                    },
+                )
+                .unwrap();
+            engine
+                .apply(
+                    Role::Host,
+                    Action::Deck {
+                        deck: 0,
+                        action: DeckAction::Pause,
+                    },
+                )
+                .unwrap();
+            if persisted {
+                wait_bank(&mut engine, &mut mixer);
+            }
+            let mut out = [0.; CALLBACK * 2];
+            for _ in 0..100 {
+                mixer.render(&mut out);
+            }
+            engine
+                .apply(
+                    Role::Host,
+                    sampler_action(S::Play {
+                        slot: 15,
+                        play: true,
+                        restart: true,
+                        repeat: true,
+                        level: 1.,
+                    }),
+                )
+                .unwrap();
+            for _ in 0..3 {
+                mixer.render(&mut out);
+            }
+            let expected = [
+                0.08 * gains[0] + 0.2 * gains[3],
+                0.16 * gains[0] + 0.25 * gains[3],
+            ];
+            for frame in out.chunks_exact(2) {
+                for c in 0..2 {
+                    assert!(
+                        (frame[c] - expected[c]).abs() < 0.0002,
+                        "persisted={persisted}, gains={gains:?}, got={frame:?}, expected={expected:?}"
+                    );
+                }
+            }
+            assert!(engine.state().sampler.names[15].contains("Vocals"));
+            drop(engine);
+            drop(mixer);
+            if persisted {
+                let (mut engine, mut mixer) = Engine::headless(RATE);
+                engine.set_sampler_dir(root.clone());
+                wait_bank(&mut engine, &mut mixer);
+                engine
+                    .apply(
+                        Role::Host,
+                        sampler_action(S::Play {
+                            slot: 15,
+                            play: true,
+                            restart: true,
+                            repeat: true,
+                            level: 1.,
+                        }),
+                    )
+                    .unwrap();
+                for _ in 0..3 {
+                    mixer.render(&mut out);
+                }
+                assert!((out[100] - expected[0]).abs() < 0.0002);
+                assert!((out[101] - expected[1]).abs() < 0.0002);
+                drop(engine);
+                drop(mixer);
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+}
+#[test]
+fn sampler_capture_rejects_unprepared_silent_and_invalid_sources() {
+    use djcraft_protocol::SamplerAction as S;
+    let (mut engine, _mixer) = Engine::headless(RATE);
+    let request = || {
+        sampler_action(S::Capture {
+            deck: 0,
+            slot: 0,
+            start: 0.,
+            end: 0.2,
+        })
+    };
+    assert_eq!(
+        engine.apply(Role::Viewer, request()),
+        Err(Rejection::NotPermitted)
+    );
+    assert_eq!(
+        engine.apply(Role::Host, request()),
+        Err(Rejection::InvalidValue)
+    );
+    let track = Arc::new(Track::from_samples(
+        "plain",
+        RATE,
+        vec![0.1; RATE as usize * 2],
+    ));
+    engine.load_track(0, track.clone()).unwrap();
+    assert_eq!(
+        engine.apply(Role::Host, request()),
+        Err(Rejection::InvalidValue)
+    );
+    track
+        .attach_stems(std::array::from_fn(|_| {
+            vec![0.025; RATE as usize * 2].into_boxed_slice()
+        }))
+        .unwrap();
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetStemGains { gains: [0.; 4] }),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.apply(Role::Host, request()),
+        Err(Rejection::InvalidValue)
+    );
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            sampler_action(S::Capture {
+                deck: 4,
+                slot: 0,
+                start: 0.,
+                end: 0.2
+            })
+        ),
+        Err(Rejection::UnknownDeck)
+    );
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetStemGains { gains: [1.; 4] }),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            sampler_action(S::Capture {
+                deck: 0,
+                slot: 16,
+                start: 0.,
+                end: 0.2
+            })
+        ),
+        Err(Rejection::InvalidValue)
+    );
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            sampler_action(S::Capture {
+                deck: 0,
+                slot: 0,
+                start: 0.,
+                end: 2.
+            })
+        ),
+        Err(Rejection::InvalidValue)
+    );
+}
+
+#[test]
+fn stationary_jog_holds_audio_head_without_target_catchup_and_releases_cleanly() {
+    for playing in [false, true] {
+        for key_lock in [false, true] {
+            for velocity in [-4., 4.] {
+                let (mut engine, mut mixer) = engine_with(vec![0.3; RATE as usize * 20 * 2]);
+                engine
+                    .apply(Role::Host, deck(DeckAction::Seek { seconds: 10. }))
+                    .unwrap();
+                engine
+                    .apply(Role::Host, deck(DeckAction::SetKeyLock { on: key_lock }))
+                    .unwrap();
+                engine
+                    .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.08 }))
+                    .unwrap();
+                if playing {
+                    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+                }
+                engine
+                    .apply(
+                        Role::Host,
+                        deck(DeckAction::JogScratch {
+                            seconds: 10. + velocity,
+                            speed: velocity,
+                            interval_seconds: 0.01,
+                        }),
+                    )
+                    .unwrap();
+                let mut out = [0.; CALLBACK * 2];
+                for _ in 0..5 {
+                    mixer.render(&mut out);
+                }
+                let before = engine.state().decks[0].position_seconds;
+                engine.apply(Role::Host, deck(DeckAction::HoldJog)).unwrap();
+                mixer.render(&mut out);
+                let held = engine.state().decks[0].clone();
+                assert!(held.scratching);
+                assert_eq!(held.playing, playing);
+                assert!((held.position_seconds - before).abs() < 1. / RATE as f64);
+                for _ in 0..100 {
+                    mixer.render(&mut out);
+                }
+                assert!(
+                    (engine.state().decks[0].position_seconds - before).abs() < 1. / RATE as f64
+                );
+                assert!(out.iter().all(|v| v.abs() < 0.0001));
+                engine
+                    .apply(Role::Host, deck(DeckAction::Scratch { speed: None }))
+                    .unwrap();
+                for _ in 0..10 {
+                    mixer.render(&mut out);
+                }
+                let released = engine.state().decks[0].clone();
+                assert!(!released.scratching);
+                if playing {
+                    assert!(
+                        released.position_seconds > before
+                            && released.position_seconds < before + 0.12
+                    );
+                } else {
+                    assert!((released.position_seconds - before).abs() < 1. / RATE as f64);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn long_jog_backlog_does_not_rapidly_catch_up_after_last_packet() {
+    for sign in [-1., 1.] {
+        let (mut engine, mut mixer) = engine_with(vec![0.3; RATE as usize * 60 * 2]);
+        engine
+            .apply(Role::Host, deck(DeckAction::Seek { seconds: 30. }))
+            .unwrap();
+        let mut target = 30.;
+        let mut out = [0.; 480]; // 5 ms.
+        for _ in 0..300 {
+            target += sign * 0.06; // Travel faster than the bounded audio speed.
+            engine
+                .apply(
+                    Role::Host,
+                    deck(DeckAction::JogScratch {
+                        seconds: target,
+                        speed: sign * 4.,
+                        interval_seconds: 0.005,
+                    }),
+                )
+                .unwrap();
+            mixer.render(&mut out);
+        }
+        // No controller idle/release action: the follower must stop on its own.
+        for _ in 0..10 {
+            mixer.render(&mut out);
+        }
+        let stopped = engine.state().decks[0].position_seconds;
+        assert!(
+            out.iter().all(|v| v.abs() < 0.001),
+            "stale target kept audio moving after packets stopped: sign={sign}"
+        );
+        for _ in 0..80 {
+            mixer.render(&mut out);
+        }
+        assert!(
+            (engine.state().decks[0].position_seconds - stopped).abs() < 1. / RATE as f64,
+            "audio rapidly chased old accumulated travel"
+        );
+    }
+}
+#[test]
+fn jog_reversal_follows_new_velocity_even_when_old_target_is_far_ahead() {
+    let (mut engine, mut mixer) = engine_with(vec![0.3; RATE as usize * 60 * 2]);
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 10. }))
+        .unwrap();
+    let mut target = 10.;
+    let mut out = [0.; 480];
+    for _ in 0..200 {
+        target += 0.06;
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::JogScratch {
+                    seconds: target,
+                    speed: 4.,
+                    interval_seconds: 0.005,
+                }),
+            )
+            .unwrap();
+        mixer.render(&mut out);
+    }
+    let before = engine.state().decks[0].position_seconds;
+    for _ in 0..10 {
+        target -= 0.003;
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::JogScratch {
+                    seconds: target,
+                    speed: -0.6,
+                    interval_seconds: 0.005,
+                }),
+            )
+            .unwrap();
+        mixer.render(&mut out);
+    }
+    assert!(
+        engine.state().decks[0].position_seconds < before,
+        "reversed platter still moved toward old forward target"
+    );
 }
 
 #[test]

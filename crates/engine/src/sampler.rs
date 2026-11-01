@@ -26,15 +26,18 @@ pub(crate) enum Source {
         track: Arc<Track>,
         start: f64,
         end: f64,
+        gains: [f32; 4],
     },
     Clear,
     Default,
     Restore,
+    RestoreEmpty,
 }
 pub(crate) struct Request {
     pub slot: usize,
     pub revision: u64,
     pub source: Source,
+    pub root: Option<PathBuf>,
 }
 pub(crate) struct Ready {
     pub slot: usize,
@@ -42,25 +45,28 @@ pub(crate) struct Ready {
     pub result: Result<Option<(Arc<Track>, String)>, String>,
 }
 pub(crate) struct Worker {
-    pub tx: mpsc::SyncSender<Request>,
+    pub tx: mpsc::SyncSender<Vec<Request>>,
     pub rx: mpsc::Receiver<Ready>,
 }
 impl Worker {
-    pub fn new(rate: u32, root: Option<PathBuf>) -> Self {
-        let (tx, requests) = mpsc::sync_channel::<Request>(32);
+    pub fn new(rate: u32) -> Self {
+        let (tx, requests) = mpsc::sync_channel::<Vec<Request>>(32);
         let (results, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            while let Ok(request) = requests.recv() {
-                let result = prepare(rate, root.as_deref(), request.slot, request.source);
-                if results
-                    .send(Ready {
-                        slot: request.slot,
-                        revision: request.revision,
-                        result,
-                    })
-                    .is_err()
-                {
-                    break;
+            while let Ok(batch) = requests.recv() {
+                for request in batch {
+                    let result =
+                        prepare(rate, request.root.as_deref(), request.slot, request.source);
+                    if results
+                        .send(Ready {
+                            slot: request.slot,
+                            revision: request.revision,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
         });
@@ -73,7 +79,7 @@ fn prepare(
     slot: usize,
     source: Source,
 ) -> Result<Option<(Arc<Track>, String)>, String> {
-    if matches!(source, Source::Restore) {
+    if matches!(source, Source::Restore | Source::RestoreEmpty) {
         if let Some(root) = root {
             let entry = root.join(format!("slot-{slot:02}.txt"));
             match std::fs::read_to_string(entry) {
@@ -96,7 +102,7 @@ fn prepare(
         }
     }
     let sample = match source {
-        Source::Clear => None,
+        Source::Clear | Source::RestoreEmpty => None,
         Source::Default | Source::Restore => DEFAULTS
             .get(slot)
             .map(|name| (Arc::new(synthesize(slot, rate)), name.to_string())),
@@ -115,13 +121,18 @@ fn prepare(
                 .replace(['\r', '\n'], " ");
             Some((track, name))
         }
-        Source::Capture { track, start, end } => {
+        Source::Capture {
+            track,
+            start,
+            end,
+            gains,
+        } => {
             let first = (start * rate as f64) as usize;
             let last = (end * rate as f64) as usize;
             let samples = (first * 2..last * 2)
-                .map(|i| track.mixed_sample(i, [1.; 4]))
+                .map(|i| track.mixed_sample(i, gains))
                 .collect();
-            let name = format!("{} {:.1}s", track.title.replace(['\r', '\n'], " "), start);
+            let name = capture_name(&track.title, start, gains);
             Some((
                 Arc::new(Track::from_samples(name.clone(), rate, samples)),
                 name,
@@ -133,6 +144,24 @@ fn prepare(
     }
     Ok(sample)
 }
+pub(crate) fn capture_name(title: &str, start: f64, gains: [f32; 4]) -> String {
+    let selection = ["Vocals", "Instruments", "Bass", "Drums"]
+        .into_iter()
+        .zip(gains)
+        .filter(|(_, gain)| *gain > 0.)
+        .map(|(name, _)| name)
+        .collect::<Vec<_>>()
+        .join("+");
+    if gains == [1.; 4] {
+        format!("{} {start:.1}s", title.replace(['\r', '\n'], " "))
+    } else {
+        format!(
+            "{} [{selection}] {start:.1}s",
+            title.replace(['\r', '\n'], " ")
+        )
+    }
+}
+
 fn validate(track: &Track) -> Result<(), String> {
     if track.decoded_seconds() < 0.01 || track.decoded_seconds() > 120. {
         return Err("Samples must be between 0.01 and 120 seconds.".into());
@@ -327,6 +356,7 @@ mod tests {
                 track,
                 start: 0.2,
                 end: 0.4,
+                gains: [1.; 4],
             },
         )
         .unwrap();
