@@ -1,6 +1,31 @@
 use djcraft_controllers::{Binding, Bridge, Event, HostCommand, Profile};
 use djcraft_protocol::{Action, DeckAction, DeckState, HotCue, SessionState};
 const PORT: &str = "MixTrack Pro II";
+
+#[test]
+fn pad_mode_follows_each_pressed_bank_even_on_an_empty_deck() {
+    use djcraft_controllers::PadMode;
+    let mut b = bridge();
+    let s = state();
+    for (deck, notes) in [(0, [0x6d, 0x53, 0x65]), (1, [0x71, 0x56, 0x69])] {
+        for (number, mode) in
+            notes
+                .into_iter()
+                .zip([PadMode::HotCues, PadMode::Loop, PadMode::Sampler])
+        {
+            note(&mut b, number, 127, &s);
+            let modes = b.take_pad_modes();
+            assert_eq!(modes[deck], Some(mode));
+            assert_eq!(modes[deck ^ 1], None);
+            assert!(b.take_pad_modes().iter().all(Option::is_none));
+            note(&mut b, number, 0, &s);
+            assert!(b.take_pad_modes().iter().all(Option::is_none));
+        }
+    }
+    note(&mut b, 0x61, 127, &s);
+    note(&mut b, 0x61, 0, &s);
+    assert!(b.take_pad_modes().iter().all(Option::is_none));
+}
 fn bridge() -> Bridge {
     Bridge::new(
         Profile::from_json(include_str!(
@@ -30,6 +55,7 @@ fn leds_follow_host_cues_samples_loops_and_fx_with_port_and_deck_isolation() {
     let b = bridge();
     let mut s = state();
     assert!(b.state_feedback("other", &s, 0, &[]).is_empty());
+    s.decks[0].effects[0].kind = djcraft_protocol::EffectKind::Filter;
     assert!(
         b.state_feedback(PORT, &s, 0, &[Some(1.), None])
             .contains(&[0x90, 0x53, 100])
@@ -61,6 +87,22 @@ fn leds_follow_host_cues_samples_loops_and_fx_with_port_and_deck_isolation() {
     let mut b = b;
     assert!(note(&mut b, 0x28, 127, &s).is_empty());
     assert!(b.take_commands().is_empty());
+}
+
+#[test]
+fn pitch_center_lamps_follow_each_decks_zero_tempo_without_blinking() {
+    let b = bridge();
+    let mut s = state();
+    for time in [0, 250, 500] {
+        s.decks[0].tempo = 1.;
+        s.decks[1].tempo = 1.02;
+        assert_eq!(lamp(&b, &s, 0x28, time), 100);
+        assert_eq!(lamp(&b, &s, 0x29, time), 0);
+        s.decks[0].tempo = 0.98;
+        s.decks[1].tempo = 1.;
+        assert_eq!(lamp(&b, &s, 0x28, time), 0);
+        assert_eq!(lamp(&b, &s, 0x29, time), 100);
+    }
 }
 #[test]
 fn shift_fx_and_tap_choose_auto_loops_without_toggling_effects() {

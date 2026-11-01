@@ -214,11 +214,8 @@ fn fx_pads_toggle_existing_slot_settings_through_the_engine_and_leave_tap_free()
                     engine.apply(Role::Host, action).unwrap();
                 }
                 let actual = engine.state().decks[usize::from(deck)].effects[usize::from(slot)];
-                effect.enabled = slot == 0 || enabled;
-                if slot == 0 {
-                    effect.parameter = 0.5;
-                }
-                assert_eq!(actual.active_in_slot(slot as usize), slot != 0 && enabled);
+                effect.enabled = enabled;
+                assert_eq!(actual.active_in_slot(slot as usize), enabled);
                 assert_eq!(actual, effect);
                 assert!(button(&mut b, note, 127, &engine.state(), now).is_empty());
                 assert!(button(&mut b, note, 0, &engine.state(), now).is_empty());

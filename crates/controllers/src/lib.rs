@@ -133,6 +133,9 @@ pub enum Parameter {
         deck: u8,
         slot: u8,
     },
+    ColourFx {
+        deck: u8,
+    },
     Master,
     Crossfader,
     Sampler,
@@ -156,6 +159,7 @@ impl Parameter {
                     effect.amount
                 })
             }
+            Self::ColourFx { deck: id } => f64::from(deck(id)?.colour_fx.position),
             Self::Master => f64::from(state.master_gain),
             Self::Crossfader => f64::from(state.crossfader),
             Self::Sampler => f64::from(state.sampler_gain),
@@ -182,6 +186,12 @@ impl Parameter {
                     effect.amount = v;
                 }
                 (deck, DeckAction::SetEffect { slot, effect })
+            }
+            Self::ColourFx { deck } => {
+                let mut state = state.decks[usize::from(deck)].colour_fx;
+                state.position = v;
+                state.enabled = true;
+                (deck, DeckAction::SetColourFx { state })
             }
             other => {
                 return Action::Mixer {
@@ -220,6 +230,9 @@ pub enum Encoding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
+    ToggleColourFx {
+        deck: u8,
+    },
     EffectBeats {
         deck: u8,
         encoding: Encoding,
@@ -311,6 +324,7 @@ pub struct Modifier {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LedFeedback {
+    ColourFx { deck: u8 },
     Pressed { deck: u8 },
     LoopIn { deck: u8 },
     Playing { deck: u8 },
@@ -524,7 +538,15 @@ struct Memory {
     bend_at: Option<Instant>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PadMode {
+    HotCues,
+    Loop,
+    Sampler,
+}
+
 pub struct Bridge {
+    pad_modes: [Option<PadMode>; djcraft_protocol::DECKS],
     tempo_bpms: Vec<Option<f64>>,
     profile: Profile,
     memory: BTreeMap<String, Memory>,
@@ -538,6 +560,7 @@ impl Bridge {
     pub fn new(profile: Profile) -> Result<Self, String> {
         profile.validate()?;
         Ok(Self {
+            pad_modes: [None; djcraft_protocol::DECKS],
             tempo_bpms: Vec::new(),
             profile,
             memory: BTreeMap::new(),
@@ -550,6 +573,26 @@ impl Bridge {
 
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// Observed modes from actual mapped pad presses, independent of whether
+    /// the deck currently has audio loaded. Does not infer a silent mode switch.
+    pub fn take_pad_modes(&mut self) -> [Option<PadMode>; djcraft_protocol::DECKS] {
+        std::mem::replace(&mut self.pad_modes, [None; djcraft_protocol::DECKS])
+    }
+
+    pub fn scratch_modes(&self) -> [Option<bool>; djcraft_protocol::DECKS] {
+        let mut modes = [None; djcraft_protocol::DECKS];
+        for mapping in &self.profile.mappings {
+            if let Binding::Jog { config } = &mapping.binding {
+                modes[usize::from(config.deck)] = Some(
+                    self.jogs
+                        .get(&mapping.id)
+                        .map_or(config.scratch_enabled, |jog| jog.enabled()),
+                );
+            }
+        }
+        modes
     }
 
     /// Arm one absolute reading per mapping after a verified hardware dump
@@ -607,7 +650,8 @@ impl Bridge {
                     return None;
                 };
                 let (deck, slot) = match *feedback {
-                    LedFeedback::Pressed { deck }
+                    LedFeedback::ColourFx { deck }
+                    | LedFeedback::Pressed { deck }
                     | LedFeedback::LoopIn { deck }
                     | LedFeedback::Playing { deck }
                     | LedFeedback::Cue { deck }
@@ -621,6 +665,7 @@ impl Bridge {
                     .decks
                     .get(usize::from(deck))
                     .is_some_and(|s| match feedback {
+                        LedFeedback::ColourFx { .. } => s.colour_fx.active(),
                         LedFeedback::Pressed { .. } => self
                             .held
                             .get(&(port.to_owned(), m.source))
@@ -781,11 +826,12 @@ impl Bridge {
         self.delete_modes.retain(|(p, _)| p != port);
         self.held.retain(|(name, _), _| name != port);
         let mut releases = Vec::new();
-        for mapping in &self.profile.mappings {
+        for mapping in &mut self.profile.mappings {
             if mapping.port == port {
-                if let Binding::Jog { config } = &mapping.binding
+                if let Binding::Jog { config } = &mut mapping.binding
                     && let Some(mut jog) = self.jogs.remove(&mapping.id)
                 {
+                    config.scratch_enabled = jog.enabled();
                     releases.extend(jog.cancel(config.deck));
                 }
                 if let Some(memory) = self.memory.remove(&mapping.id)
@@ -874,6 +920,25 @@ impl Bridge {
             let rising = down && !memory.down;
             let falling = !down && memory.down;
             memory.down = down;
+            if rising {
+                let mode = match &mapping.binding {
+                    Binding::HotCue { deck, .. } | Binding::HotCueDeleteMode { deck } => {
+                        Some((*deck, PadMode::HotCues))
+                    }
+                    Binding::HostButton {
+                        press: HostCommand::LoopPad { deck, .. },
+                        ..
+                    } => Some((*deck, PadMode::Loop)),
+                    Binding::HostButton {
+                        press: HostCommand::SamplePad { deck, .. },
+                        ..
+                    } => Some((*deck, PadMode::Sampler)),
+                    _ => None,
+                };
+                if let Some((deck, mode)) = mode {
+                    self.pad_modes[usize::from(deck)] = Some(mode);
+                }
+            }
             let action = match &mapping.binding {
                 Binding::EffectBeats { deck, encoding } => {
                     let raw = i32::from(event.value);
@@ -931,10 +996,23 @@ impl Bridge {
                     }
                     None
                 }
+                Binding::ToggleColourFx { deck } if rising => state
+                    .decks
+                    .get(usize::from(*deck))
+                    .map(|s| {
+                        let mut state = s.colour_fx;
+                        state.position = 0.5;
+                        state.enabled = false;
+                        Some(Action::Deck {
+                            deck: *deck,
+                            action: DeckAction::SetColourFx { state },
+                        })
+                    })
+                    .flatten(),
                 Binding::ToggleEffect { deck, slot } if rising => {
                     state.decks.get(usize::from(*deck)).map(|s| {
                         let mut effect = s.effects[usize::from(*slot)];
-                        effect.enabled = *slot != 0 && !effect.enabled;
+                        effect.enabled = !effect.enabled;
                         Action::Deck {
                             deck: *deck,
                             action: DeckAction::SetEffect {
@@ -1167,7 +1245,8 @@ impl Bridge {
                                 } else {
                                     half + (target - center) / (max - center) * (full - half)
                                 };
-                                if raw == target_raw.round() {
+                                // A nearby match must not steal the zero detent.
+                                if raw == target_raw.round() && raw != half {
                                     target
                                 } else {
                                     value

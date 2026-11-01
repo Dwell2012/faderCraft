@@ -4,6 +4,33 @@ use djcraft_protocol::{Action, DeckAction, Role, SessionState, TempoFaderRange};
 const PORT: &str = "MixTrack Pro II";
 
 #[test]
+fn physical_center_stays_at_zero_when_nearby_bpm_match_rounds_to_center() {
+    let (mut engine, _) = Engine::headless(48000);
+    for deck in 0..2u8 {
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck,
+                    action: DeckAction::SetTempoRange {
+                        range: TempoFaderRange::Wide,
+                    },
+                },
+            )
+            .unwrap();
+        let mut b = bridge();
+        b.set_tempo_bpms(&[Some(120.), Some(120.4)]);
+        assert_eq!(
+            fader(&mut b, deck, 64, &engine.state()),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::SetTempo { ratio: 1. }
+            }]
+        );
+    }
+}
+
+#[test]
 fn fader_lands_on_opposite_bpm_and_leaves_snap_on_next_step() {
     let (mut engine, _mixer) = Engine::headless(48000);
     let mut state = engine.state();

@@ -64,9 +64,12 @@ pub(crate) struct Jog {
     mode_down: bool,
     active: bool,
     transient: bool,
+    stationary: bool,
     target: Option<f64>,
     last_motion: Option<Instant>,
     motion_interval: f64,
+    last_speed: f64,
+    motor_tail: Option<Instant>,
     track: Option<(Option<String>, String)>,
     bending: bool,
     bend_at: Option<Instant>,
@@ -84,9 +87,12 @@ impl Jog {
             mode_down: false,
             active: false,
             transient: false,
+            stationary: false,
             target: None,
             last_motion: None,
             motion_interval: 0.01,
+            last_speed: 0.,
+            motor_tail: None,
             track: None,
             bending: false,
             bend_at: None,
@@ -121,6 +127,7 @@ impl Jog {
     }
 
     fn grab(&mut self, config: &JogConfig, local: &DeckState) -> Action {
+        self.motor_tail = None;
         self.bending = false;
         self.bend_at = None;
         self.track = Some(Self::identity(local));
@@ -131,6 +138,7 @@ impl Jog {
         );
         self.active = true;
         self.transient = false;
+        self.stationary = false;
         Self::action(
             config.deck,
             DeckAction::ScratchTo {
@@ -152,13 +160,49 @@ impl Jog {
         self.active = false;
         self.contact_release = None;
         self.transient = false;
+        self.stationary = false;
         self.target = None;
         self.last_motion = None;
         self.motion_interval = 0.01;
+        self.last_speed = 0.;
+        actions
+    }
+
+    fn finish_at_audio_head(&mut self, deck: u8, local: &DeckState) -> Vec<Action> {
+        if self.active && local.scratching {
+            // The callback has already rendered this grab. Never reconcile an
+            // accumulated physical target with Seek on release: it may be far
+            // ahead after packet coalescing or the scratch-speed limit.
+            let mut actions = vec![Self::action(deck, DeckAction::HoldJog)];
+            actions.extend(self.finish(deck, false));
+            actions
+        } else {
+            // Preserve tiny touch/move/release bursts completed before any
+            // scratch audio callback, which have no audible motion to retain.
+            self.finish(deck, true)
+        }
+    }
+
+    fn motor_ready(&self, local: &DeckState, now: Instant) -> bool {
+        local.playing
+            && self.last_speed.abs() <= local.tempo
+            && self
+                .contact_release
+                .is_some_and(|last| now.saturating_duration_since(last) >= CONTACT_RELEASE)
+    }
+
+    fn pickup_motor(&mut self, deck: u8, local: &DeckState, now: Instant) -> Vec<Action> {
+        self.touched = false;
+        let tail = self
+            .last_motion
+            .filter(|last| now.saturating_duration_since(*last) < SCRUB_IDLE);
+        let actions = self.finish_at_audio_head(deck, local);
+        self.motor_tail = tail;
         actions
     }
 
     pub(crate) fn cancel(&mut self, deck: u8) -> Vec<Action> {
+        self.motor_tail = None;
         self.touched = false;
         self.contact_release = None;
         self.track = None;
@@ -187,6 +231,9 @@ impl Jog {
         let Some(local) = Self::loaded(config, state) else {
             return self.cancel(config.deck);
         };
+        if !local.playing {
+            self.motor_tail = None;
+        }
         if self
             .track
             .as_ref()
@@ -194,8 +241,17 @@ impl Jog {
         {
             return self.cancel(config.deck);
         }
-        // The last scratch-surface contact owns a still-moving platter. Use
-        // actual wheel packets for free spin; do not invent velocity after idle.
+        if self
+            .motor_tail
+            .is_some_and(|last| now.saturating_duration_since(last) >= SCRUB_IDLE)
+        {
+            self.motor_tail = None;
+        }
+        if self.motor_ready(local, now) {
+            return self.pickup_motor(config.deck, local, now);
+        }
+        // A paused deck has no motor. Retain actual free-spin packets until
+        // idle; do not invent velocity after the wheel stops.
         if self
             .contact_release
             .is_some_and(|last| now.saturating_duration_since(last) >= CONTACT_RELEASE)
@@ -205,7 +261,7 @@ impl Jog {
         {
             self.contact_release = None;
             self.touched = false;
-            return self.finish(config.deck, true);
+            return self.finish_at_audio_head(config.deck, local);
         }
         if self.bending
             && (!local.playing
@@ -221,7 +277,24 @@ impl Jog {
                 .last_motion
                 .is_some_and(|last| now.saturating_duration_since(last) >= SCRUB_IDLE))
         {
-            return self.finish(config.deck, true);
+            return self.finish_at_audio_head(config.deck, local);
+        }
+        if self.active
+            && self.touched
+            && !self.transient
+            && !self.stationary
+            && self.contact_release.is_none()
+            && self
+                .last_motion
+                .is_some_and(|last| now.saturating_duration_since(last) >= SCRUB_IDLE)
+        {
+            // Audio can lag cumulative travel after a long/coalesced fast spin.
+            // Hold the head actually being heard, not a later catch-up target.
+            self.stationary = true;
+            self.target = None;
+            self.last_motion = None;
+            self.motion_interval = 0.01;
+            return vec![Self::action(config.deck, DeckAction::HoldJog)];
         }
         Vec::new()
     }
@@ -243,7 +316,11 @@ impl Jog {
                     if self.contact_release.is_some() {
                         self.touched = false;
                     }
-                    actions.extend(self.finish(config.deck, true));
+                    if let Some(local) = Self::loaded(config, state) {
+                        actions.extend(self.finish_at_audio_head(config.deck, local));
+                    } else {
+                        actions.extend(self.finish(config.deck, false));
+                    }
                 } else if self.touched
                     && let Some(local) = Self::loaded(config, state)
                 {
@@ -288,8 +365,14 @@ impl Jog {
         if ticks == 0 {
             return actions;
         }
+        if self.motor_tail.is_some() && !self.touched {
+            // Trailing inertia packets must not immediately pitch-bend against
+            // the recovered motor. A fresh touch or wheel-idle resets ownership.
+            self.motor_tail = Some(now);
+            return actions;
+        }
         let vinyl = self.enabled && (config.touch.is_none() || self.touched);
-        if vinyl || (!self.enabled && !local.playing) {
+        if vinyl || !local.playing {
             self.bending = false;
             self.bend_at = None;
             let seconds = (self.target.unwrap_or(local.position_seconds)
@@ -298,6 +381,7 @@ impl Jog {
             self.track = Some(Self::identity(local));
             self.target = Some(seconds);
             self.active = true;
+            self.stationary = false;
             self.transient = !vinyl || config.touch.is_none();
             let interval = self
                 .last_motion
@@ -308,6 +392,11 @@ impl Jog {
             self.motion_interval = interval;
             self.last_motion = Some(now);
             let speed = (f64::from(ticks) * config.seconds_per_tick / interval).clamp(-4., 4.);
+            self.last_speed = speed;
+            if self.motor_ready(local, now) {
+                actions.extend(self.pickup_motor(config.deck, local, now));
+                return actions;
+            }
             actions.push(Self::action(
                 config.deck,
                 DeckAction::JogScratch {
