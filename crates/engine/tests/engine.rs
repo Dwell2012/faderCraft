@@ -3144,7 +3144,7 @@ fn sync_reaches_absolute_target_when_key_lock_changes_processing_mode() {
 }
 
 #[test]
-fn processed_trim_updates_playing_deck_and_preserves_manual_override() {
+fn processed_peaks_preserve_track_trim_across_tempo_and_key_lock_changes() {
     use djcraft_protocol::LoudnessInfo;
     let track = Arc::new(Track::from_samples("processed", RATE, sine(440., 4., RATE)));
     track
@@ -3172,7 +3172,7 @@ fn processed_trim_updates_playing_deck_and_preserves_manual_override() {
             }),
         )
         .unwrap();
-    assert!((engine.state().decks[0].trim_db + 5.1).abs() < 0.001);
+    assert!((engine.state().decks[0].trim_db - 0.9).abs() < 0.001);
     engine
         .apply(Role::Host, deck(DeckAction::SetTempo { ratio: 1.08 }))
         .unwrap();
@@ -3203,7 +3203,14 @@ fn processed_trim_updates_playing_deck_and_preserves_manual_override() {
     engine
         .apply(Role::Host, deck(DeckAction::SetAutoTrim { enabled: true }))
         .unwrap();
-    assert!((engine.state().decks[0].trim_db + 8.1).abs() < 0.001);
+    assert!((engine.state().decks[0].trim_db - 0.9).abs() < 0.001);
+    for ratio in [1.0, 0.96, 1.04, 1.0] {
+        engine
+            .apply(Role::Host, deck(DeckAction::SetTempo { ratio }))
+            .unwrap();
+        render(&mut mixer, 0.1);
+        assert!((engine.state().decks[0].trim_db - 0.9).abs() < 0.001);
+    }
     engine
         .apply(Role::Host, deck(DeckAction::SetKeyLock { on: false }))
         .unwrap();
@@ -3753,4 +3760,51 @@ fn eject_clears_loaded_track_and_stops_audio() {
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
     mixer.render(&mut output);
     assert!(output.iter().all(|sample| sample.abs() < 1e-6));
+}
+
+#[test]
+fn returning_tempo_to_zero_does_not_raise_audio_level_after_peak_report() {
+    let (mut engine, mut mixer) = engine_with(sine(440., 12., RATE));
+    engine
+        .track(0)
+        .unwrap()
+        .set_loudness(Some(djcraft_protocol::LoudnessInfo {
+            rms_db: -10.,
+            peak_db: -1.,
+        }))
+        .unwrap();
+    engine.state();
+    for action in [
+        DeckAction::SetKeyLock { on: true },
+        DeckAction::SetTempo { ratio: 1.04 },
+        DeckAction::Play,
+        DeckAction::SetProcessedPeak {
+            ratio: 1.04,
+            peak_db: 5.,
+        },
+    ] {
+        engine.apply(Role::Host, deck(action)).unwrap();
+    }
+    let mut levels = Vec::new();
+    for ratio in [1.04, 1., 0.96, 1.] {
+        engine
+            .apply(Role::Host, deck(DeckAction::SetTempo { ratio }))
+            .unwrap();
+        engine.state();
+        render(&mut mixer, 0.4);
+        let mut energy = 0f64;
+        let mut block = [0.; CALLBACK * 2];
+        for _ in 0..50 {
+            mixer.render(&mut block);
+            energy += block.iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
+        }
+        levels.push(energy.sqrt());
+    }
+    for pair in levels.windows(2) {
+        let db = 20. * (pair[1] / pair[0]).log10();
+        assert!(
+            db.abs() < 0.5,
+            "tempo transition changed level by {db} dB: {levels:?}"
+        );
+    }
 }

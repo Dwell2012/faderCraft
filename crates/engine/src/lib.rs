@@ -89,15 +89,10 @@ struct DeckControl {
 
 impl DeckControl {
     fn loudness(&self) -> Option<djcraft_protocol::LoudnessInfo> {
-        let mut report = self.track.as_ref()?.loudness()??;
-        if self.key_shift == 0. && self.key_lock && (self.tempo - 1.).abs() > 1e-3 {
-            if let Some((ratio, peak)) = self.processed_peak {
-                if ratio == self.tempo {
-                    report.peak_db = peak;
-                }
-            }
-        }
-        Some(report)
+        // Source loudness defines a stable channel level across tempo changes.
+        // Stretcher overshoots are handled by the audio-side peak guard, not
+        // by changing track trim when entering or leaving neutral tempo.
+        self.track.as_ref()?.loudness()?
     }
 }
 
