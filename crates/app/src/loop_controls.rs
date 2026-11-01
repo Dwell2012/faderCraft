@@ -474,6 +474,12 @@ impl Shell {
                             .p_0()
                             .label(size_label)
                             .selected(active)
+                            .when(active, |button| {
+                                button
+                                    .bg(Hsla::from(deck_colour(deck)))
+                                    .border_color(deck_colour(deck))
+                                    .text_color(rgb(0x090b0e))
+                            })
                             .disabled(!loaded || (!active && self.grids[deck].is_none()))
                             .tooltip("Activate or exit the loop; scroll to change its length.")
                             .on_click(
@@ -621,6 +627,12 @@ impl Shell {
                         .p_0()
                         .label(size_label)
                         .selected(active)
+                        .when(active, |button| {
+                            button
+                                .bg(Hsla::from(deck_colour(deck)))
+                                .border_color(deck_colour(deck))
+                                .text_color(rgb(0x090b0e))
+                        })
                         .disabled(!loaded || (!active && self.grids[deck].is_none()))
                         .tooltip("Activate or exit the loop; scroll to change its length.")
                         .on_click(
@@ -693,11 +705,7 @@ impl Shell {
             "{} beats",
             beat_label.trim_end_matches('0').trim_end_matches('.')
         );
-        let colour = if deck == 0 {
-            rgb(0xc8ff38)
-        } else {
-            rgb(0x3864e8)
-        };
+        let colour = deck_colour(deck);
         let progress = state.loop_region.map_or(0., |[a, b]| {
             ((state.position_seconds - a) / (b - a)).clamp(0., 1.) as f32
         });
@@ -789,6 +797,12 @@ impl Shell {
                             .outline()
                             .label(label)
                             .selected(active)
+                            .when(active, |button| {
+                                button
+                                    .bg(Hsla::from(deck_colour(deck)))
+                                    .border_color(deck_colour(deck))
+                                    .text_color(rgb(0x090b0e))
+                            })
                             .disabled(!loaded || (!active && self.grids[deck].is_none()))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.auto_loop(deck, true, cx)),

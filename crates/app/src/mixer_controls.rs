@@ -1,6 +1,42 @@
 use super::*;
 use gpui_kit::component::tooltip::Tooltip;
 
+pub(super) fn smooth_knob_svg(value: f32, neutral: f32, highlight: bool) -> String {
+    let value = (value.clamp(0., 1.) * 1024.).round() / 1024.;
+    let angle = (value - 0.5) * std::f32::consts::PI * 1.5;
+    let at = |radius: f32| (23. + angle.sin() * radius, 23. - angle.cos() * radius);
+    let (x1, y1) = at(3.);
+    let (x2, y2) = at(22.);
+    let (ax, ay) = at(20.);
+    let neutral_angle = (neutral - 0.5) * std::f32::consts::PI * 1.5;
+    let nx = 23. + neutral_angle.sin() * 20.;
+    let ny = 23. - neutral_angle.cos() * 20.;
+    let colour = "#ffffff";
+    let progress = if (value - neutral).abs() > 0.001 {
+        format!(
+            r##"<circle cx="23" cy="23" r="14.3" fill="{colour}" fill-opacity="0.2"/><path d="M{nx:.3} {ny:.3} A20 20 0 {} {} {ax:.3} {ay:.3}" fill="none" stroke="{colour}" stroke-width="2.2" stroke-linecap="round"/>"##,
+            if (angle - neutral_angle).abs() > std::f32::consts::PI {
+                1
+            } else {
+                0
+            },
+            if value > neutral { 1 } else { 0 }
+        )
+    } else {
+        String::new()
+    };
+    let body = if highlight {
+        format!(
+            r##"{progress}<path d="M{x1:.3} {y1:.3} L{x2:.3} {y2:.3}" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>"##
+        )
+    } else {
+        r##"<path d="M8.858 37.142 A20 20 0 1 1 37.142 37.142" fill="none" stroke="#ffffff" stroke-opacity="0.6" stroke-width="1.6" stroke-linecap="round"/><circle cx="23" cy="23" r="15" fill="none" stroke="#ffffff" stroke-width="1.6"/>"##.to_owned()
+    };
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 46 46" shape-rendering="geometricPrecision">{body}</svg>"##
+    )
+}
+
 fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
     canvas(
         |_, _, _| (),
@@ -194,6 +230,94 @@ fn value_label(index: usize, value: f32) -> String {
 }
 
 impl Shell {
+    fn colour_fx_control(&self, deck: usize, cx: &mut Context<Self>) -> Div {
+        let weak = cx.weak_entity();
+        let selector = gpui_kit::component::popover::Popover::new(("colour-fx-select", deck))
+            .overlay_closable(true)
+            .trigger(
+                Button::new(("colour-fx-arrow", deck))
+                    .ghost()
+                    .xsmall()
+                    .w(px(14.))
+                    .h(px(14.))
+                    .p_0()
+                    .label("▾")
+                    .tooltip("Choose one or more Colour FX"),
+            )
+            .content(move |_, _, cx| {
+                let selected = weak
+                    .update(cx, |shell, _| {
+                        shell
+                            .engine
+                            .as_mut()
+                            .map(|engine| engine.state().decks[deck].colour_fx.selected)
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                div().flex().flex_col().gap_2().w(px(190.)).p_2().children(
+                    djcraft_protocol::COLOUR_FX_LABELS
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, label)| {
+                            let weak = weak.clone();
+                            gpui_kit::component::checkbox::Checkbox::new((
+                                "colour-fx-choice",
+                                deck * 7 + index,
+                            ))
+                            .label(label)
+                            .checked(selected & (1 << index) != 0)
+                            .on_click(cx.listener(
+                                move |_, checked: &bool, _, cx| {
+                                    let checked = *checked;
+                                    let _ = weak.update(cx, |shell, cx| {
+                                        if let Some(engine) = &mut shell.engine {
+                                            let mut state = engine.state().decks[deck].colour_fx;
+                                            if checked {
+                                                state.selected |= 1 << index;
+                                            } else {
+                                                state.selected &= !(1 << index);
+                                            }
+                                            shell.send(deck, DeckAction::SetColourFx { state });
+                                        }
+                                        cx.notify();
+                                    });
+                                    cx.notify();
+                                },
+                            ))
+                        }),
+                )
+            });
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(14.))
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(14.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(10.))
+                            .child("CFX"),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right(px(-4.))
+                            .w(px(14.))
+                            .h(px(14.))
+                            .child(selector),
+                    ),
+            )
+            .child(self.mixer_control(41 + deck, "", cx))
+    }
     pub(super) fn master_header_meters(&self) -> Div {
         div()
             .flex()
@@ -467,6 +591,13 @@ impl Shell {
                                     .is_ok()
                             {
                                 this.crossfader_routing = routing;
+                                this.settings.crossfader_routing = routing;
+                                if let Err(error) =
+                                    this.settings.save(&crate::storage::machine_dir())
+                                {
+                                    eprintln!("Could not save crossfader routing: {error}");
+                                }
+                                cx.set_global(this.settings.clone());
                             }
                             cx.notify();
                         }))
@@ -507,16 +638,16 @@ impl Shell {
             }
         } else if index >= 41 {
             let deck = index - 41;
-            let mut effect = self
+            let mut state = self
                 .engine
                 .as_mut()
-                .map(|e| e.state().decks[deck].effects[0])
-                .unwrap_or(djcraft_protocol::default_effects()[0]);
-            effect.parameter = value;
-            effect.amount = 1.;
+                .map(|e| e.state().decks[deck].colour_fx)
+                .unwrap_or_default();
+            state.position = value;
+            state.enabled = true;
             Action::Deck {
                 deck: deck as u8,
-                action: DeckAction::SetEffect { slot: 0, effect },
+                action: DeckAction::SetColourFx { state },
             }
         } else if is_stem(index) {
             let deck = control_deck(index).expect("stem control");
@@ -603,107 +734,7 @@ impl Shell {
                     ));
                 };
                 if knob {
-                    if four_decks {
-                        let radius = 11.;
-                        for step in 0..48 {
-                            let angle = step as f32 / 48. * std::f32::consts::TAU;
-                            rect(
-                                w / 2. + angle.sin() * radius - 1.,
-                                h / 2. - angle.cos() * radius - 1.,
-                                2.,
-                                2.,
-                                rgb(0x646b75),
-                            );
-                        }
-                        let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
-                        for distance in 2..10 {
-                            rect(
-                                w / 2. + angle.sin() * distance as f32 - 1.,
-                                h / 2. - angle.cos() * distance as f32 - 1.,
-                                2.,
-                                2.,
-                                accent,
-                            );
-                        }
-                        rect(w / 2. - 1., 0., 2., 2., rgb(0xbac1ca));
-                    } else {
-                        let at = |radius: f32, angle: f32| {
-                            bounds.origin
-                                + point(
-                                    px(w / 2. + angle.sin() * radius),
-                                    px(h / 2. - angle.cos() * radius),
-                                )
-                        };
-                        let neutral = match index {
-                            10 | 20 => 1.,
-                            21 | 45 => std::f32::consts::FRAC_1_SQRT_2,
-                            22 => 0.,
-                            _ => 0.5,
-                        };
-                        let active = (value - neutral).abs() > 0.001;
-                        let angle = (value.clamp(0., 1.) - 0.5) * std::f32::consts::PI * 1.5;
-                        let neutral_angle = (neutral - 0.5) * std::f32::consts::PI * 1.5;
-                        let mut travel = PathBuilder::stroke(px(1.6));
-                        for step in 0..=72 {
-                            let a = (-0.75 + 1.5 * step as f32 / 72.) * std::f32::consts::PI;
-                            if step == 0 {
-                                travel.move_to(at(20., a));
-                            } else {
-                                travel.line_to(at(20., a));
-                            }
-                        }
-                        if let Ok(path) = travel.build() {
-                            window.paint_path(path, rgb(0x454c55));
-                        }
-                        if active {
-                            let mut fill = PathBuilder::fill();
-                            for step in 0..=72 {
-                                let a = step as f32 / 72. * std::f32::consts::TAU;
-                                if step == 0 {
-                                    fill.move_to(at(14.3, a));
-                                } else {
-                                    fill.line_to(at(14.3, a));
-                                }
-                            }
-                            fill.close();
-                            if let Ok(path) = fill.build() {
-                                window.paint_path(path, Hsla::from(accent).opacity(0.2));
-                            }
-                            let steps = ((angle - neutral_angle).abs() * 24.).ceil() as usize;
-                            let mut progress = PathBuilder::stroke(px(2.2));
-                            for step in 0..=steps.max(2) {
-                                let a = neutral_angle
-                                    + (angle - neutral_angle) * step as f32 / steps.max(2) as f32;
-                                if step == 0 {
-                                    progress.move_to(at(20., a));
-                                } else {
-                                    progress.line_to(at(20., a));
-                                }
-                            }
-                            if let Ok(path) = progress.build() {
-                                window.paint_path(path, accent);
-                            }
-                        }
-                        let mut outline = PathBuilder::stroke(px(1.6));
-                        for step in 0..=72 {
-                            let a = step as f32 / 72. * std::f32::consts::TAU;
-                            if step == 0 {
-                                outline.move_to(at(15., a));
-                            } else {
-                                outline.line_to(at(15., a));
-                            }
-                        }
-                        outline.close();
-                        if let Ok(path) = outline.build() {
-                            window.paint_path(path, rgb(0x727a83));
-                        }
-                        let mut pointer = PathBuilder::stroke(px(2.));
-                        pointer.move_to(at(3., angle));
-                        pointer.line_to(at(22., angle));
-                        if let Ok(path) = pointer.build() {
-                            window.paint_path(path, accent);
-                        }
-                    }
+                    // SVG layers render knobs; this canvas retains interaction bounds.
                 } else if horizontal {
                     rect(8., h / 2. - 2., w - 16., 4., rgb(0x303640));
                     if four_decks {
@@ -757,6 +788,54 @@ impl Shell {
             this.flex_1()
                 .min_h(px(if self.settings.four_decks { 48. } else { 80. }))
         });
+        let drawing = if knob {
+            let neutral = match index {
+                10 | 20 => 1.,
+                21 | 45 => std::f32::consts::FRAC_1_SQRT_2,
+                22 => 0.,
+                _ => 0.5,
+            };
+            let base = smooth_knob_svg(value, neutral, false);
+            let highlight = smooth_knob_svg(value, neutral, true);
+            let diameter = if four_decks { 22. } else { 46. };
+            div()
+                .relative()
+                .w_full()
+                .h(px(diameter))
+                .child(drawing)
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .relative()
+                                .w(px(diameter))
+                                .h(px(diameter))
+                                .child(
+                                    gpui_kit::component::Icon::default()
+                                        .data(base.as_bytes())
+                                        .text_color(rgb(0x727a83))
+                                        .size_full(),
+                                )
+                                .child(
+                                    div().absolute().top_0().left_0().size_full().child(
+                                        gpui_kit::component::Icon::default()
+                                            .data(highlight.as_bytes())
+                                            .text_color(accent)
+                                            .size_full(),
+                                    ),
+                                ),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            drawing.into_any_element()
+        };
         div()
             .id(("mixer-control", index))
             .when(opposite_deck_control(index).is_some(), |control| {
@@ -775,7 +854,7 @@ impl Shell {
                     _ => "Cue / master blend: centre is both at full volume; either end fades out the opposite source. Double-click resets to cue only.",
                 }).build(window, cx)
             }))
-            .when((41..=44).contains(&index), |control| control.tooltip(|window, cx| Tooltip::new("Always-on FX slot 1 filter. Left: low-pass; right: high-pass. Double-click for neutral. Resonance is in FX settings.").build(window, cx)))
+            .when((41..=44).contains(&index), |control| control.tooltip(|window, cx| Tooltip::new("Colour FX macro: use the arrow to combine effects and noise generators. Centre is neutral; double-click to centre. Filter sweeps low-pass left and high-pass right.").build(window, cx)))
             .when(index == 45, |control| control.tooltip(|window, cx| Tooltip::new("Microphone input is not yet routed to the audio engine.").build(window, cx)))
             .when(!enabled, |this| this.opacity(0.35))
             .when(!knob && !horizontal, |this| this.h_full().min_h_0())
@@ -783,7 +862,7 @@ impl Shell {
             .flex_col()
             .items_center()
             .w_full()
-            .child(
+            .when(!label.is_empty(), |control| control.child(
                 div()
                     .w_full()
                     .text_center()
@@ -800,7 +879,7 @@ impl Shell {
                         let show_value = self.mixer_last_change[index].is_some_and(|at| at.elapsed().as_secs_f32() < 2.);
                         label_box.child(if show_value { value_label(index, value) } else { label.to_owned() })
                     }),
-            )
+            ))
             .child(drawing)
             .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
                 if !enabled {
@@ -1004,7 +1083,7 @@ impl Shell {
                     }
                 })
                 .when(self.settings.four_decks, |column| {
-                    column.child(self.mixer_control(41 + deck, "FILTER", cx))
+                    column.child(self.colour_fx_control(deck, cx))
                 })
         };
         if self.settings.four_decks {
@@ -1143,6 +1222,13 @@ impl Shell {
                                             },
                                         );
                                     }
+                                    this.settings.crossfader_curve = curve;
+                                    if let Err(error) =
+                                        this.settings.save(&crate::storage::machine_dir())
+                                    {
+                                        eprintln!("Could not save crossfader curve: {error}");
+                                    }
+                                    cx.set_global(this.settings.clone());
                                     cx.notify();
                                 }))
                         })
@@ -1211,7 +1297,7 @@ impl Shell {
                             .justify_center()
                             .p(px(4.))
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .child(self.mixer_control(41, "FILTER", cx)),
+                            .child(self.colour_fx_control(0, cx)),
                     )
                     .child(
                         div()
@@ -1233,7 +1319,7 @@ impl Shell {
                             .justify_center()
                             .p(px(4.))
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .child(self.mixer_control(42, "FILTER", cx)),
+                            .child(self.colour_fx_control(1, cx)),
                     ),
             );
         panel.child(content)

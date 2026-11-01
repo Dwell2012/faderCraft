@@ -105,17 +105,22 @@ fn detail_help(kind: Kind) -> &'static str {
     }
 }
 impl Shell {
-    fn shared_effect_beats(&self, deck: usize, beats: f32, cx: &mut Context<Self>) -> AnyElement {
+    fn effect_slot_disabled(&self, deck: usize, slot: usize) -> bool {
+        self.settings.controller_fx1_colour
+            && slot == 0
+            && self
+                .controllers
+                .as_ref()
+                .is_some_and(|controller| controller.fx1_routes_colour(deck))
+    }
+    fn effect_timing_options(&self, deck: usize, beats: f32, cx: &mut Context<Self>) -> AnyElement {
         let weak = cx.entity().downgrade();
-        let label = BEATS
-            .iter()
-            .position(|value| (*value - beats).abs() < 0.001)
-            .map_or_else(|| beats.to_string(), |i| BEAT_LABELS[i].to_owned());
-        Button::new(("fx-shared-beats", deck))
+        Button::new(("fx-timing-options", deck))
             .xsmall()
-            .outline()
-            .label(format!("FX beats: {label} ▾"))
-            .tooltip("Shared beat timing for every synced effect on this deck.")
+            .ghost()
+            .icon(IconName::Settings)
+            .dropdown_caret(false)
+            .tooltip("Effect timing options: shared beats for this deck.")
             .dropdown_menu(move |mut menu, _, _| {
                 for (value, label) in BEATS.into_iter().zip(BEAT_LABELS) {
                     let weak = weak.clone();
@@ -141,6 +146,9 @@ impl Shell {
         change: impl FnOnce(&mut EffectState),
         cx: &mut Context<Self>,
     ) {
+        if self.effect_slot_disabled(deck, slot) {
+            return;
+        }
         if let Some(engine) = self.engine.as_mut() {
             let mut effect = engine.state().decks[deck].effects[slot];
             let previous_beats = effect.beats;
@@ -187,9 +195,15 @@ impl Shell {
         slot: usize,
         parameter: u8,
         fx: EffectState,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let accent = deck_colour(deck);
+        let disabled = self.effect_slot_disabled(deck, slot);
+        let accent = if disabled {
+            rgb(0x727a83)
+        } else {
+            deck_colour(deck)
+        };
         let synced = parameter == 1 && fx.sync && fx.kind.timed() && self.grids[deck].is_some();
         let v = if synced {
             BEATS
@@ -200,49 +214,55 @@ impl Shell {
         } else {
             value(fx, parameter)
         };
+        let knob_base = mixer_controls::smooth_knob_svg(v, 0.5, false);
+        let knob_highlight = mixer_controls::smooth_knob_svg(v, 0.5, true);
         div()
             .id(("fx-dial", deck * 100 + slot * 10 + parameter as usize))
             .flex()
             .flex_col()
             .items_center()
-            .w(px(91.))
-            .cursor_pointer()
+            .w(px(if compact { 28. } else { 91. }))
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(parameter_label(fx, parameter))
+                    .build(window, cx)
+            })
+            .when(!disabled, |dial| dial.cursor_pointer())
             .child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, _, window, _| {
-                        let mid =
-                            bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
-                        let mut dot = |x: f32, y: f32, colour| {
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    mid + point(px(x - 1.), px(y - 1.)),
-                                    size(px(2.), px(2.)),
-                                ),
-                                colour,
-                            ))
-                        };
-                        for step in 0..48 {
-                            let a = step as f32 / 48. * std::f32::consts::TAU;
-                            dot(a.sin() * 12., -a.cos() * 12., rgb(0x646b75));
-                        }
-                        let a = (v - 0.5) * std::f32::consts::PI * 1.5;
-                        for r in 2..11 {
-                            dot(a.sin() * r as f32, -a.cos() * r as f32, accent);
-                        }
-                    },
-                )
-                .w(px(30.))
-                .h(px(30.)),
+                div()
+                    .relative()
+                    .w(px(30.))
+                    .h(px(30.))
+                    .when(compact, |dial| dial.w(px(24.)).h(px(24.)))
+                    .child(
+                        gpui_kit::component::Icon::default()
+                            .data(knob_base.as_bytes())
+                            .text_color(rgb(0x727a83))
+                            .w_full()
+                            .h_full(),
+                    )
+                    .child(
+                        div().absolute().top_0().left_0().size_full().child(
+                            gpui_kit::component::Icon::default()
+                                .data(knob_highlight.as_bytes())
+                                .text_color(accent)
+                                .w_full()
+                                .h_full(),
+                        ),
+                    ),
             )
-            .child(div().text_size(px(10.)).child(parameter_label(
-                EffectState {
-                    sync: fx.sync && self.grids[deck].is_some(),
-                    ..fx
-                },
-                parameter,
-            )))
+            .when(!compact, |dial| {
+                dial.child(div().text_size(px(10.)).child(parameter_label(
+                    EffectState {
+                        sync: fx.sync && self.grids[deck].is_some(),
+                        ..fx
+                    },
+                    parameter,
+                )))
+            })
             .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                if this.effect_slot_disabled(deck, slot) {
+                    return;
+                }
                 let step = crate::wheel::steps(event);
                 this.update_effect(
                     deck,
@@ -273,6 +293,9 @@ impl Shell {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if this.effect_slot_disabled(deck, slot) {
+                        return;
+                    }
                     if event.click_count == 2 {
                         this.effect_drag = None;
                         this.update_effect(
@@ -307,7 +330,10 @@ impl Shell {
     ) -> AnyElement {
         let weak = cx.entity().downgrade();
         let accent = deck_colour(deck);
+        let compact = dials == 1;
+        let disabled = self.effect_slot_disabled(deck, slot);
         let mut row = div()
+            .opacity(if disabled { 0.5 } else { 1. })
             .flex()
             .items_center()
             .gap_1()
@@ -318,71 +344,145 @@ impl Shell {
                 accent.into()
             } else {
                 cx.theme().border
+            })
+            .when(compact, |row| {
+                row.h(px(28.))
+                    .p_0()
+                    .gap(px(2.))
+                    .border_color(cx.theme().border.opacity(0.))
             });
         let selector = div()
             .flex()
             .flex_1()
             .min_w_0()
             .items_center()
-            .gap_1()
+            .gap(px(2.))
             .child(
-                Button::new(("fx-toggle", deck * 6 + slot))
-                    .small()
-                    .outline()
-                    .flex_1()
-                    .min_w_0()
-                    .selected(fx.active_in_slot(slot))
-                    .tooltip(if slot == 0 {
-                        "Reset the mixer filter to neutral (OFF)."
-                    } else {
-                        "Enable or bypass this effect."
-                    })
-                    .label(format!("{} · {}", slot + 1, fx.kind.label()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.update_effect(deck, slot, |fx| fx.enabled = !fx.enabled, cx);
-                    })),
+                div().flex_1().min_w_0().child(
+                    Button::new(("fx-toggle", deck * 6 + slot))
+                        .disabled(disabled)
+                        .small()
+                        .outline()
+                        .flex_1()
+                        .min_w_0()
+                        .when(compact, |button| {
+                            button
+                                .w_full()
+                                .h(px(28.))
+                                .p_0()
+                                .rounded(ButtonRounded::None)
+                                .bg(cx.theme().secondary.opacity(0.4))
+                        })
+                        .selected(fx.active_in_slot(slot))
+                        .when(compact && fx.active_in_slot(slot), |button| {
+                            button
+                                .bg(Hsla::from(accent))
+                                .border_color(accent)
+                                .text_color(rgb(0x090b0e))
+                        })
+                        .tooltip("Enable or bypass this effect.")
+                        .child(
+                            div()
+                                .flex()
+                                .items_baseline()
+                                .justify_center()
+                                .gap(px(3.))
+                                .min_w_0()
+                                .child(if compact {
+                                    fx.kind.label().to_owned()
+                                } else {
+                                    format!("{} · {}", slot + 1, fx.kind.label())
+                                })
+                                .when(
+                                    fx.kind.timed() && fx.sync && self.grids[deck].is_some(),
+                                    |label| {
+                                        let beats = BEATS
+                                            .iter()
+                                            .position(|b| (*b - fx.beats).abs() < 0.001)
+                                            .map(|i| BEAT_LABELS[i].to_owned())
+                                            .unwrap_or_else(|| format!("{}", fx.beats));
+                                        label.child(
+                                            div()
+                                                .text_size(px(9.))
+                                                .text_color(if compact && fx.active_in_slot(slot) {
+                                                    rgb(0x343a40)
+                                                } else {
+                                                    rgb(0x777e88)
+                                                })
+                                                .child(format!(
+                                                    "({beats} {})",
+                                                    if fx.beats <= 1. { "beat" } else { "beats" }
+                                                )),
+                                        )
+                                    },
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.update_effect(deck, slot, |fx| fx.enabled = !fx.enabled, cx);
+                        })),
+                ),
             )
             .child(
-                Button::new(("fx-select", deck * 6 + slot))
-                    .disabled(slot == 0)
-                    .tooltip("Choose the effect for this slot.")
-                    .xsmall()
-                    .outline()
-                    .label("▾")
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for kind in Kind::ALL {
-                            let weak = weak.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(kind.label())
-                                    .checked(kind == fx.kind)
-                                    .on_click(move |_, _, cx| {
-                                        let _ = weak.update(cx, |this, cx| {
-                                            this.update_effect(
-                                                deck,
-                                                slot,
-                                                |fx| {
-                                                    *fx = EffectState {
-                                                        kind,
-                                                        enabled: fx.enabled,
-                                                        beats: fx.beats,
-                                                        ..EffectState::default()
-                                                    };
-                                                },
-                                                cx,
-                                            )
-                                        });
-                                    }),
-                            );
-                        }
-                        menu
-                    }),
+                div().min_w_0().flex_shrink_0().child(
+                    Button::new(("fx-select", deck * 6 + slot))
+                        .disabled(disabled)
+                        .tooltip("Choose the effect for this slot.")
+                        .xsmall()
+                        .outline()
+                        .label("▾")
+                        .when(compact, |button| {
+                            button
+                                .w(px(28.))
+                                .min_w_0()
+                                .h(px(28.))
+                                .px_1()
+                                .rounded(ButtonRounded::None)
+                                .bg(cx.theme().secondary.opacity(0.4))
+                        })
+                        .dropdown_menu(move |mut menu, _, _| {
+                            for kind in Kind::ALL {
+                                let weak = weak.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(kind.label())
+                                        .checked(kind == fx.kind)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = weak.update(cx, |this, cx| {
+                                                this.update_effect(
+                                                    deck,
+                                                    slot,
+                                                    |fx| {
+                                                        *fx = EffectState {
+                                                            kind,
+                                                            enabled: fx.enabled,
+                                                            beats: fx.beats,
+                                                            ..EffectState::default()
+                                                        };
+                                                    },
+                                                    cx,
+                                                )
+                                            });
+                                        }),
+                                );
+                            }
+                            menu
+                        }),
+                ),
             )
-            .when(dials == 0, |selector| {
+            .when(dials == 0 || compact, |selector| {
                 selector.child(
                     Button::new(("fx-details", deck * 6 + slot))
+                        .disabled(disabled)
                         .tooltip("Show or hide this effect’s detailed controls.")
                         .xsmall()
                         .outline()
+                        .when(compact, |button| {
+                            button
+                                .rounded(ButtonRounded::None)
+                                .w(px(28.))
+                                .h(px(28.))
+                                .p_0()
+                                .bg(cx.theme().secondary.opacity(0.4))
+                        })
                         .label("…")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.effect_details[deck] = if this.effect_details[deck] == Some(slot) {
@@ -395,6 +495,23 @@ impl Shell {
                 )
             });
         row = row.child(selector);
+        if compact {
+            return row
+                .child(
+                    div()
+                        .w(px(36.))
+                        .h(px(28.))
+                        .flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .justify_center()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().secondary.opacity(0.4))
+                        .child(self.effect_dial(deck, slot, 0, fx, true, cx)),
+                )
+                .into_any_element();
+        }
         let dials = if dials == 0 {
             0
         } else if fx.kind == Kind::Filter || (fx.kind.feedback_control() && fx.kind != Kind::Delay)
@@ -415,7 +532,8 @@ impl Shell {
             if parameter == 1 && fx.kind.timed() && fx.sync {
                 continue;
             }
-            parameters = parameters.child(self.effect_dial(deck, slot, parameter as u8, fx, cx));
+            parameters =
+                parameters.child(self.effect_dial(deck, slot, parameter as u8, fx, false, cx));
         }
         if dials > 0 {
             let mut options = div().flex().flex_col().gap_1();
@@ -464,6 +582,12 @@ impl Shell {
             .border_1()
             .border_color(cx.theme().border)
             .rounded_md();
+        if view == 0 {
+            panel = panel
+                .p_0()
+                .gap(px(2.))
+                .border_color(cx.theme().border.opacity(0.));
+        }
         let mut header = div()
             .flex()
             .items_center()
@@ -520,6 +644,7 @@ impl Shell {
             for slot in 0..EFFECT_SLOTS {
                 header = header.child(
                     Button::new(("fx-focus", deck * 6 + slot))
+                        .disabled(self.effect_slot_disabled(deck, slot))
                         .tooltip("Select this effect slot.")
                         .xsmall()
                         .outline()
@@ -535,8 +660,12 @@ impl Shell {
                 );
             }
         }
-        header = header.child(self.shared_effect_beats(deck, state.effect_beats, cx));
-        panel = panel.child(header);
+        if self.settings.four_decks {
+            header = header.child(self.effect_timing_options(deck, state.effect_beats, cx));
+        }
+        if view != 0 || self.settings.four_decks {
+            panel = panel.child(header);
+        }
         match view {
             1 => {
                 panel =
@@ -578,6 +707,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let slot = self.effect_details[deck]?;
+        if self.effect_slot_disabled(deck, slot) {
+            return None;
+        }
         let fx = state.effects[slot];
         let mut details = div()
             .flex()
@@ -617,14 +749,14 @@ impl Shell {
                 .id(("fx-expanded", deck))
                 .flex()
                 .flex_wrap()
-                .child(self.effect_dial(deck, slot, 0, fx, cx))
+                .child(self.effect_dial(deck, slot, 0, fx, false, cx))
                 .when(!(fx.kind.timed() && fx.sync), |row| {
-                    row.child(self.effect_dial(deck, slot, 1, fx, cx))
+                    row.child(self.effect_dial(deck, slot, 1, fx, false, cx))
                 })
                 .when(
                     fx.kind == Kind::Filter
                         || (fx.kind.feedback_control() && fx.kind != Kind::Delay),
-                    |row| row.child(self.effect_dial(deck, slot, 2, fx, cx)),
+                    |row| row.child(self.effect_dial(deck, slot, 2, fx, false, cx)),
                 ),
         );
         details = details.child(controls);

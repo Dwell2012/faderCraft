@@ -355,7 +355,7 @@ impl Shell {
             .dropdown_caret(false);
         let cog = match kind {
             0 => {
-                let beats = state.effects[0].beats;
+                let beats = state.effect_beats;
                 cog.dropdown_menu(move |mut menu, _, _| {
                     for (value, label) in djcraft_protocol::EFFECT_BEATS
                         .into_iter()
@@ -765,6 +765,7 @@ impl Shell {
                                     .flex_1()
                                     .min_h_0()
                                     .gap(px(4.))
+                                    .when(index % 2 == 1, |row| row.flex_row_reverse())
                                     .child(
                                         div()
                                             .flex_1()
@@ -772,6 +773,7 @@ impl Shell {
                                             .h_full()
                                             .flex()
                                             .bg(cx.theme().secondary.opacity(0.5))
+                                            .when(index % 2 == 1, |row| row.flex_row_reverse())
                                             .child(self.tool_side_rail(index, 0, state, cx))
                                             .child(
                                                 div()
@@ -780,13 +782,15 @@ impl Shell {
                                                     .min_w_0()
                                                     .h_full()
                                                     .overflow_y_scroll()
-                                                    .p(px(4.))
+                                                    .px(px(4.))
+                                                    .py(px(2.))
                                                     .child(self.effect_panel(index, state, cx)),
                                             ),
                                     )
                                     .child(
                                         div()
-                                            .flex_1()
+                                            .w(px(166.))
+                                            .flex_shrink_0()
                                             .min_w_0()
                                             .h_full()
                                             .bg(cx.theme().secondary.opacity(0.5)),
@@ -798,6 +802,7 @@ impl Shell {
                                     .flex_1()
                                     .min_h_0()
                                     .gap(px(4.))
+                                    .when(index % 2 == 1, |row| row.flex_row_reverse())
                                     .child(
                                         div()
                                             .flex_1()
@@ -805,6 +810,7 @@ impl Shell {
                                             .h_full()
                                             .flex()
                                             .bg(cx.theme().secondary.opacity(0.5))
+                                            .when(index % 2 == 1, |row| row.flex_row_reverse())
                                             .child(self.tool_side_rail(index, 1, state, cx))
                                             .child(
                                                 div()
@@ -813,7 +819,8 @@ impl Shell {
                                                     .min_w_0()
                                                     .h_full()
                                                     .overflow_y_scroll()
-                                                    .pl(px(4.))
+                                                    .when(index % 2 == 0, |cell| cell.pl(px(4.)))
+                                                    .when(index % 2 == 1, |cell| cell.pr(px(4.)))
                                                     .child(self.pad_panel(index, state, false, cx)),
                                             ),
                                     )
@@ -825,6 +832,7 @@ impl Shell {
                                             .h_full()
                                             .flex()
                                             .bg(cx.theme().secondary.opacity(0.5))
+                                            .when(index % 2 == 1, |row| row.flex_row_reverse())
                                             .child(self.tool_side_rail(index, 2, state, cx))
                                             .child(
                                                 div()
@@ -833,7 +841,8 @@ impl Shell {
                                                     .min_w_0()
                                                     .h_full()
                                                     .overflow_y_scroll()
-                                                    .pl(px(4.))
+                                                    .when(index % 2 == 0, |cell| cell.pl(px(4.)))
+                                                    .when(index % 2 == 1, |cell| cell.pr(px(4.)))
                                                     .child(if self.loop_view[index] == 2 {
                                                         self.compact_direct_loop_panel(
                                                             index, state, cx,
