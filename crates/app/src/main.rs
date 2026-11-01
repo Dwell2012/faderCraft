@@ -7,6 +7,7 @@ mod lookup_view;
 mod loop_store;
 mod organise_view;
 mod pad_store;
+mod performance_settings;
 mod preparation;
 mod settings;
 mod settings_view;

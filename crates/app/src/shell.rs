@@ -23,6 +23,8 @@ mod pad_controls;
 mod preparation_controls;
 #[path = "pro_layout.rs"]
 mod pro_layout;
+#[path = "sampler_controls.rs"]
+mod sampler_controls;
 #[path = "stem_controls.rs"]
 mod stem_controls;
 #[path = "suggestion_controls.rs"]
@@ -186,6 +188,8 @@ pub struct Shell {
     /// The track browser under the decks.
     browser: Entity<LibraryView>,
     settings: Settings,
+    performance_settings: crate::performance_settings::PerformanceSettings,
+    performance_dirty: Option<std::time::Instant>,
     /// The settings dialog, while it is open.
     settings_view: Option<Entity<SettingsView>>,
     /// Set when the dialog has just opened and should take keyboard focus.
@@ -226,6 +230,7 @@ pub struct Shell {
     deck_eq_modes: [EqMode; DECKS],
     stem_tracks: [Option<std::sync::Arc<djcraft_engine::Track>>; DECKS],
     stem_busy: [bool; DECKS],
+    library_stem_jobs: std::collections::HashSet<PathBuf>,
     stem_progress: [std::sync::Arc<std::sync::atomic::AtomicU8>; DECKS],
     stem_status: [String; DECKS],
     wheel_scrub: Option<(usize, f64, bool, Instant)>,
@@ -251,6 +256,10 @@ pub struct Shell {
     loop_view: [usize; DECKS],
     saved_loops_deck: Option<usize>,
     library_side_tab: usize,
+    sampler_state: djcraft_protocol::SamplerState,
+    sampler_ui: sampler_controls::SamplerUi,
+    sampler_list: bool,
+    sampler_slot: usize,
     loop_last: [Option<[f64; 2]>; DECKS],
     loudness_tracks: [Option<(Arc<Track>, f64, bool)>; DECKS],
     preparations: crate::preparation::Preparations,
@@ -265,6 +274,42 @@ pub struct Shell {
 }
 
 impl Shell {
+    fn capture_performance_settings(&mut self) -> bool {
+        let state = self.engine.as_mut().map(|engine| engine.state());
+        let modes = self
+            .controllers
+            .as_ref()
+            .map(|controllers| controllers.scratch_modes());
+        let mut changed = self.performance_settings.capture(state.as_ref(), modes);
+        for (deck, pads) in self.pads.iter().enumerate() {
+            changed |= self.performance_settings.cue_quantize[deck] != pads.quantize
+                || self.performance_settings.cue_quantize_window[deck] != pads.quantize_window;
+            self.performance_settings.cue_quantize[deck] = pads.quantize;
+            self.performance_settings.cue_quantize_window[deck] = pads.quantize_window;
+        }
+        changed
+    }
+
+    fn persist_performance_settings(&mut self) {
+        if self.capture_performance_settings() {
+            self.performance_dirty = Some(std::time::Instant::now());
+        }
+        if self
+            .performance_dirty
+            .is_some_and(|changed| changed.elapsed().as_millis() >= 250)
+        {
+            match self
+                .performance_settings
+                .save(&crate::storage::machine_dir())
+            {
+                Ok(()) => self.performance_dirty = None,
+                Err(error) => {
+                    eprintln!("Could not save deck setup: {error}");
+                    self.performance_dirty = Some(std::time::Instant::now());
+                }
+            }
+        }
+    }
     fn has_stem_waveforms(&self) -> bool {
         (0..self.visible_decks()).any(|deck| {
             self.stem_waveforms[deck]
@@ -326,8 +371,21 @@ impl Shell {
         if tracks.len() > 2 {
             settings.four_decks = true;
         }
+        let performance_settings =
+            crate::performance_settings::PerformanceSettings::load(&crate::storage::machine_dir());
         let (engine, engine_error) = match crate::settings::open_audio(&settings) {
             Ok(mut engine) => {
+                performance_settings.apply_effects(&mut engine);
+                for action in [
+                    MixerAction::SetCrossfaderCurve {
+                        curve: settings.crossfader_curve,
+                    },
+                    MixerAction::SetCrossfaderRouting {
+                        routing: settings.crossfader_routing,
+                    },
+                ] {
+                    let _ = engine.apply(Role::Host, Action::Mixer { action });
+                }
                 for deck in 0..DECKS {
                     let _ = engine.apply(
                         Role::Host,
@@ -367,6 +425,7 @@ impl Shell {
                 cx.notify();
             }
             LibraryEvent::Queue(tracks) => this.enqueue_automix(tracks.clone(), cx),
+            LibraryEvent::SeparateStems { path } => this.prepare_library_stems(path.clone(), cx),
             LibraryEvent::Load { path, deck, .. } => {
                 this.load_from_library(path, *deck, cx);
                 this.refresh_grids(cx);
@@ -390,6 +449,7 @@ impl Shell {
                 cx.notify();
             }
             LibraryEvent::Queue(tracks) => this.enqueue_automix(tracks.clone(), cx),
+            LibraryEvent::SeparateStems { path } => this.prepare_library_stems(path.clone(), cx),
             LibraryEvent::Load { path, deck, .. } => {
                 this.load_from_library(path, *deck, cx);
                 this.refresh_grids(cx);
@@ -410,6 +470,12 @@ impl Shell {
                 view.set_hidden_columns(&settings.hidden_columns, cx)
             });
         }
+        let pads = std::array::from_fn(|deck| {
+            let mut pads = pad_controls::Pads::default();
+            pads.quantize = performance_settings.cue_quantize[deck];
+            pads.quantize_window = performance_settings.cue_quantize_window[deck];
+            pads
+        });
         let mut shell = Self {
             stems_starting: !quick,
             automix: Default::default(),
@@ -426,9 +492,13 @@ impl Shell {
             browser,
             settings: settings.clone(),
             settings_view: None,
+            performance_dirty: None,
             focus_settings: false,
             engine,
-            controllers: match crate::controllers::Controllers::load(&settings) {
+            controllers: match crate::controllers::Controllers::load(
+                &settings,
+                &performance_settings.scratch_modes,
+            ) {
                 Ok(controllers) => controllers,
                 Err(error) => {
                     eprintln!("Controller setup: {error}");
@@ -436,6 +506,7 @@ impl Shell {
                 }
             },
             engine_error,
+            performance_settings,
             deck_focus: cx.focus_handle(),
             active_deck: 0,
             monitor: Default::default(),
@@ -477,6 +548,7 @@ impl Shell {
             deck_eq_modes: [EqMode::Classic; DECKS],
             stem_tracks: std::array::from_fn(|_| None),
             stem_busy: [false; DECKS],
+            library_stem_jobs: Default::default(),
             stem_progress: std::array::from_fn(|_| {
                 std::sync::Arc::new(std::sync::atomic::AtomicU8::new(254))
             }),
@@ -485,7 +557,7 @@ impl Shell {
             tempo_returns: [None; DECKS],
             last_loaded: None,
             pending_load: None,
-            pads: std::array::from_fn(|_| pad_controls::Pads::default()),
+            pads,
             pad_cues: crate::pad_store::load(&data_dir()),
             cue_appearances: crate::pad_store::load_appearances(&data_dir()),
             pad_tracks: std::array::from_fn(|_| None),
@@ -503,6 +575,10 @@ impl Shell {
             loop_view: [0; DECKS],
             saved_loops_deck: None,
             library_side_tab: 0,
+            sampler_state: Default::default(),
+            sampler_ui: Default::default(),
+            sampler_list: false,
+            sampler_slot: 0,
             loop_last: [None; DECKS],
             loudness_tracks: std::array::from_fn(|_| None),
             preparations: crate::preparation::load(&data_dir()),
@@ -561,6 +637,7 @@ impl Shell {
                     .update(cx, |this, cx| {
                         let was_enabled = this.automix.enabled;
                         let mut visuals_moving = false;
+                        let mut sampler_changed = false;
                         if let Some(engine) = &mut this.engine {
                             let state = engine.state();
                             visuals_moving = state.decks.iter().any(|deck| {
@@ -569,14 +646,18 @@ impl Shell {
                                     || deck.effect_tail
                                     || deck.track.as_ref().is_some_and(|track| !track.fully_loaded)
                             });
+                            sampler_changed = this.sampler_state != state.sampler;
+                            this.sampler_state = state.sampler;
                             this.automix = state.automix;
                         }
                         this.ensure_loudness(cx);
+                        this.persist_performance_settings();
                         this.persist_automix();
                         // A command's immediate repaint can precede audio-thread
                         // acknowledgement. Bootstrap animation from authoritative
                         // state even when that first frame still saw a stopped deck.
                         if (visuals_moving && this.last_frame.elapsed().as_millis() >= 50)
+                            || sampler_changed
                             || was_enabled
                             || this.automix.enabled
                         {
@@ -711,8 +792,9 @@ impl Shell {
         cx.subscribe(&view, |this, view, event: &SettingsEvent, cx| {
             match event {
                 SettingsEvent::Changed(settings) | SettingsEvent::MappingSelected(settings) => {
-                    if matches!(event, SettingsEvent::MappingSelected(_)) || this.settings.controller_mapping != settings.controller_mapping {
-                        match crate::controllers::Controllers::load(settings) {
+                    if matches!(event, SettingsEvent::MappingSelected(_)) || this.settings.controller_mapping != settings.controller_mapping || this.settings.controller_fx1_colour != settings.controller_fx1_colour {
+                        this.persist_performance_settings();
+                        match crate::controllers::Controllers::load(settings, &this.performance_settings.scratch_modes) {
                             Ok(mut next) => {
                                 if let Some(mut old) = this.controllers.take() {
                                     for action in old.release_all() { this.controller_action(action, cx); }
@@ -725,6 +807,14 @@ impl Shell {
                                 view.update(cx, |view, cx| view.controller_notice(error, cx));
                                 return;
                             }
+                        }
+                    }
+                    if let Some(engine) = &mut this.engine {
+                        if this.settings.crossfader_curve != settings.crossfader_curve {
+                            let _ = engine.apply(Role::Host, Action::Mixer { action: MixerAction::SetCrossfaderCurve { curve: settings.crossfader_curve } });
+                        }
+                        if this.settings.crossfader_routing != settings.crossfader_routing {
+                            let _ = engine.apply(Role::Host, Action::Mixer { action: MixerAction::SetCrossfaderRouting { routing: settings.crossfader_routing } });
                         }
                     }
                     this.settings = settings.clone();
@@ -1133,6 +1223,8 @@ impl Shell {
                 self.cue_anchor[deck] = cue_anchor;
                 self.active_deck = deck;
                 self.focus_loaded_deck = true;
+                self.stem_busy[deck] = false;
+                self.stem_status[deck].clear();
             }
             Err(reason) => eprintln!("action rejected: {reason:?}"),
             Ok(()) => {
@@ -1149,8 +1241,11 @@ impl Shell {
             return;
         };
         let previous_prompt = controllers.pending_connection();
+        let previous_status = self.stems_starting.then(|| controllers.connection_status());
         let batches = controllers.drain();
-        if previous_prompt != controllers.pending_connection() {
+        if previous_prompt != controllers.pending_connection()
+            || previous_status.is_some_and(|previous| previous != controllers.connection_status())
+        {
             cx.notify();
         }
         controllers.set_tempo_bpms(
@@ -1173,7 +1268,13 @@ impl Shell {
                     break;
                 };
                 let state = engine.state();
-                for action in controllers.process(&port, event, &state) {
+                let actions = controllers.process(&port, event, &state);
+                for (deck, mode) in controllers.take_pad_modes().into_iter().enumerate() {
+                    if let Some(mode) = mode {
+                        self.follow_controller_pad_mode(deck, mode, cx);
+                    }
+                }
+                for action in actions {
                     for action in jog_batch.push(action) {
                         self.controller_action(action, cx);
                     }
@@ -1954,6 +2055,39 @@ impl Shell {
                                     !self.settings.four_decks,
                                 ))
                             })
+                            .when(self.stem_busy[index], |overview| {
+                                let progress = self.stem_progress[index]
+                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                // Queue/cache-loading sentinels are not percentages.
+                                // Keep a short activity mark until separation reports progress.
+                                let fraction = if progress <= 100 {
+                                    progress as f32 / 100.
+                                } else {
+                                    0.
+                                };
+                                overview.child(
+                                    div().absolute().top_0().left_0().w_full().h(px(3.)).child(
+                                        canvas(
+                                            |_, _, _| (),
+                                            move |bounds, _, window, _| {
+                                                window.paint_quad(fill(
+                                                    Bounds::new(
+                                                        bounds.origin,
+                                                        size(
+                                                            px((bounds.size.width.as_f32()
+                                                                * fraction)
+                                                                .max(3.)),
+                                                            px(3.),
+                                                        ),
+                                                    ),
+                                                    Hsla::from(deck_colour(index)).opacity(0.5),
+                                                ));
+                                            },
+                                        )
+                                        .size_full(),
+                                    ),
+                                )
+                            })
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -2200,7 +2334,7 @@ impl Shell {
                                                     .min_w_0()
                                                     .child(self.browser.clone()),
                                             )
-                                            .child(self.library_side_panel(cx))
+                                            .child(self.library_side_panel(decks, cx))
                                             .when(
                                                 self.effect_details.iter().any(Option::is_some),
                                                 |row| {
@@ -2260,6 +2394,20 @@ fn clock(seconds: f64) -> String {
     format!("{sign}{}:{:02}", seconds / 60, seconds % 60)
 }
 
+impl Drop for Shell {
+    fn drop(&mut self) {
+        let changed = self.capture_performance_settings();
+        if changed || self.performance_dirty.is_some() {
+            if let Err(error) = self
+                .performance_settings
+                .save(&crate::storage::machine_dir())
+            {
+                eprintln!("Could not save deck setup on close: {error}");
+            }
+        }
+    }
+}
+
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.stems_starting {
@@ -2278,6 +2426,17 @@ impl Render for Shell {
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child("Loading stem model and warming up audio processing…"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            self.controllers
+                                .as_ref()
+                                .map(|controller| controller.connection_status())
+                                .unwrap_or_else(|| "Controller input disabled".into()),
+                        ),
                 )
                 .into_any_element();
         }
@@ -2316,6 +2475,7 @@ impl Render for Shell {
         let mut decks = match &mut self.engine {
             Some(engine) => {
                 let state = engine.state();
+                self.sampler_state = state.sampler.clone();
                 self.monitor = state.monitor;
                 self.automix = state.automix.clone();
                 if self.automix.enabled && self.automix.smart {
@@ -2352,7 +2512,7 @@ impl Render for Shell {
                             };
                     }
                     self.mixer_values[mixer_controls::channel_index(i) + 4] = deck.volume.sqrt();
-                    self.mixer_values[41 + i] = deck.effects[0].parameter;
+                    self.mixer_values[41 + i] = deck.colour_fx.position;
                     self.mixer_peaks[i] = deck.peak;
                     self.mixer_values
                         [mixer_controls::stem_index(i)..mixer_controls::stem_index(i) + 4]
@@ -2443,7 +2603,7 @@ impl Render for Shell {
             } else {
                 self.display_positions[index].update(
                     deck.position_seconds,
-                    deck.playing,
+                    deck.playing && !deck.scratching,
                     deck.tempo,
                     elapsed,
                 )

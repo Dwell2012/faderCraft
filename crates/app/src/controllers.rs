@@ -1,4 +1,4 @@
-//! MIDI mapping host. Matching devices require approval before ports are opened.
+//! MIDI mapping host. One unambiguous matching device connects automatically.
 use djcraft_controllers::{
     Bridge, Profile,
     native::{Input, Output, input_ports},
@@ -82,6 +82,18 @@ struct ConnectionConsent {
     decisions: std::collections::BTreeMap<String, bool>,
 }
 impl ConnectionConsent {
+    fn accept_single_matching(
+        &mut self,
+        available: &[String],
+        mapped: &std::collections::BTreeSet<String>,
+    ) {
+        let mut matching = available.iter().filter(|name| mapped.contains(*name));
+        if let Some(name) = matching.next() {
+            if matching.next().is_none() && self.present.contains(name) {
+                self.decisions.entry(name.clone()).or_insert(true);
+            }
+        }
+    }
     fn update(&mut self, available: &[String]) {
         self.present = available
             .iter()
@@ -110,17 +122,54 @@ pub struct Controllers {
     outputs: std::collections::BTreeMap<String, (Output, Vec<[u8; 3]>)>,
 }
 
+fn route_fx1_to_colour(profile: &mut Profile) {
+    for mapping in &mut profile.mappings {
+        use djcraft_controllers::{Binding, LedFeedback, Parameter};
+        match &mut mapping.binding {
+            Binding::Parameter { parameter, .. } => {
+                if let Parameter::EffectParameter { deck, slot: 0 } = *parameter {
+                    *parameter = Parameter::ColourFx { deck };
+                }
+            }
+            Binding::ToggleEffect { deck, slot: 0 } => {
+                mapping.binding = Binding::ToggleColourFx { deck: *deck };
+            }
+            Binding::Led { feedback } => {
+                if let LedFeedback::Effect { deck, slot: 0 } = *feedback {
+                    *feedback = LedFeedback::ColourFx { deck };
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl Controllers {
     pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
         self.bridge.set_tempo_bpms(bpms);
     }
-    pub fn load(settings: &crate::settings::Settings) -> Result<Option<Self>, String> {
+    pub fn load(
+        settings: &crate::settings::Settings,
+        scratch_modes: &[Option<bool>; djcraft_protocol::DECKS],
+    ) -> Result<Option<Self>, String> {
         if settings.controller_mapping == "@disabled" {
             return Ok(None);
         }
         let mut profile = read_mapping(&settings.controller_mapping)?;
+        if settings.controller_fx1_colour {
+            route_fx1_to_colour(&mut profile);
+        }
         // Upgrade only the named legacy headphone buttons; custom activation mappings stay intact.
         for mapping in &mut profile.mappings {
+            if let djcraft_controllers::Binding::Jog { config } = &mut mapping.binding {
+                if let Some(enabled) = scratch_modes
+                    .get(usize::from(config.deck))
+                    .copied()
+                    .flatten()
+                {
+                    config.scratch_enabled = enabled;
+                }
+            }
             if mapping.id.starts_with("headphone-cue-")
                 && let djcraft_controllers::Binding::HostButton { press, .. } = &mut mapping.binding
                 && let djcraft_controllers::HostCommand::SelectDeck { deck } = *press
@@ -157,6 +206,26 @@ impl Controllers {
         }
         actions
     }
+
+    pub fn scratch_modes(&self) -> [Option<bool>; djcraft_protocol::DECKS] {
+        self.bridge.scratch_modes()
+    }
+    pub fn fx1_routes_colour(&self, deck: usize) -> bool {
+        self.bridge
+            .profile()
+            .mappings
+            .iter()
+            .any(|mapping| match mapping.binding {
+                djcraft_controllers::Binding::ToggleColourFx { deck: mapped } => {
+                    usize::from(mapped) == deck
+                }
+                djcraft_controllers::Binding::Parameter {
+                    parameter: djcraft_controllers::Parameter::ColourFx { deck: mapped },
+                    ..
+                } => usize::from(mapped) == deck,
+                _ => false,
+            })
+    }
     pub fn use_connected(&mut self) {
         while let Some((name, _)) = self.pending_connection() {
             self.answer_connection(name, true);
@@ -181,6 +250,23 @@ impl Controllers {
                 self.consent.present.contains(*name) && !self.consent.decisions.contains_key(*name)
             })
             .map(|name| (name.clone(), self.bridge.profile().name.clone()))
+    }
+
+    pub fn connection_status(&self) -> String {
+        let mapping = &self.bridge.profile().name;
+        if !self.inputs.is_empty() {
+            let names = self
+                .inputs
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Mapping loaded: {mapping} · Connected: {names}")
+        } else if self.has_matching_device() {
+            format!("Mapping loaded: {mapping} · Controller awaiting connection")
+        } else {
+            format!("Mapping loaded: {mapping} · No matching controller connected")
+        }
     }
 
     pub fn answer_connection(&mut self, name: String, use_controller: bool) {
@@ -215,6 +301,7 @@ impl Controllers {
             .iter()
             .map(|m| m.port.clone())
             .collect();
+        self.consent.accept_single_matching(&available, &desired);
         for name in desired {
             if available.iter().filter(|n| **n == name).count() != 1 {
                 if self.failed.insert(name.clone()) {
@@ -425,6 +512,12 @@ impl Controllers {
         self.bridge.take_commands()
     }
 
+    pub fn take_pad_modes(
+        &mut self,
+    ) -> [Option<djcraft_controllers::PadMode>; djcraft_protocol::DECKS] {
+        self.bridge.take_pad_modes()
+    }
+
     pub fn set_browser_folders(&mut self, folders: bool) {
         self.browser_folders = folders;
     }
@@ -449,6 +542,138 @@ impl Drop for Controllers {
 #[cfg(test)]
 mod consent_tests {
     use super::*;
+    #[test]
+    fn fx1_colour_routing_changes_only_the_first_slot_and_follows_selected_combination() {
+        use djcraft_controllers::{Binding, Event, LedFeedback, Parameter};
+        use djcraft_protocol::{DeckAction, Role};
+        let mut profile = Profile::from_json(include_str!(
+            "../../../profiles/numark-mixtrack-pro-ii.json"
+        ))
+        .unwrap();
+        route_fx1_to_colour(&mut profile);
+        assert!(profile.mappings.iter().any(|mapping| matches!(
+            mapping.binding,
+            Binding::Parameter {
+                parameter: Parameter::ColourFx { deck: 0 },
+                ..
+            }
+        )));
+        assert!(profile.mappings.iter().any(|mapping| matches!(
+            mapping.binding,
+            Binding::Parameter {
+                parameter: Parameter::EffectParameter { deck: 0, slot: 1 },
+                ..
+            }
+        )));
+        assert!(profile.mappings.iter().any(|mapping| matches!(
+            mapping.binding,
+            Binding::Led {
+                feedback: LedFeedback::ColourFx { deck: 0 }
+            }
+        )));
+        let mut bridge = Bridge::new(profile).unwrap();
+        let (mut engine, _) = djcraft_engine::Engine::headless(8000);
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck: 0,
+                    action: DeckAction::SetColourFx {
+                        state: djcraft_protocol::ColourFxState {
+                            position: 0.5,
+                            selected: 97,
+                            enabled: true,
+                        },
+                    },
+                },
+            )
+            .unwrap();
+        let before = engine.state();
+        let actions = bridge.process(
+            "MixTrack Pro II",
+            Event::parse(&[0xb0, 0x1b, 1]).unwrap(),
+            &before,
+        );
+        assert!(
+            matches!(actions.as_slice(), [Action::Deck { deck: 0, action: DeckAction::SetColourFx { state } }] if state.selected == 97 && state.position > 0.5)
+        );
+        for action in actions {
+            engine.apply(Role::Host, action).unwrap();
+        }
+        assert_eq!(engine.state().decks[0].effects, before.decks[0].effects);
+        let actions = bridge.process(
+            "MixTrack Pro II",
+            Event::parse(&[0x90, 0x59, 127]).unwrap(),
+            &engine.state(),
+        );
+        assert!(
+            matches!(actions.as_slice(), [Action::Deck { deck: 0, action: DeckAction::SetColourFx { state } }] if state.position == 0.5 && !state.enabled && state.selected == 97)
+        );
+        for action in actions {
+            engine.apply(Role::Host, action).unwrap();
+        }
+        let reset = engine.state();
+        assert_eq!(reset.decks[0].effects, before.decks[0].effects);
+        assert!(
+            bridge
+                .state_feedback("MixTrack Pro II", &reset, 0, &[])
+                .contains(&[0x90, 0x59, 0])
+        );
+        assert!(
+            bridge
+                .process(
+                    "MixTrack Pro II",
+                    Event::parse(&[0x90, 0x59, 0]).unwrap(),
+                    &reset
+                )
+                .is_empty()
+        );
+        let actions = bridge.process(
+            "MixTrack Pro II",
+            Event::parse(&[0xb0, 0x1b, 1]).unwrap(),
+            &reset,
+        );
+        assert!(
+            matches!(actions.as_slice(), [Action::Deck { action: DeckAction::SetColourFx { state }, .. }] if state.position > 0.5 && state.enabled && state.selected == 97)
+        );
+    }
+    #[test]
+    fn one_matching_controller_connects_automatically_including_reconnection() {
+        let mapped = ["deck".to_string()].into_iter().collect();
+        let available = vec!["deck".to_string(), "unrelated MIDI port".to_string()];
+        let mut c = ConnectionConsent::default();
+        c.update(&available);
+        c.accept_single_matching(&available, &mapped);
+        assert!(c.allowed("deck"));
+        c.update(&[]);
+        c.update(&available);
+        c.accept_single_matching(&available, &mapped);
+        assert!(c.allowed("deck"));
+    }
+
+    #[test]
+    fn multiple_duplicate_unknown_or_declined_devices_are_not_auto_accepted() {
+        let mapped = ["deck".to_string(), "other deck".to_string()]
+            .into_iter()
+            .collect();
+        for available in [
+            vec!["deck".into(), "other deck".into()],
+            vec!["deck".into(), "deck".into()],
+            vec!["unknown".into()],
+        ] {
+            let mut c = ConnectionConsent::default();
+            c.update(&available);
+            c.accept_single_matching(&available, &mapped);
+            assert!(!c.allowed("deck"));
+            assert!(!c.allowed("other deck"));
+        }
+        let available = vec!["deck".to_string()];
+        let mut c = ConnectionConsent::default();
+        c.update(&available);
+        c.decisions.insert("deck".into(), false);
+        c.accept_single_matching(&available, &mapped);
+        assert!(!c.allowed("deck"));
+    }
     #[test]
     fn approval_is_required_and_resets_after_disconnect_or_ambiguity() {
         let mut c = ConnectionConsent::default();

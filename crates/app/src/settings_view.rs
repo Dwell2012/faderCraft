@@ -1,9 +1,10 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, Sizable,
+    ActiveTheme, Disableable, Icon, Selectable, Sizable,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
+    slider::{Slider, SliderEvent, SliderState},
     switch::Switch,
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -28,6 +29,7 @@ pub enum SettingsEvent {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
+    Crossfader,
     Preferences,
     Audio,
     Controllers,
@@ -46,6 +48,7 @@ impl Page {
             &[
                 Page::Preferences,
                 Page::Audio,
+                Page::Crossfader,
                 Page::Controllers,
                 Page::Library,
                 Page::Assistant,
@@ -57,6 +60,7 @@ impl Page {
 
     fn icon(self) -> IconName {
         match self {
+            Page::Crossfader => IconName::SlidersHorizontal,
             Page::Preferences => IconName::SlidersHorizontal,
             Page::Audio => IconName::Volume2,
             Page::Controllers => IconName::SlidersHorizontal,
@@ -70,6 +74,7 @@ impl Page {
 
     fn title(self) -> &'static str {
         match self {
+            Page::Crossfader => "Mixer",
             Page::Preferences => "Preferences",
             Page::Audio => "Audio",
             Page::Controllers => "Controllers",
@@ -83,6 +88,7 @@ impl Page {
 
     fn summary(self) -> &'static str {
         match self {
+            Page::Crossfader => "Choose the fade curve and assign decks to each side.",
             Page::Preferences => "How djcraft looks and starts on this computer.",
             Page::Audio => "Where the mix is played.",
             Page::Controllers => "Choose the mapping for your MIDI controller.",
@@ -97,6 +103,7 @@ impl Page {
 
 /// The settings dialog, drawn over the whole window.
 pub struct SettingsView {
+    crossfader_slider: Entity<SliderState>,
     settings: Settings,
     page: Page,
     /// A description of the audio output in use.
@@ -120,7 +127,22 @@ impl SettingsView {
         controller_present: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        let crossfader_slider = cx.new(|_| {
+            SliderState::new()
+                .min(0.)
+                .max(100.)
+                .step(1.)
+                .default_value(settings.crossfader_curve.parameters().0 as f32)
+        });
+        cx.subscribe(&crossfader_slider, |this, _, event: &SliderEvent, cx| {
+            if let SliderEvent::Change(value) = event {
+                let sharpness = value.start().round() as u8;
+                this.change_crossfader(|amount, _, _, _| *amount = sharpness, cx);
+            }
+        })
+        .detach();
         Self {
+            crossfader_slider,
             settings,
             page: Page::Preferences,
             audio,
@@ -419,8 +441,69 @@ impl SettingsView {
             .child(text.into())
     }
 
+    fn change_crossfader(
+        &mut self,
+        edit: impl FnOnce(&mut u8, &mut bool, &mut bool, &mut bool),
+        cx: &mut Context<Self>,
+    ) {
+        let (mut sharpness, mut power, mut reverse, mut disabled) =
+            self.settings.crossfader_curve.parameters();
+        edit(&mut sharpness, &mut power, &mut reverse, &mut disabled);
+        self.change(
+            |settings| {
+                settings.crossfader_curve = djcraft_protocol::CrossfaderCurve::Adjustable {
+                    sharpness,
+                    power,
+                    reverse,
+                    disabled,
+                }
+            },
+            cx,
+        );
+    }
+
     fn page(&self, cx: &mut Context<Self>) -> Vec<Div> {
         match self.page {
+            Page::Crossfader => {
+                let (_, power, reverse, disabled) = self.settings.crossfader_curve.parameters();
+                let curve = div().w(px(240.)).flex().flex_col().gap_2()
+                    .child(Slider::new(&self.crossfader_slider).horizontal())
+                    .child(div().flex().justify_between().text_xs().child("SLOW").child("FAST"));
+                let types = div().flex().gap_2().children([("Linear", false), ("Power", true)].into_iter().enumerate().map(|(i, (label, value))| {
+                    Button::new(("crossfader-type", i)).outline().label(label).selected(power == value)
+                        .on_click(cx.listener(move |this, _, _, cx| this.change_crossfader(|_, power, _, _| *power = value, cx)))
+                }));
+                let reverse = Switch::new("crossfader-reverse").checked(reverse)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| this.change_crossfader(|_, _, reverse, _| *reverse = *checked, cx)));
+                let disabled = Switch::new("crossfader-disabled").checked(disabled)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| this.change_crossfader(|_, _, _, disabled| *disabled = *checked, cx)));
+                let rows = vec![
+                    self.row("Curve", "Slow gives a gradual blend. Fast gives a tight cut for scratching.", curve, cx),
+                    self.row("Curve type", "Linear fades evenly. Power gives a more pronounced fade before opening fully.", types, cx),
+                    self.row("Reverse", "Swap the crossfader direction without changing deck assignments.", reverse, cx),
+                    self.row("Disable", "Bypass the crossfader and mix using channel volume faders.", disabled, cx),
+                ];
+                let mut assignments = Vec::new();
+                for (deck, name) in ["Deck A", "Deck B", "Deck C", "Deck D"].into_iter().enumerate() {
+                    let bit = 1 << deck;
+                    let routing = self.settings.crossfader_routing;
+                    let controls = div().flex().gap_2().children(
+                        [("Left", routing.left & bit != 0), ("Right", routing.right & bit != 0)]
+                        .into_iter().enumerate().map(|(side, (label, selected))| {
+                            Button::new(("crossfader-assignment", deck * 2 + side))
+                                .outline().label(label).selected(selected)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.change(|settings| {
+                                        let mask = if side == 0 { &mut settings.crossfader_routing.left } else { &mut settings.crossfader_routing.right };
+                                        *mask ^= bit;
+                                    }, cx);
+                                }))
+                        })
+                    );
+                    assignments.push(self.row(name, "Neither side bypasses the crossfader. Both sides keep the deck audible throughout the fade.", controls, cx));
+                }
+                vec![self.section("Crossfader", rows, cx), self.section("Deck assignments", assignments, cx)]
+            }
             Page::Preferences => {
                 let theme = self.dropdown(
                     "theme",
@@ -462,6 +545,9 @@ impl SettingsView {
                 ]
             }
             Page::Controllers => {
+                let fx1 = self.dropdown("controller-fx1-target", self.settings.controller_fx1_colour, &[false, true],
+                    |colour| if colour { "Selected CFX" } else { "Deck Effects" },
+                    |settings, colour| settings.controller_fx1_colour = colour, cx);
                 let current = displayed_mapping(&self.settings.controller_mapping, self.controller_present).to_owned();
                 let choices = crate::controllers::mapping_choices();
                 let label = choices.iter().find(|(key, _)| key == &current).map(|(_, name)| name.clone())
@@ -490,7 +576,8 @@ impl SettingsView {
                         Err(error) => error,
                     }};
                 vec![self.section("Controller mapping", vec![
-                    self.row("Mapping", "Choosing a mapping applies it immediately. New connections ask before enabling input.", mapping, cx),
+                    self.row("FX 1 controls", "Route the first FX button and encoder to deck effect slot 1 or the deck's selected Colour FX combination.", fx1, cx),
+                    self.row("Mapping", "Choosing a mapping applies it immediately. One matching controller connects automatically.", mapping, cx),
                     self.row("Custom mapping", "Load a faderCraft JSON mapping. The original file is kept unchanged and must remain available.", import, cx),
                     self.info(detail, cx).into_any_element(),
                     self.info(self.controller_notice.clone(), cx).into_any_element(),

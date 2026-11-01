@@ -1,7 +1,7 @@
 use super::*;
 use djcraft_protocol::QueueTrack;
 impl Shell {
-    pub(super) fn library_side_panel(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn library_side_panel(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
         div()
             .w(px(310.))
             .h_full()
@@ -12,7 +12,7 @@ impl Shell {
             .border_color(cx.theme().border)
             .child(
                 div().flex().w_full().h(px(29.)).flex_shrink_0().children(
-                    ["AUTOMIX", "SAVED LOOPS"]
+                    ["AUTOMIX", "SAVED LOOPS", "SAMPLER"]
                         .into_iter()
                         .enumerate()
                         .map(|(tab, label)| {
@@ -25,7 +25,7 @@ impl Shell {
                                 .items_center()
                                 .justify_center()
                                 .text_size(px(11.))
-                                .when(tab == 0, |button| button.border_r_1())
+                                .when(tab < 2, |button| button.border_r_1())
                                 .border_color(cx.theme().border)
                                 .when(self.library_side_tab == tab, |button| {
                                     button.bg(cx.theme().background)
@@ -44,10 +44,10 @@ impl Shell {
                         }),
                 ),
             )
-            .child(if self.library_side_tab == 0 {
-                self.automix_panel(cx)
-            } else {
-                self.saved_loops_panel(self.saved_loops_deck.unwrap_or(self.active_deck), cx)
+            .child(match self.library_side_tab {
+                0 => self.automix_panel(cx),
+                1 => self.saved_loops_panel(self.saved_loops_deck.unwrap_or(self.active_deck), cx),
+                _ => self.sampler_side_panel(decks, cx),
             })
     }
     fn automix_send(&mut self, action: MixerAction, cx: &mut Context<Self>) {

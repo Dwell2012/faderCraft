@@ -20,9 +20,10 @@ pub(super) enum Page {
     Sampler,
     AutoScratch,
     KeyShift,
+    StemFx,
 }
 impl Page {
-    pub(super) const ALL: [Self; 13] = [
+    pub(super) const ALL: [Self; 14] = [
         Self::HotCues,
         Self::Loop,
         Self::Roll,
@@ -32,6 +33,7 @@ impl Page {
         Self::SavedLoops,
         Self::ManualLoop,
         Self::Stems,
+        Self::StemFx,
         Self::Fx,
         Self::Sampler,
         Self::AutoScratch,
@@ -48,6 +50,7 @@ impl Page {
             Self::SavedLoops => "Saved Loops",
             Self::ManualLoop => "Manual Loop",
             Self::Stems => "Stems",
+            Self::StemFx => "Stem FX",
             Self::Fx => "Pad FX",
             Self::Sampler => "Sampler",
             Self::AutoScratch => "Scratch",
@@ -79,6 +82,7 @@ enum Restore {
     },
 }
 pub(super) struct Pads {
+    stem_fx_target: usize,
     sample_edit: u8,
     sample_hold: Option<usize>,
     sample_level: f32,
@@ -87,9 +91,9 @@ pub(super) struct Pads {
     pub(super) page: Page,
     pub(super) split: Option<Page>,
     pub(super) favorites: bool,
-    bank: [i32; 13],
-    size: [i32; 13],
-    step: [i32; 13],
+    bank: [i32; 14],
+    size: [i32; 14],
+    step: [i32; 14],
     delete_saved: bool,
     pub(super) quantize: bool,
     pub(super) quantize_window: f64,
@@ -102,9 +106,10 @@ pub(super) struct Pads {
 }
 impl Default for Pads {
     fn default() -> Self {
-        let mut bank = [0; 13];
+        let mut bank = [0; 14];
         bank[Page::BeatJump as usize] = 2;
         Self {
+            stem_fx_target: 0,
             sample_edit: 0,
             sample_hold: None,
             sample_level: 0.7,
@@ -114,8 +119,8 @@ impl Default for Pads {
             split: None,
             favorites: false,
             bank,
-            size: [0; 13],
-            step: [0; 13],
+            size: [0; 14],
+            step: [0; 14],
             delete_saved: false,
             quantize: true,
             quantize_window: 0.05,
@@ -251,6 +256,25 @@ const PAD_FX: [EffectKind; 16] = [
     EffectKind::Bitcrusher,
 ];
 impl Shell {
+    pub(super) fn follow_controller_pad_mode(
+        &mut self,
+        deck: usize,
+        mode: djcraft_controllers::PadMode,
+        cx: &mut Context<Self>,
+    ) {
+        let page = match mode {
+            djcraft_controllers::PadMode::HotCues => Page::HotCues,
+            djcraft_controllers::PadMode::Loop => Page::ManualLoop,
+            djcraft_controllers::PadMode::Sampler => Page::Sampler,
+        };
+        if self.pads[deck].page != page || self.pads[deck].split.is_some() {
+            self.release_pad(deck);
+            self.pads[deck].page = page;
+            self.pads[deck].split = None;
+            self.pads[deck].notice.clear();
+            cx.notify();
+        }
+    }
     fn pad_state(&mut self, deck: usize) -> Option<DeckState> {
         self.engine.as_mut().map(|e| e.state().decks[deck].clone())
     }
@@ -374,6 +398,7 @@ impl Shell {
         }
     }
     pub(super) fn release_pads(&mut self, cx: &mut Context<Self>) {
+        self.release_side_sample(cx);
         if self
             .pads
             .iter()
@@ -1057,6 +1082,42 @@ impl Shell {
                     self.pad_send(deck, DeckAction::SetStemGains { gains });
                 }
             }
+            Page::StemFx => {
+                if index < 4 {
+                    self.pads[deck].stem_fx_target = index;
+                } else if !state.stems_ready {
+                    self.pads[deck].notice = "Prepare this track's stems first.".into();
+                } else {
+                    let stem = self.pads[deck].stem_fx_target;
+                    let kind = PAD_FX[self.pads[deck].bank[page as usize].rem_euclid(4) as usize
+                        * 4
+                        + index
+                        - 4];
+                    let old = state.stem_effects[stem];
+                    let effect = if old.kind == kind {
+                        EffectState {
+                            enabled: !old.enabled,
+                            ..old
+                        }
+                    } else {
+                        EffectState {
+                            kind,
+                            enabled: true,
+                            amount: old.amount,
+                            sync: grid.is_some(),
+                            ..EffectState::default()
+                        }
+                    };
+                    self.pad_send(
+                        deck,
+                        DeckAction::SetStemEffect {
+                            stem: stem as u8,
+                            effect,
+                        },
+                    );
+                    self.pads[deck].notice.clear();
+                }
+            }
             Page::Fx => {
                 if let Some(slot) = state.effects.iter().position(|fx| !fx.enabled) {
                     let old = state.effects[slot];
@@ -1260,6 +1321,23 @@ impl Shell {
                     self.pads[deck].stutter = !self.pads[deck].stutter;
                 }
             }
+            Page::StemFx => {
+                if parameter == 0 {
+                    self.pads[deck].bank[page as usize] =
+                        (self.pads[deck].bank[page as usize] + direction).rem_euclid(4);
+                } else if let Some(engine) = &mut self.engine {
+                    let stem = self.pads[deck].stem_fx_target;
+                    let mut effect = engine.state().decks[deck].stem_effects[stem];
+                    effect.amount = (effect.amount + direction as f32 * 0.05).clamp(0., 1.);
+                    self.pad_send(
+                        deck,
+                        DeckAction::SetStemEffect {
+                            stem: stem as u8,
+                            effect,
+                        },
+                    );
+                }
+            }
             Page::Stems | Page::Fx => {}
             Page::Loop | Page::Roll | Page::BeatJump => {
                 self.pads[deck].bank[page as usize] =
@@ -1407,6 +1485,27 @@ impl Shell {
                 index < 4 && state.stem_gains[index] > 0.,
                 loaded && state.stems_ready && index < 8,
             ),
+            Page::StemFx => {
+                let stem = self.pads[deck].stem_fx_target;
+                if index < 4 {
+                    (
+                        ["Vocals", "Melody", "Bass", "Drums"][index].into(),
+                        index == stem,
+                        loaded,
+                    )
+                } else {
+                    let kind = PAD_FX[self.pads[deck].bank[page as usize].rem_euclid(4) as usize
+                        * 4
+                        + index
+                        - 4];
+                    let effect = state.stem_effects[stem];
+                    (
+                        kind.label().into(),
+                        effect.enabled && effect.kind == kind,
+                        loaded && state.stems_ready,
+                    )
+                }
+            }
             Page::Fx => (PAD_FX[index].label().into(), held, loaded),
         }
     }
@@ -1527,6 +1626,7 @@ impl Shell {
             Page::Sampler => &[(0, "Trigger mode"), (1, "Capture length")],
             Page::AutoScratch => &[(0, "Cut / over"), (1, "Quantize / immediate")],
             Page::KeyShift => &[(0, "Key layout"), (1, "Key shift")],
+            Page::StemFx => &[(0, "Effect bank"), (1, "Wet amount")],
             Page::HotCues | Page::Stems | Page::Fx => &[],
         };
         if !controls.is_empty() {
@@ -1799,6 +1899,19 @@ impl Shell {
                     Page::SavedLoops if parameter == 1 => "Move 1 beat".into(),
                     Page::Loop | Page::Roll | Page::BeatJump => {
                         format!("Bank {:+}", self.pads[deck].bank[param_page as usize])
+                    }
+                    Page::StemFx => {
+                        if parameter == 0 {
+                            format!(
+                                "FX bank {}",
+                                self.pads[deck].bank[param_page as usize].rem_euclid(4) + 1
+                            )
+                        } else {
+                            format!(
+                                "Wet {:.0}%",
+                                state.stem_effects[self.pads[deck].stem_fx_target].amount * 100.
+                            )
+                        }
                     }
                     Page::Stems => {
                         if state.stems_ready {

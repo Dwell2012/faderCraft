@@ -113,6 +113,9 @@ impl StemModel {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub controller_fx1_colour: bool,
+    pub crossfader_curve: djcraft_protocol::CrossfaderCurve,
+    pub crossfader_routing: djcraft_protocol::CrossfaderRouting,
     pub controller_mapping: String,
     pub audio_asio: bool,
     pub audio_exclusive: bool,
@@ -206,6 +209,9 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             controller_mapping: String::new(),
+            controller_fx1_colour: false,
+            crossfader_curve: Default::default(),
+            crossfader_routing: Default::default(),
             audio_asio: false,
             audio_exclusive: false,
             audio_device: String::new(),
@@ -298,6 +304,14 @@ mod tests {
         assert_eq!(Settings::load(&dir), Settings::default());
 
         let settings = Settings {
+            controller_fx1_colour: true,
+            crossfader_curve: djcraft_protocol::CrossfaderCurve::Adjustable {
+                sharpness: 73,
+                power: true,
+                reverse: true,
+                disabled: true,
+            },
+            crossfader_routing: djcraft_protocol::CrossfaderRouting { left: 1, right: 8 },
             audio_asio: true,
             audio_exclusive: false,
             audio_device: "Example ASIO".into(),
