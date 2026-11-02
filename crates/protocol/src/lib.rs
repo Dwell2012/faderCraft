@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod script;
+
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Number of independently playable decks (A, B, C and D).

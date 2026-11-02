@@ -943,18 +943,30 @@ impl Shell {
         if self.cue_preview.is_some() {
             return;
         }
-        let deck = self.active_deck;
-        if let Some(state) = self.engine.as_mut().map(|e| e.state().decks[deck].clone()) {
-            if state.track.is_some() {
-                self.send(
-                    deck,
-                    if state.playing {
-                        DeckAction::Pause
-                    } else {
-                        DeckAction::Play
-                    },
-                );
-                cx.notify();
+        let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
+            return;
+        };
+        if state
+            .decks
+            .get(self.active_deck)
+            .is_none_or(|deck| deck.track.is_none())
+        {
+            return;
+        }
+        use djcraft_protocol::script::{ControlSource, InvocationContext, Program};
+        let program = Program::compile("do_action(\"active\", \"toggle_play\")")
+            .expect("built-in Space binding must compile");
+        let context = InvocationContext {
+            source: ControlSource::Skin,
+            state: Some(&state),
+            active_deck: Some(self.active_deck as u8),
+            visible_decks: if self.settings.four_decks { 4 } else { 2 },
+        };
+        if let Ok(actions) = program.run_in(context, 0.0) {
+            for dispatch in actions {
+                if let Action::Deck { deck, action } = dispatch.action {
+                    self.send(usize::from(deck), action);
+                }
             }
         }
     }

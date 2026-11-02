@@ -1,4 +1,5 @@
 use super::*;
+use djcraft_protocol::script::{ControlSource, EqBand, Param, Program};
 use gpui_kit::component::tooltip::Tooltip;
 
 pub(super) fn smooth_knob_svg(value: f32, neutral: f32, highlight: bool) -> String {
@@ -137,26 +138,25 @@ fn control_action(index: usize, value: f32) -> Action {
         };
     }
     let deck = control_deck(index).expect("deck control");
-    let action = match index - channel_index(deck) {
-        0 => DeckAction::SetTrim {
-            db: value * 24. - 12.,
-        },
-        4 => DeckAction::SetVolume {
-            level: value * value,
-        },
-        band => DeckAction::SetEq {
-            band: (3 - band) as u8,
-            gain: if value <= 0.5 {
-                value * 2.
-            } else {
-                10f32.powf((value - 0.5) * 12. / 20.).min(2.)
-            },
-        },
+    let offset = index - channel_index(deck);
+    let param = match offset {
+        0 => Param::Trim,
+        1 => Param::Eq(EqBand::High),
+        2 => Param::Eq(EqBand::Mid),
+        3 => Param::Eq(EqBand::Low),
+        4 => Param::Volume,
+        _ => unreachable!("non-channel control"),
     };
-    Action::Deck {
-        deck: deck as u8,
-        action,
-    }
+    let normalized = if param.domain() == djcraft_protocol::script::ParamDomain::Bipolar {
+        value * 2.0 - 1.0
+    } else {
+        value
+    };
+    Program::set_param(deck, param)
+        .unwrap()
+        .run(ControlSource::Skin, normalized)
+        .unwrap()
+        .action
 }
 fn value_label(index: usize, value: f32) -> String {
     if index == 45 {
@@ -638,17 +638,14 @@ impl Shell {
             }
         } else if index >= 41 {
             let deck = index - 41;
-            let mut state = self
-                .engine
-                .as_mut()
-                .map(|e| e.state().decks[deck].colour_fx)
-                .unwrap_or_default();
-            state.position = value;
-            state.enabled = true;
-            Action::Deck {
-                deck: deck as u8,
-                action: DeckAction::SetColourFx { state },
-            }
+            let Some(state) = self.engine.as_mut().map(|e| e.state()) else {
+                return;
+            };
+            Program::set_param(deck, Param::ColourFx)
+                .unwrap()
+                .run_with_state(ControlSource::Skin, value * 2.0 - 1.0, Some(&state))
+                .unwrap()
+                .action
         } else if is_stem(index) {
             let deck = control_deck(index).expect("stem control");
             let current = self

@@ -72,6 +72,9 @@ The development shell sets `DJCRAFT_DATA_DIR` to an isolated development library
 For the Numark starter profile, use `./tools/run-mixtrack.ps1` as described in
 [controller setup](docs/CONTROLLERS.md).
 
+The first fcScript control command and its current limits are documented in
+[fcScript](docs/SCRIPTING.md).
+
 The CI workflow builds on Windows, Linux and macOS. Linux development packages
 are listed in [.github/workflows/ci.yml](.github/workflows/ci.yml); this does not
 imply equal hardware or runtime validation on all three platforms.
