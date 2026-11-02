@@ -1408,10 +1408,10 @@ impl Engine {
         for deck in 0..DECKS {
             if self.decks[deck].auto_trim
                 && !self.decks[deck].loudness_applied
-                && (!self.shared.decks[deck].playing()
-                    || (self.decks[deck].trim_refresh_live
-                        && (!self.decks[deck].key_lock
-                            || (self.decks[deck].tempo - 1.).abs() <= 1e-3)))
+                && (!self.decks[deck].trim_refresh_live
+                    || !self.shared.decks[deck].playing()
+                    || !self.decks[deck].key_lock
+                    || (self.decks[deck].tempo - 1.).abs() <= 1e-3)
             {
                 if let Some(report) = self.decks[deck].loudness() {
                     let db = report.recommended_trim();

@@ -2721,6 +2721,41 @@ fn loudness_trim_is_peak_limited_and_manual_override_survives_polling() {
         .unwrap();
     assert!((engine.state().decks[0].trim_db - 1.9).abs() < 1e-5);
 }
+
+#[test]
+fn late_loudness_auto_trims_playing_decks_in_four_deck_layout() {
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    for deck in 0..4 {
+        let track = Arc::new(Track::from_samples(
+            format!("deck {deck}"),
+            RATE,
+            vec![0.4; RATE as usize * 2],
+        ));
+        engine.load_track(deck, track.clone()).unwrap();
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck: deck as u8,
+                    action: DeckAction::Play,
+                },
+            )
+            .unwrap();
+        render(&mut mixer, 0.01);
+        assert_eq!(engine.state().decks[deck].trim_db, 0.);
+        track
+            .set_loudness(Some(djcraft_protocol::LoudnessInfo {
+                rms_db: -10.,
+                peak_db: -2.,
+            }))
+            .unwrap();
+        let state = engine.state();
+        assert!(state.decks[deck].auto_trim);
+        assert!(state.decks[deck].loudness_applied);
+        assert!((state.decks[deck].trim_db - 1.9).abs() < 1e-5);
+    }
+}
+
 #[test]
 fn auto_trim_normalizes_the_whole_track_peak_without_startup_clipping() {
     for peak in [0.5f32, 2., 8.] {
@@ -2787,7 +2822,7 @@ fn key_lock_peak_protection_bounds_processed_audio_at_changed_tempos() {
     assert!(detected, "Fixture must actually exercise gain reduction");
 }
 #[test]
-fn late_loudness_waits_for_pause_and_old_track_report_cannot_change_new_track() {
+fn late_loudness_applies_during_play_and_old_track_report_cannot_change_new_track() {
     use djcraft_protocol::LoudnessInfo;
     let (mut engine, mut mixer) = engine_with(sine(440., 3., RATE));
     engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
@@ -2799,11 +2834,8 @@ fn late_loudness_waits_for_pause_and_old_track_report_cannot_change_new_track() 
     }))
     .unwrap();
     let state = engine.state();
-    assert_eq!(state.decks[0].trim_db, 0.);
-    assert!(!state.decks[0].loudness_applied);
-    engine.apply(Role::Host, deck(DeckAction::Pause)).unwrap();
-    render(&mut mixer, 0.01);
-    assert!((engine.state().decks[0].trim_db + 0.1).abs() < 1e-5);
+    assert!((state.decks[0].trim_db + 0.1).abs() < 1e-5);
+    assert!(state.decks[0].loudness_applied);
     let new = Arc::new(Track::from_samples(
         "new",
         RATE,
