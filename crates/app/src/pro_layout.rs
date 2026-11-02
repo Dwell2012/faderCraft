@@ -1,3 +1,4 @@
+use super::mixer_controls::smooth_knob_svg;
 use super::*;
 use gpui_kit::component::Icon;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
@@ -336,6 +337,7 @@ impl Shell {
         deck: usize,
         kind: usize,
         state: &DeckState,
+        active: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let weak = cx.weak_entity();
@@ -507,6 +509,31 @@ impl Shell {
                 .into_any_element()
             }
         };
+        let label = if kind == 1 {
+            self.pads[deck].page.label().to_uppercase()
+        } else {
+            ["EFFECTS", "", "LOOPS"][kind].to_owned()
+        };
+        let tab = if active {
+            self.tool_side_tab(deck, kind, cx)
+        } else {
+            Button::new(("four-deck-tool-tab", deck * 3 + kind))
+                .ghost()
+                .rounded(ButtonRounded::None)
+                .w_full()
+                .h_full()
+                .min_w_0()
+                .p_0()
+                .tooltip(format!("Show {label}"))
+                .child(vertical_tool_icon(&label))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.release_pads(cx);
+                    this.deck_panel[deck] = [1, 2, 0][kind];
+                    this.active_deck = deck;
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
         div()
             .w(px(18.))
             .h_full()
@@ -516,12 +543,7 @@ impl Shell {
             .border_1()
             .border_color(cx.theme().border)
             .child(cog)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.tool_side_tab(deck, kind, cx)),
-            )
+            .child(div().flex_1().min_h_0().flex().items_center().child(tab))
     }
 
     pub(super) fn deck_display(
@@ -534,40 +556,26 @@ impl Shell {
     ) -> Div {
         let colour = deck_colour(index);
         let position = state.position_seconds;
-        let duration = state.track.as_ref().map_or(0., |t| t.duration_seconds);
         let loaded = state.track.is_some();
-        let remaining = (duration - position).max(0.);
-        let grid = self.grids[index];
-        let tempo_text = grid
-            .map(|g| format!("{:.2}", g.bpm * state.tempo))
-            .unwrap_or_else(|| "—".into());
         let muted = cx.theme().muted_foreground;
-        let ring = cx.theme().border;
-        let four_decks = self.settings.four_decks;
         let platter = div()
             .id(("platter", index))
             .relative()
-            .w(px(if self.settings.four_decks { 64. } else { 185. }))
-            .h(px(if self.settings.four_decks { 64. } else { 185. }))
+            .w(px(if self.settings.four_decks { 96. } else { 185. }))
+            .h(px(if self.settings.four_decks { 96. } else { 185. }))
             .flex_shrink_0()
             .rounded_full()
-            .when(self.settings.four_decks, |platter| {
-                platter.border_1().border_color(ring)
-            })
-            .when(!self.settings.four_decks, |platter| {
-                platter.border_3().border_color(colour)
-            })
+            .border_3()
+            .border_color(colour)
             .bg(cx.theme().secondary.opacity(0.3))
-            .when(!self.settings.four_decks, |platter| {
-                platter.child(
-                    div()
-                        .absolute()
-                        .inset(px(6.))
-                        .rounded_full()
-                        .border_2()
-                        .border_color(Hsla::from(colour).opacity(0.35)),
-                )
-            })
+            .child(
+                div()
+                    .absolute()
+                    .inset(px(if self.settings.four_decks { 4. } else { 6. }))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(Hsla::from(colour).opacity(0.35)),
+            )
             .child(
                 canvas(
                     |_, _, _| (),
@@ -575,22 +583,6 @@ impl Shell {
                         let centre =
                             bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
                         let radius = bounds.size.width.as_f32() / 2. - 7.;
-                        for mark in 0..if four_decks { 120 } else { 0 } {
-                            let angle = mark as f32 / 120. * std::f32::consts::TAU;
-                            let active =
-                                loaded && mark as f64 / 120. <= position / duration.max(0.001);
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    centre
-                                        + point(
-                                            px(angle.sin() * radius - 1.),
-                                            px(-angle.cos() * radius - 1.),
-                                        ),
-                                    size(px(2.), px(2.)),
-                                ),
-                                if active { colour.into() } else { ring },
-                            ));
-                        }
                         if loaded {
                             let angle = (position * 0.5555556 * std::f64::consts::TAU) as f32;
                             let mut pointer = PathBuilder::stroke(px(2.5));
@@ -642,99 +634,64 @@ impl Shell {
             );
 
         if self.settings.four_decks {
+            let panel = self.deck_panel[index];
+            let tools = match panel {
+                0 => {
+                    if self.loop_view[index] == 2 {
+                        self.compact_direct_loop_panel(index, state, cx)
+                            .into_any_element()
+                    } else {
+                        self.compact_loop_panel(index, state, cx).into_any_element()
+                    }
+                }
+                1 => self.effect_panel(index, state, cx),
+                _ => self.pad_panel(index, state, false, cx).into_any_element(),
+            };
+            let mut tools = Some(tools);
+            let mut sections: Vec<AnyElement> = Vec::with_capacity(4);
+            for selected_panel in [1, 2, 0] {
+                let kind = [2, 0, 1][selected_panel];
+                sections.push(
+                    self.tool_side_rail(index, kind, state, panel == selected_panel, cx)
+                        .into_any_element(),
+                );
+                if panel == selected_panel {
+                    sections.push(
+                        div()
+                            .id(("four-deck-tool-content", index))
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .when(index % 2 == 0, |cell| cell.pl(px(4.)))
+                            .when(index % 2 == 1, |cell| cell.pr(px(4.)))
+                            .child(tools.take().unwrap())
+                            .into_any_element(),
+                    );
+                }
+            }
             return div()
                 .flex()
-                .h(px(120.))
+                .h(px(96.))
                 .flex_shrink_0()
                 .items_center()
-                .gap_3()
+                .gap(px(4.))
                 .when(index % 2 == 1, |row| row.flex_row_reverse())
                 .child(
                     div()
+                        .flex()
                         .flex_1()
                         .min_w_0()
-                        .flex()
-                        .h_full()
-                        .items_center()
-                        .gap_3()
-                        .when(index % 2 == 1, |group| group.flex_row_reverse())
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .justify_start()
-                                .gap_3()
-                                .when(index % 2 == 1, |group| group.flex_row_reverse())
-                                .child(platter)
-                                .child(
-                                    div()
-                                        .id(("compact-tempo", index))
-                                        .flex_1()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .when(index % 2 == 1, |info| info.items_end().text_right())
-                                        .on_scroll_wheel(cx.listener(
-                                            move |this, event: &ScrollWheelEvent, _, cx| {
-                                                this.wheel_tempo(index, event, cx)
-                                            },
-                                        ))
-                                        .child(
-                                            div().text_size(px(10.)).text_color(muted).child("BPM"),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(px(22.))
-                                                .text_color(colour)
-                                                .child(tempo_text),
-                                        )
-                                        .child(div().text_size(px(10.)).child(format!(
-                                            "−{} remaining",
-                                            clock(remaining / state.tempo)
-                                        )))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .text_size(px(11.))
-                                                .id(("deck-key-info", index))
-                                                .text_color(colour)
-                                                .whitespace_nowrap()
-                                                .children(
-                                                    current_key_label(self.deck_keys[index], state)
-                                                        .split(" · ")
-                                                        .enumerate()
-                                                        .map(|(part, line)| {
-                                                            div()
-                                                                .when(part > 0, |label| {
-                                                                    label
-                                                                        .ml(px(7.))
-                                                                        .pl(px(7.))
-                                                                        .border_l_1()
-                                                                        .border_color(
-                                                                            muted.opacity(0.3),
-                                                                        )
-                                                                })
-                                                                .child(line.to_owned())
-                                                        })
-                                                        .collect::<Vec<_>>(),
-                                                )
-                                                .tooltip({
-                                                    let text = self.key_hover_text(index, state);
-                                                    move |window, cx| {
-                                                        Tooltip::new(text.clone()).build(window, cx)
-                                                    }
-                                                }),
-                                        ),
-                                ),
-                        ),
+                        .h(px(96.))
+                        .gap(px(4.))
+                        .when(index % 2 == 1, |row| row.flex_row_reverse())
+                        .children(sections),
                 )
-                .child(self.pitch_control(index, state, cx))
+                .child(platter)
                 .children(controls)
-                .children(identity);
+                .children(identity)
+                .child(self.pitch_control(index, state, cx));
         }
 
         div()
@@ -772,9 +729,10 @@ impl Shell {
                                             .min_w_0()
                                             .h_full()
                                             .flex()
+                                            .gap(px(4.))
                                             .bg(cx.theme().secondary.opacity(0.5))
                                             .when(index % 2 == 1, |row| row.flex_row_reverse())
-                                            .child(self.tool_side_rail(index, 0, state, cx))
+                                            .child(self.tool_side_rail(index, 0, state, true, cx))
                                             .child(
                                                 div()
                                                     .id(("deck-effect-cell", index))
@@ -782,8 +740,7 @@ impl Shell {
                                                     .min_w_0()
                                                     .h_full()
                                                     .overflow_y_scroll()
-                                                    .px(px(4.))
-                                                    .py(px(2.))
+                                                    .bg(cx.theme().secondary.opacity(0.5))
                                                     .child(self.effect_panel(index, state, cx)),
                                             ),
                                     )
@@ -811,7 +768,7 @@ impl Shell {
                                             .flex()
                                             .bg(cx.theme().secondary.opacity(0.5))
                                             .when(index % 2 == 1, |row| row.flex_row_reverse())
-                                            .child(self.tool_side_rail(index, 1, state, cx))
+                                            .child(self.tool_side_rail(index, 1, state, true, cx))
                                             .child(
                                                 div()
                                                     .id(("deck-pad-cell", index))
@@ -833,7 +790,7 @@ impl Shell {
                                             .flex()
                                             .bg(cx.theme().secondary.opacity(0.5))
                                             .when(index % 2 == 1, |row| row.flex_row_reverse())
-                                            .child(self.tool_side_rail(index, 2, state, cx))
+                                            .child(self.tool_side_rail(index, 2, state, true, cx))
                                             .child(
                                                 div()
                                                     .id(("deck-loop-cell", index))
@@ -968,12 +925,27 @@ impl Shell {
                     self.send(usize::from(deck), action);
                 }
             }
+            cx.notify();
         }
     }
     pub(super) fn move_pitch(&mut self, y: f32, cx: &mut Context<Self>) {
         let Some(deck) = self.pitch_drag else {
             return;
         };
+        if self.settings.four_decks
+            && let Some((start_y, start_tempo)) = self.pitch_knob_start
+        {
+            let range = self
+                .engine
+                .as_mut()
+                .map(|e| e.state().decks[deck].tempo_range)
+                .unwrap_or_default();
+            let ratio = (start_tempo + (start_y - y) as f64 / 140. * range.extent() * 2.)
+                .clamp(1. - range.extent(), 1. + range.extent());
+            self.send(deck, DeckAction::SetTempo { ratio });
+            cx.notify();
+            return;
+        }
         let bounds = self.pitch_areas[deck].get();
         let fraction = ((y - bounds.origin.y.as_f32() - 5.)
             / (bounds.size.height.as_f32() - 10.).max(1.))
@@ -991,7 +963,121 @@ impl Shell {
         );
         cx.notify();
     }
+    fn four_deck_pitch_control(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let range = state.tempo_range;
+        let tempo = state.tempo;
+        let colour = deck_colour(deck);
+        let value = (((tempo - 1.) / range.extent()) * 0.5 + 0.5).clamp(0., 1.) as f32;
+        let base = smooth_knob_svg(value, 0.5, false);
+        let highlight = smooth_knob_svg(value, 0.5, true);
+        let adjustment = (tempo - 1.) * 100.;
+        let tempo_tooltip = if state.key_lock {
+            "Key Lock on: changing tempo preserves the musical key. Drag vertically or scroll to adjust."
+        } else {
+            "Key Lock off: changing tempo also changes pitch and musical key. Drag vertically or scroll to adjust."
+        };
+        div()
+            .flex()
+            .flex_col()
+            .w(px(62.))
+            .h(px(96.))
+            .flex_shrink_0()
+            .gap(px(4.))
+            .child(
+                Button::new(("pitch-range", deck))
+                    .outline()
+                    .xsmall()
+                    .rounded(ButtonRounded::None)
+                    .w_full()
+                    .h(px(29.))
+                    .p_0()
+                    .bg(cx.theme().secondary.opacity(0.5))
+                    .label(format!("±{}%", range.percent()))
+                    .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.send(
+                            deck,
+                            DeckAction::SetTempoRange {
+                                range: range.next(),
+                            },
+                        );
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id(("pitch-knob", deck))
+                    .flex()
+                    .w_full()
+                    .h(px(30.))
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().secondary.opacity(0.5))
+                    .tooltip(move |window, cx| Tooltip::new(tempo_tooltip).build(window, cx))
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(29.))
+                            .h(px(29.))
+                            .child(
+                                Icon::default()
+                                    .data(base.as_bytes())
+                                    .text_color(rgb(0x727a83))
+                                    .size_full(),
+                            )
+                            .child(
+                                div().absolute().top_0().left_0().size_full().child(
+                                    Icon::default()
+                                        .data(highlight.as_bytes())
+                                        .text_color(colour)
+                                        .size_full(),
+                                ),
+                            ),
+                    )
+                    .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
+                        this.wheel_tempo(deck, event, cx);
+                        cx.stop_propagation();
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.pitch_drag = Some(deck);
+                            this.pitch_knob_start = Some((event.position.y.as_f32(), tempo));
+                            cx.stop_propagation();
+                        }),
+                    ),
+            )
+            .child(
+                Button::new(("tempo-reset", deck))
+                    .outline()
+                    .xsmall()
+                    .rounded(ButtonRounded::None)
+                    .w_full()
+                    .h(px(29.))
+                    .p_0()
+                    .bg(cx.theme().secondary.opacity(0.5))
+                    .label(if adjustment.abs() < 0.05 {
+                        "0.0%".to_owned()
+                    } else {
+                        format!("{adjustment:+.1}%")
+                    })
+                    .tooltip("Gradually return tempo to zero adjustment.")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tempo_returns[deck] = Some((tempo, Instant::now()));
+                        cx.notify();
+                    })),
+            )
+    }
+
     fn pitch_control(&self, deck: usize, state: &DeckState, cx: &mut Context<Self>) -> Div {
+        if self.settings.four_decks {
+            return self.four_deck_pitch_control(deck, state, cx);
+        }
         let area = self.pitch_areas[deck].clone();
         let four_decks = self.settings.four_decks;
         let colour = deck_colour(deck);

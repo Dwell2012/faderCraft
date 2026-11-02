@@ -336,21 +336,19 @@ impl Shell {
             .opacity(if disabled { 0.5 } else { 1. })
             .flex()
             .items_center()
+            .w_full()
             .gap_1()
-            .p_1()
-            .rounded_md()
-            .border_1()
-            .border_color(if fx.active_in_slot(slot) {
-                accent.into()
-            } else {
-                cx.theme().border
+            .when(!compact, |row| {
+                row.p_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if fx.active_in_slot(slot) {
+                        accent.into()
+                    } else {
+                        cx.theme().border
+                    })
             })
-            .when(compact, |row| {
-                row.h(px(28.))
-                    .p_0()
-                    .gap(px(2.))
-                    .border_color(cx.theme().border.opacity(0.))
-            });
+            .when(compact, |row| row.h(px(29.)).gap(px(2.)));
         let selector = div()
             .flex()
             .flex_1()
@@ -368,7 +366,7 @@ impl Shell {
                         .when(compact, |button| {
                             button
                                 .w_full()
-                                .h(px(28.))
+                                .h(px(29.))
                                 .p_0()
                                 .rounded(ButtonRounded::None)
                                 .bg(cx.theme().secondary.opacity(0.4))
@@ -434,7 +432,7 @@ impl Shell {
                             button
                                 .w(px(28.))
                                 .min_w_0()
-                                .h(px(28.))
+                                .h(px(29.))
                                 .px_1()
                                 .rounded(ButtonRounded::None)
                                 .bg(cx.theme().secondary.opacity(0.4))
@@ -479,7 +477,7 @@ impl Shell {
                             button
                                 .rounded(ButtonRounded::None)
                                 .w(px(28.))
-                                .h(px(28.))
+                                .h(px(29.))
                                 .p_0()
                                 .bg(cx.theme().secondary.opacity(0.4))
                         })
@@ -500,7 +498,7 @@ impl Shell {
                 .child(
                     div()
                         .w(px(36.))
-                        .h(px(28.))
+                        .h(px(29.))
                         .flex()
                         .flex_shrink_0()
                         .items_center()
@@ -577,17 +575,18 @@ impl Shell {
         let mut panel = div()
             .flex()
             .flex_col()
+            .w_full()
             .gap_1()
-            .p_2()
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded_md();
-        if view == 0 {
-            panel = panel
-                .p_0()
-                .gap(px(2.))
-                .border_color(cx.theme().border.opacity(0.));
-        }
+            .when(view == 0, |panel| {
+                panel.h_full().justify_between().gap(px(4.))
+            })
+            .when(view != 0, |panel| {
+                panel
+                    .p_2()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded_md()
+            });
         let mut header = div()
             .flex()
             .items_center()
@@ -663,7 +662,7 @@ impl Shell {
         if self.settings.four_decks {
             header = header.child(self.effect_timing_options(deck, state.effect_beats, cx));
         }
-        if view != 0 || self.settings.four_decks {
+        if view != 0 && !self.settings.four_decks {
             panel = panel.child(header);
         }
         match view {

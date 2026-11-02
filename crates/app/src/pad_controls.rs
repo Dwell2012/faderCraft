@@ -1693,7 +1693,7 @@ impl Shell {
         let page = self.pads[deck].page;
         let sixteen = self.effect_view[deck] == 4;
         let split = if sixteen { None } else { self.pads[deck].split };
-        let compact = !self.settings.four_decks && !upper;
+        let compact = !upper;
         let accent = deck_colour(deck);
         let mut panel = div()
             .flex()

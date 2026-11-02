@@ -302,6 +302,42 @@ Feature set modelled on Mixed In Key 10.
 - [x] Centre mixer: trim (+/-12 dB), channel and master faders, crossfader
       with Smooth, Equal Power and Cut curves; smoothed audio gain changes.
       Vertical faders expand with panel height; master meters span the knob area
+- [x] Four-deck mixer uses C/A/B/D channel order, full-width MIXER and OUTPUT tabs,
+      grey control groups with 4px gaps, and horizontal master meters in the header.
+      Master, sampler, headphones, and mic controls live on OUTPUT.
+      The four channel meters sit together in the same order at the centre; each deck has one
+      colour-coded group with trim, EQ, Colour FX, then a compact volume knob.
+      Their meters use the same spaced clip light as the two-deck view; each
+      crossfader side has a 2×2 grid of square 29px deck-routing buttons in
+      A/B then C/D order. Channel groups use colour accents without deck letters.
+      Four-deck control groups now end beneath the volume knob, with the
+      crossfader row following after a 4px gap instead of filling spare height.
+      Four-deck labels briefly switch to values during adjustment, then return
+      after two seconds, matching the two-deck control-label behavior.
+- [x] Two-deck mixer EQ and trim/volume columns carry the same thin deck-colour
+      top accents as the four-deck control groups.
+- [x] Four-deck track headers reuse the two-deck title/artwork, BPM/key, and
+      elapsed/remaining layout, with a 29px overview/timing strip and 4px gaps.
+      The lower four-deck controls no longer repeat BPM, key, or remaining time;
+      compact load/unload, cue, and sync controls sit beside play and deck/cue
+      selection, with a pitch knob nearest the mixer; the Stems button is absent
+      from this layout.
+      In four-deck mode the header is 40px high with title and artist on one
+      line; key controls move beside elapsed/remaining times, without beat marks.
+      B and D mirror the key/timing order across the mixer.
+      Crossfader routing buttons follow A/B/C/D order; deck slots retain
+      their original A/C and B/D positions.
+      Four-deck Pads, Effects, and Loops now occupy the space beside transport
+      controls, with vertical tabs mirrored at the outer edge of each deck.
+      Selecting a tab shows that section; selecting it again opens its page
+      menu. Effects opens by default, followed by Pads and Loops toward the
+      mixer. Each vertical tab has its own settings cog, and the tabs and open
+      section align with the 96px transport controls. The four-deck Effects
+      section no longer repeats a header. The former cross-deck tools overlay
+      is removed.
+      Four-deck Effects uses three 29px rows with 4px gaps. All three tool
+      sections have 4px padding at the label end only. A scaled two-deck platter sits between
+      the tool sections and transport controls with a 4px horizontal gap.
 - [x] Three-band complementary EQ (250 Hz / 2.5 kHz crossovers, neutral
       centre, band kill to +6 dB); drag knobs vertically, double-click to reset
 - [ ] Channel filter

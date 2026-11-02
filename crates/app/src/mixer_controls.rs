@@ -38,32 +38,6 @@ pub(super) fn smooth_knob_svg(value: f32, neutral: f32, highlight: bool) -> Stri
     )
 }
 
-fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
-    canvas(
-        |_, _, _| (),
-        move |bounds, _, window, _| {
-            for (deck, color) in [0xc8ff38, 0x3864e8].into_iter().enumerate() {
-                let mut path = gpui_kit::PathBuilder::stroke(px(1.3));
-                for step in 0..=40 {
-                    let position = step as f32 / 40.;
-                    let gain = djcraft_engine::crossfader_gains(position, curve)[deck];
-                    let p = bounds.origin + point(px(7. + position * 26.), px(15. - gain * 10.));
-                    if step == 0 {
-                        path.move_to(p);
-                    } else {
-                        path.line_to(p);
-                    }
-                }
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, rgb(color));
-                }
-            }
-        },
-    )
-    .w(px(40.))
-    .h(px(20.))
-}
-
 // Preserve A/B and bus control IDs; C/D append their own independent controls.
 pub(super) const CONTROL_COUNT: usize = 46;
 pub(super) fn channel_index(deck: usize) -> usize {
@@ -549,58 +523,74 @@ impl Shell {
         } else {
             self.crossfader_routing.left
         };
-        div().flex().gap(px(2.)).children(
-            (0..DECKS)
-                .map(|deck| {
-                    Button::new((if right { "cross-right" } else { "cross-left" }, deck))
-                        .xsmall()
-                        .outline()
-                        .rounded(ButtonRounded::Size(px(999.)))
-                        .w(px(20.))
-                        .h(px(20.))
-                        .p_0()
-                        .label(deck_label(deck))
-                        .selected(mask & (1 << deck) != 0)
-                        .text_color(cx.theme().muted_foreground)
-                        .when(mask & (1 << deck) != 0, |button| {
-                            button
-                                .bg(Hsla::from(deck_colour(deck)))
-                                .border_color(deck_colour(deck))
-                                .text_color(rgb(0x090b0e))
-                        })
-                        .tooltip(if right {
-                            "Toggle this deck on the right crossfader side."
-                        } else {
-                            "Toggle this deck on the left crossfader side."
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let mut routing = this.crossfader_routing;
-                            if right {
-                                routing.right ^= 1 << deck;
-                            } else {
-                                routing.left ^= 1 << deck;
-                            }
-                            if let Some(engine) = &mut this.engine
-                                && engine
-                                    .apply(
-                                        Role::Host,
-                                        Action::Mixer {
-                                            action: MixerAction::SetCrossfaderRouting { routing },
-                                        },
-                                    )
-                                    .is_ok()
-                            {
-                                this.crossfader_routing = routing;
-                                this.settings.crossfader_routing = routing;
-                                if let Err(error) =
-                                    this.settings.save(&crate::storage::machine_dir())
-                                {
-                                    eprintln!("Could not save crossfader routing: {error}");
-                                }
-                                cx.set_global(this.settings.clone());
-                            }
-                            cx.notify();
-                        }))
+        div().flex().flex_col().gap(px(4.)).children(
+            (0..2)
+                .map(|row| {
+                    div().flex().gap(px(4.)).children(
+                        (0..2)
+                            .map(|col| {
+                                let deck = row * 2 + col;
+                                Button::new((
+                                    if right { "cross-right" } else { "cross-left" },
+                                    deck,
+                                ))
+                                .xsmall()
+                                .outline()
+                                .rounded(ButtonRounded::None)
+                                .w(px(29.))
+                                .h(px(29.))
+                                .p_0()
+                                .label(deck_label(deck))
+                                .selected(mask & (1 << deck) != 0)
+                                .text_color(cx.theme().muted_foreground)
+                                .when(mask & (1 << deck) != 0, |button| {
+                                    button
+                                        .bg(Hsla::from(deck_colour(deck)))
+                                        .border_color(deck_colour(deck))
+                                        .text_color(rgb(0x090b0e))
+                                })
+                                .tooltip(if right {
+                                    "Toggle this deck on the right crossfader side."
+                                } else {
+                                    "Toggle this deck on the left crossfader side."
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let mut routing = this.crossfader_routing;
+                                        if right {
+                                            routing.right ^= 1 << deck;
+                                        } else {
+                                            routing.left ^= 1 << deck;
+                                        }
+                                        if let Some(engine) = &mut this.engine
+                                            && engine
+                                                .apply(
+                                                    Role::Host,
+                                                    Action::Mixer {
+                                                        action: MixerAction::SetCrossfaderRouting {
+                                                            routing,
+                                                        },
+                                                    },
+                                                )
+                                                .is_ok()
+                                        {
+                                            this.crossfader_routing = routing;
+                                            this.settings.crossfader_routing = routing;
+                                            if let Err(error) =
+                                                this.settings.save(&crate::storage::machine_dir())
+                                            {
+                                                eprintln!(
+                                                    "Could not save crossfader routing: {error}"
+                                                );
+                                            }
+                                            cx.set_global(this.settings.clone());
+                                        }
+                                        cx.notify();
+                                    },
+                                ))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
                 })
                 .collect::<Vec<_>>(),
         )
@@ -685,7 +675,9 @@ impl Shell {
             return;
         };
         let area = self.mixer_areas[index].get();
-        let value = if is_knob(index) || index == 10 {
+        let four_deck_volume = self.settings.four_decks
+            && control_deck(index).is_some_and(|deck| index == channel_index(deck) + 4);
+        let value = if is_knob(index) || index == 10 || four_deck_volume {
             start_value + (start_y - position.y.as_f32()) / 140.
         } else if index == 11 {
             (position.x - area.origin.x - px(8.)).as_f32()
@@ -704,7 +696,9 @@ impl Shell {
     ) -> AnyElement {
         let value = self.mixer_values[index];
         let area = self.mixer_areas[index].clone();
-        let knob = is_knob(index) || index == 10;
+        let four_deck_volume = self.settings.four_decks
+            && control_deck(index).is_some_and(|deck| index == channel_index(deck) + 4);
+        let knob = is_knob(index) || index == 10 || four_deck_volume;
         let enabled = !is_stem(index)
             || self
                 .engine
@@ -777,9 +771,7 @@ impl Shell {
             },
         )
         .w_full()
-        .when(knob, |this| {
-            this.h(px(if self.settings.four_decks { 22. } else { 46. }))
-        })
+        .when(knob, |this| this.h(px(if four_decks { 22. } else { 46. })))
         .when(horizontal, |this| this.h(px(22.)))
         .when(!knob && !horizontal, |this| {
             this.flex_1()
@@ -864,15 +856,7 @@ impl Shell {
                     .w_full()
                     .text_center()
                     .text_size(px(10.))
-                    .when(index >= 41 && self.settings.four_decks, |label_box| {
-                        label_box
-                            .child(div().child(label))
-                            .child(div().child(value_label(index, value)))
-                    })
-                    .when(index < 41 && self.settings.four_decks, |label_box| {
-                        label_box.child(format!("{label} {}", value_label(index, value)))
-                    })
-                    .when(!self.settings.four_decks && !matches!(index, 4 | 9 | 11), |label_box| {
+                    .when(self.settings.four_decks || !matches!(index, 4 | 9 | 11), |label_box| {
                         let show_value = self.mixer_last_change[index].is_some_and(|at| at.elapsed().as_secs_f32() < 2.);
                         label_box.child(if show_value { value_label(index, value) } else { label.to_owned() })
                     }),
@@ -906,6 +890,8 @@ impl Shell {
                                 std::f32::consts::FRAC_1_SQRT_2
                             } else if index == 22 {
                                 0.
+                            } else if four_deck_volume {
+                                1.
                             } else if is_knob(index) || index == 11 {
                                 0.5
                             } else {
@@ -930,43 +916,27 @@ impl Shell {
         let peak = self.mixer_peaks[index];
         let level = ((20. * peak.max(0.00001).log10() + 48.) / 48.).clamp(0., 1.);
         let clip_lit = self.mixer_clip_until[index].is_some_and(|until| until > Instant::now());
-        let four_decks = self.settings.four_decks;
         div()
             .flex()
             .flex_col()
             .items_center()
-            .when(four_decks, |meter| meter.gap_1())
             .min_h_0()
             .when(index >= DECKS, |meter| meter.flex_1())
             .when(index < DECKS, |meter| meter.h_full().flex_shrink_0())
-            .when(four_decks, |meter| {
-                meter.child(
-                    div()
-                        .text_size(px(8.))
-                        .text_color(if peak >= 1. {
-                            rgb(0xff5555)
-                        } else {
-                            rgb(0x69717d)
-                        })
-                        .child(if index >= DECKS { "" } else { "CLIP" }),
-                )
-            })
             .child(
                 canvas(
                     |_, _, _| (),
                     move |bounds, _, window, _| {
-                        let clip_space = if four_decks { 0. } else { 8. };
+                        let clip_space = 8.;
                         let step = (bounds.size.height.as_f32() - clip_space).max(0.) / 24.;
-                        if !four_decks {
-                            window.paint_quad(fill(
-                                Bounds::new(bounds.origin, size(px(7.), px(5.))),
-                                if clip_lit {
-                                    rgb(0xff5555)
-                                } else {
-                                    rgb(0x3d2527)
-                                },
-                            ));
-                        }
+                        window.paint_quad(fill(
+                            Bounds::new(bounds.origin, size(px(7.), px(5.))),
+                            if clip_lit {
+                                rgb(0xff5555)
+                            } else {
+                                rgb(0x3d2527)
+                            },
+                        ));
                         for segment in 0..24 {
                             let color = if segment as f32 / 24. >= level {
                                 rgb(0x252b33)
@@ -1025,6 +995,8 @@ impl Shell {
             .h_full()
             .gap(px(4.))
             .p(px(4.))
+            .border_t_2()
+            .border_color(deck_colour(deck))
             .bg(cx.theme().secondary.opacity(0.5))
             .when(controls.len() > 3, |group| group.overflow_y_scroll())
             .children(controls)
@@ -1039,6 +1011,8 @@ impl Shell {
             .min_h_0()
             .gap(px(4.))
             .p(px(4.))
+            .border_t_2()
+            .border_color(deck_colour(deck))
             .bg(cx.theme().secondary.opacity(0.5))
             .child(self.mixer_control(channel_index(deck), "TRIM", cx))
             .child(div().flex_1().min_h_0().w_full().child(self.mixer_control(
@@ -1048,195 +1022,99 @@ impl Shell {
             )))
     }
 
-    pub(super) fn mixer_panel(&self, cx: &mut Context<Self>) -> Div {
-        let knobs = |deck: usize, cx: &mut Context<Self>| {
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .w(px(if self.settings.four_decks { 50. } else { 78. }))
-                .gap_1()
-                .child(div().text_xs().child(deck_label(deck)))
-                .child(self.mixer_control(channel_index(deck), "TRIM", cx))
-                .children(match self.deck_eq_modes[deck] {
-                    EqMode::Classic => ["HIGH", "MID", "LOW"]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, label)| {
-                            self.mixer_control(channel_index(deck) + i + 1, label, cx)
-                        })
-                        .collect::<Vec<_>>(),
-                    mode => {
-                        let labels: &[&'static str] = match mode {
-                            EqMode::EzRemix => &["VOCAL", "INSTR", "BEAT"],
-                            EqMode::Modern => &["DRUMS", "MEL/VOX", "BASS"],
-                            _ => &["VOCAL", "INSTR", "BASS", "DRUMS"],
-                        };
-                        labels
-                            .iter()
-                            .enumerate()
-                            .map(|(i, &label)| self.mixer_control(stem_index(deck) + i, label, cx))
-                            .collect()
-                    }
-                })
-                .when(self.settings.four_decks, |column| {
-                    column.child(self.colour_fx_control(deck, cx))
-                })
+    fn four_deck_controls(&self, deck: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let eq_controls = match self.deck_eq_modes[deck] {
+            EqMode::Classic => ["HIGH", "MID", "LOW"]
+                .into_iter()
+                .enumerate()
+                .map(|(i, label)| self.mixer_control(channel_index(deck) + i + 1, label, cx))
+                .collect::<Vec<_>>(),
+            mode => {
+                let labels: &[&'static str] = match mode {
+                    EqMode::EzRemix => &["VOCAL", "INSTR", "BEAT"],
+                    EqMode::Modern => &["DRUMS", "MEL/VOX", "BASS"],
+                    _ => &["VOCAL", "INSTR", "BASS", "DRUMS"],
+                };
+                labels
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &label)| self.mixer_control(stem_index(deck) + i, label, cx))
+                    .collect()
+            }
         };
-        if self.settings.four_decks {
-            return div()
-                .flex()
-                .flex_col()
-                .w(px(360.))
-                .flex_shrink_0()
-                .p_2()
-                .gap_2()
-                .border_1()
-                .border_color(cx.theme().border)
-                .rounded_lg()
-                .child(div().text_xs().text_center().child("MIXER"))
-                .child({
-                    let mut row = div().flex().flex_1().min_h_0().gap_1();
-                    for (position, deck) in [0, 2, 1, 3].into_iter().enumerate() {
-                        let controls = div()
+        div()
+            .id(("four-deck-controls", deck))
+            .flex()
+            .flex_col()
+            .w(px(55.))
+            .min_h_0()
+            .gap(px(4.))
+            .p(px(4.))
+            .border_t_2()
+            .border_color(deck_colour(deck))
+            .bg(cx.theme().secondary.opacity(0.5))
+            .when(eq_controls.len() > 3, |group| group.overflow_y_scroll())
+            .child(self.mixer_control(channel_index(deck), "TRIM", cx))
+            .children(eq_controls)
+            .child(self.colour_fx_control(deck, cx))
+            .child(self.mixer_control(channel_index(deck) + 4, "VOL", cx))
+    }
+
+    fn four_deck_mixer_content(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .p(px(4.))
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .gap(px(4.))
+                    .child(self.four_deck_controls(FOUR_DECK_ORDER[0], cx))
+                    .child(self.four_deck_controls(FOUR_DECK_ORDER[1], cx))
+                    .child(
+                        div()
                             .flex()
-                            .flex_col()
                             .h_full()
-                            .w(px(50.))
-                            .gap_1()
-                            .child(knobs(deck, cx))
-                            .child(div().flex_1().min_h_0().w_full().child(self.mixer_control(
-                                channel_index(deck) + 4,
-                                "VOL",
-                                cx,
-                            )));
-                        row = row.child(
-                            div()
-                                .flex()
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .gap_1()
-                                .when(deck % 2 == 1, |channel| channel.flex_row_reverse())
-                                .when(position == 0 || position == 2, |channel| {
-                                    channel
-                                        .border_r_1()
-                                        .border_color(cx.theme().border.opacity(0.55))
-                                        .pr_1()
-                                })
-                                .child(self.meter(deck))
-                                .child(controls),
-                        );
-                        if position == 1 {
-                            row = row.child(
-                                div()
-                                    .flex()
-                                    .h_full()
-                                    .gap(px(2.))
-                                    .px_1()
-                                    .border_l_1()
-                                    .border_r_1()
-                                    .border_color(cx.theme().border.opacity(0.55))
-                                    .child(div().w(px(7.)).h_full().flex().child(self.meter(DECKS)))
-                                    .child(
-                                        div()
-                                            .w(px(7.))
-                                            .h_full()
-                                            .flex()
-                                            .child(self.meter(DECKS + 1)),
-                                    ),
-                            );
-                        }
-                    }
-                    row
-                })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .w(relative(0.4))
-                                .min_w_0()
-                                .child(div().flex_1().child(self.mixer_control(20, "SAMPLE", cx))),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.mixer_control(10, "MASTER", cx)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.mixer_control(21, "CUE", cx)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(self.mixer_control(22, "MIX", cx)),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(self.crossfader_selectors(false, cx))
-                        .child(div().flex_1().min_w_0().child(self.mixer_control(
-                            11,
-                            "CROSSFADE",
-                            cx,
-                        )))
-                        .child(self.crossfader_selectors(true, cx)),
-                )
-                .child(
-                    div().flex().justify_center().gap_1().children(
-                        [
-                            (CrossfaderCurve::Smooth, "Smooth"),
-                            (CrossfaderCurve::EqualPower, "Equal power"),
-                            (CrossfaderCurve::Cut, "Cut"),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (curve, label))| {
-                            Button::new(("four-cross-curve", i))
-                                .tooltip(label)
-                                .xsmall()
-                                .outline()
-                                .child(curve_icon(curve))
-                                .selected(self.mixer_curve == curve)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(engine) = &mut this.engine {
-                                        let _ = engine.apply(
-                                            Role::Host,
-                                            Action::Mixer {
-                                                action: MixerAction::SetCrossfaderCurve { curve },
-                                            },
-                                        );
-                                    }
-                                    this.settings.crossfader_curve = curve;
-                                    if let Err(error) =
-                                        this.settings.save(&crate::storage::machine_dir())
-                                    {
-                                        eprintln!("Could not save crossfader curve: {error}");
-                                    }
-                                    cx.set_global(this.settings.clone());
-                                    cx.notify();
-                                }))
-                        })
-                        .collect::<Vec<_>>(),
-                    ),
-                );
-        }
+                            .w(px(40.))
+                            .gap(px(4.))
+                            .children(FOUR_DECK_ORDER.into_iter().map(|deck| self.meter(deck))),
+                    )
+                    .child(self.four_deck_controls(FOUR_DECK_ORDER[2], cx))
+                    .child(self.four_deck_controls(FOUR_DECK_ORDER[3], cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap(px(4.))
+                    .items_center()
+                    .child(self.crossfader_selectors(false, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(62.))
+                            .items_center()
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(self.mixer_control(11, "CROSSFADE", cx)),
+                    )
+                    .child(self.crossfader_selectors(true, cx)),
+            )
+    }
+
+    pub(super) fn mixer_panel(&self, cx: &mut Context<Self>) -> Div {
         let panel = div()
             .flex()
             .flex_col()
-            .w(px(252.))
+            .w(px(if self.settings.four_decks { 286. } else { 252. }))
             .flex_shrink_0()
             .border_1()
             .border_color(cx.theme().border)
@@ -1250,6 +1128,9 @@ impl Shell {
                     .p(px(4.))
                     .child(self.mixer_output_panel(cx)),
             );
+        }
+        if self.settings.four_decks {
+            return panel.child(self.four_deck_mixer_content(cx));
         }
         let content = div()
             .flex()
@@ -1446,33 +1327,6 @@ mod tests {
                 action: MixerAction::SetMasterGain { level: 0.25 },
             }
         );
-    }
-
-    fn curve_icon(curve: CrossfaderCurve) -> impl IntoElement {
-        canvas(
-            |_, _, _| (),
-            move |bounds, _, window, _| {
-                for (deck, color) in [0xc8ff38, 0x3864e8].into_iter().enumerate() {
-                    let mut path = gpui_kit::PathBuilder::stroke(px(1.3));
-                    for step in 0..=40 {
-                        let position = step as f32 / 40.;
-                        let gain = djcraft_engine::crossfader_gains(position, curve)[deck];
-                        let p =
-                            bounds.origin + point(px(7. + position * 26.), px(15. - gain * 10.));
-                        if step == 0 {
-                            path.move_to(p);
-                        } else {
-                            path.line_to(p);
-                        }
-                    }
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, rgb(color));
-                    }
-                }
-            },
-        )
-        .w(px(40.))
-        .h(px(20.))
     }
 
     #[core::prelude::v1::test]

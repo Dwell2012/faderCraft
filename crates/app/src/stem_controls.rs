@@ -4,48 +4,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU8;
 
 impl Shell {
-    pub(super) fn prepare_stems_button(&self, deck: usize, cx: &Context<Self>) -> Button {
-        let track = self.engine.as_ref().and_then(|e| e.track(deck));
-        let ready = track.is_some_and(|track| track.stems_ready());
-        let label = if self.stem_busy[deck] {
-            match self.stem_progress[deck].load(std::sync::atomic::Ordering::Relaxed) {
-                255 => "Queued".to_owned(),
-                254 => "Loading…".to_owned(),
-                percent if self.settings.four_decks => format!("{percent}%"),
-                percent => format!("Stems {percent}%"),
-            }
-        } else if self.stem_status[deck].contains(crate::stems::AUTO_TIMEOUT) {
-            "Stopped".to_owned()
-        } else if ready {
-            if self.settings.four_decks {
-                "Ready"
-            } else {
-                "Stems ready"
-            }
-            .to_owned()
-        } else {
-            "Stems".to_owned()
-        };
-        Button::new(("prepare-deck", deck))
-            .xsmall()
-            .outline()
-            .label(label)
-            .tooltip(if self.stem_status[deck].is_empty() {
-                "Prepare and cache stems locally. Manual retry has no automatic 20% cutoff."
-                    .to_owned()
-            } else {
-                self.stem_status[deck].clone()
-            })
-            .disabled(
-                self.stem_busy[deck] || ready || !track.is_some_and(|track| track.is_complete()),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(track) = this.engine.as_ref().and_then(|e| e.track(deck)).cloned() {
-                    this.start_stem_job(deck, track, true, false, cx);
-                }
-            }))
-    }
-
     pub(super) fn eq_mode_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let view = cx.weak_entity();
         let current = self.eq_mode;

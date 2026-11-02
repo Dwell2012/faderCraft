@@ -56,6 +56,131 @@ impl Shell {
         }
     }
 
+    pub(super) fn deck_header_key_controls(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        cx: &Context<Self>,
+    ) -> Div {
+        let accent = deck_colour(deck);
+        let key = self.deck_keys[deck]
+            .map(|k| {
+                let offset = state.key_shift as f64
+                    + if state.key_lock {
+                        0.
+                    } else {
+                        12. * state.tempo.log2()
+                    };
+                k.shifted(offset.round() as i32).to_string()
+            })
+            .unwrap_or_else(|| "\u{2014}".into());
+        let key_hover = self.key_hover_text(deck, state);
+        div()
+            .flex()
+            .w(px(132.))
+            .h(px(29.))
+            .flex_shrink_0()
+            .items_center()
+            .gap(px(4.))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(4.))
+                    .children((0..3).map(|position| {
+                        if position == 1 {
+                            let hover = key_hover.clone();
+                            return div()
+                                .id(("header-key-value", deck))
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .w(px(33.))
+                                .flex_shrink_0()
+                                .min_w_0()
+                                .h(px(29.))
+                                .bg(cx.theme().secondary.opacity(0.5))
+                                .child(
+                                    div()
+                                        .id(("header-key-info", deck))
+                                        .text_size(px(9.))
+                                        .line_height(px(9.))
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("KEY"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .line_height(px(12.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(key.clone()),
+                                )
+                                .tooltip(move |window, cx| {
+                                    Tooltip::new(hover.clone()).build(window, cx)
+                                })
+                                .into_any_element();
+                        }
+                        let direction = usize::from(position == 2);
+                        let step = if direction == 0 { -1. } else { 1. };
+                        Button::new(("header-key-step", deck * 2 + direction))
+                            .xsmall()
+                            .outline()
+                            .rounded(ButtonRounded::None)
+                            .w(px(29.))
+                            .h(px(29.))
+                            .min_w_0()
+                            .p_0()
+                            .label(if direction == 0 { "−" } else { "+" })
+                            .disabled(state.track.is_none())
+                            .tooltip(if direction == 0 {
+                                "Lower key by one semitone."
+                            } else {
+                                "Raise key by one semitone."
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(engine) = this.engine.as_mut() {
+                                    let semitones = (engine.state().decks[deck].key_shift + step)
+                                        .clamp(-12., 12.);
+                                    this.send(deck, DeckAction::SetKeyShift { semitones });
+                                    cx.notify();
+                                }
+                            }))
+                            .into_any_element()
+                    })),
+            )
+            .child(
+                div().flex().flex_shrink_0().child(
+                    Button::new(("header-key-lock", deck))
+                        .xsmall()
+                        .outline()
+                        .rounded(ButtonRounded::None)
+                        .w(px(29.))
+                        .h(px(29.))
+                        .min_w_0()
+                        .p_0()
+                        .icon(IconName::Lock)
+                        .selected(state.key_lock)
+                        .when(state.key_lock, |button| {
+                            button.bg(Hsla::from(accent)).text_color(rgb(0x070b12))
+                        })
+                        .tooltip("Master tempo: preserve musical key when changing speed.")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let on = this
+                                .engine
+                                .as_mut()
+                                .map(|e| !e.state().decks[deck].key_lock)
+                                .unwrap_or(true);
+                            this.send(deck, DeckAction::SetKeyLock { on });
+                            cx.notify();
+                        })),
+                ),
+            )
+    }
+
     pub(super) fn compact_deck_header(
         &self,
         deck: usize,
@@ -84,25 +209,13 @@ impl Shell {
         let bpm = self.grids[deck]
             .map(|g| format!("{:.2}", g.bpm * state.tempo))
             .unwrap_or_else(|| "—".into());
-        let key = self.deck_keys[deck]
-            .map(|k| {
-                let offset = state.key_shift as f64
-                    + if state.key_lock {
-                        0.
-                    } else {
-                        12. * state.tempo.log2()
-                    };
-                k.shifted(offset.round() as i32).to_string()
-            })
-            .unwrap_or_else(|| "—".into());
-        let key_hover = self.key_hover_text(deck, state);
         div()
             .flex()
             .gap(px(4.))
             .when(deck % 2 == 1, |row| row.flex_row_reverse())
             .items_center()
             .min_w_0()
-            .h(px(73.))
+            .h(px(if self.settings.four_decks { 40. } else { 73. }))
             .flex_shrink_0()
             .child(
                 div()
@@ -151,31 +264,42 @@ impl Shell {
                             .flex_1()
                             .min_w_0()
                             .flex()
-                            .flex_col()
+                            .when(self.settings.four_decks, |text| text.items_center())
+                            .when(!self.settings.four_decks, |text| text.flex_col().gap_1())
                             .when(deck % 2 == 1, |text| text.text_right().pr(px(4.)))
                             .when(deck % 2 == 0, |text| text.pl(px(4.)))
-                            .gap_1()
                             .child(
                                 div()
+                                    .min_w_0()
+                                    .when(self.settings.four_decks, |line| line.w_full())
+                                    .when(self.settings.four_decks && deck % 2 == 1, |line| {
+                                        line.text_right()
+                                    })
                                     .truncate()
                                     .text_sm()
                                     .font_weight(FontWeight::BOLD)
-                                    .child(title),
+                                    .child(if self.settings.four_decks {
+                                        format!("{title} — {artist}").into()
+                                    } else {
+                                        title
+                                    }),
                             )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(artist),
-                            ),
+                            .when(!self.settings.four_decks, |text| {
+                                text.child(
+                                    div()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(artist),
+                                )
+                            }),
                     ),
             )
             .child(
                 div()
                     .w(px(132.))
                     .flex_shrink_0()
-                    .h_full()
+                    .h(px(if self.settings.four_decks { 40. } else { 73. }))
                     .flex()
                     .flex_col()
                     .gap(px(4.))
@@ -204,96 +328,9 @@ impl Shell {
                                 },
                             )),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .w_full()
-                            .h(px(29.))
-                            .flex_shrink_0()
-                            .items_center()
-                            .gap(px(4.))
-                            .child(div().flex().flex_1().min_w_0().items_center().justify_center().gap(px(4.))
-                            .children((0..3).map(|position| {
-                                if position == 1 {
-                                    let hover = key_hover.clone();
-                                    return div()
-                                        .id(("header-key-value", deck))
-                                        .flex()
-                                        .flex_col()
-                                        .items_center()
-                                        .justify_center()
-                                        .w(px(33.))
-                                        .flex_shrink_0()
-                                        .min_w_0()
-                                        .h(px(29.))
-                                        .bg(cx.theme().secondary.opacity(0.5))
-                                        .child(div()
-                                            .id(("header-key-info", deck))
-                                            .text_size(px(9.))
-                                            .line_height(px(9.))
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("KEY"))
-                                        .child(div().text_xs().line_height(px(12.)).font_weight(FontWeight::SEMIBOLD).child(key.clone()))
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new(hover.clone()).build(window, cx)
-                                        })
-                                        .into_any_element();
-                                }
-                                let direction = usize::from(position == 2);
-                                let step = if direction == 0 { -1. } else { 1. };
-                                Button::new(("header-key-step", deck * 2 + direction))
-                                    .xsmall()
-                                    .outline()
-                                    .rounded(ButtonRounded::None)
-                                    .w(px(29.))
-                                    .h(px(29.))
-                                    .min_w_0()
-                                    .p_0()
-                                    .label(if direction == 0 { "−" } else { "+" })
-                                    .disabled(state.track.is_none())
-                                    .tooltip(if direction == 0 {
-                                        "Lower key by one semitone."
-                                    } else {
-                                        "Raise key by one semitone."
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(engine) = this.engine.as_mut() {
-                                            let semitones = (engine.state().decks[deck].key_shift
-                                                + step)
-                                                .clamp(-12., 12.);
-                                            this.send(deck, DeckAction::SetKeyShift { semitones });
-                                            cx.notify();
-                                        }
-                                    }))
-                                    .into_any_element()
-                            })))
-                            .child(
-                                div().flex().flex_shrink_0().child(
-                                Button::new(("header-key-lock", deck))
-                                    .xsmall()
-                                    .outline()
-                                    .rounded(ButtonRounded::None)
-                                    .w(px(29.))
-                                    .h(px(29.))
-                                    .min_w_0()
-                                    .p_0()
-                                    .icon(IconName::Lock)
-                                    .selected(state.key_lock)
-                                    .when(state.key_lock, |button| button.bg(Hsla::from(accent)).text_color(rgb(0x070b12)))
-                                    .tooltip(
-                                        "Master tempo: preserve musical key when changing speed.",
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let on = this
-                                            .engine
-                                            .as_mut()
-                                            .map(|e| !e.state().decks[deck].key_lock)
-                                            .unwrap_or(true);
-                                        this.send(deck, DeckAction::SetKeyLock { on });
-                                        cx.notify();
-                                    }))),
-                            ),
-                    ),
+                    .when(!self.settings.four_decks, |controls| {
+                        controls.child(self.deck_header_key_controls(deck, state, cx))
+                    }),
             )
     }
 
@@ -393,12 +430,9 @@ impl Shell {
                             }),
                         ),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_center()
-                            .gap_2()
-                            .children((0..4).map(|i| {
+                    .when(!self.settings.four_decks, |times| {
+                        times.child(div().flex().justify_center().gap_2().children((0..4).map(
+                            |i| {
                                 div().w(px(22.)).h(px(3.)).rounded_sm().bg(
                                     if state.track.is_some() && beat == Some(i) {
                                         deck_colour(deck).into()
@@ -406,8 +440,9 @@ impl Shell {
                                         cx.theme().border
                                     },
                                 )
-                            })),
-                    ),
+                            },
+                        )))
+                    }),
             )
     }
 }
