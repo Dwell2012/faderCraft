@@ -281,6 +281,7 @@ impl SettingsView {
 
     fn change(&mut self, change: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {
         change(&mut self.settings);
+        self.models_downloaded = StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name()));
         cx.emit(SettingsEvent::Changed(self.settings.clone()));
         cx.notify();
     }
@@ -545,9 +546,26 @@ impl SettingsView {
                 ]
             }
             Page::Controllers => {
-                let fx1 = self.dropdown("controller-fx1-target", self.settings.controller_fx1_colour, &[false, true],
-                    |colour| if colour { "Selected CFX" } else { "Deck Effects" },
-                    |settings, colour| settings.controller_fx1_colour = colour, cx);
+                let profile = crate::controllers::read_mapping(&self.settings.controller_mapping).ok();
+                let mixtrack = profile.as_ref().is_some_and(crate::controllers::is_mixtrack_profile);
+                let fx1_colour = profile.as_ref().is_some_and(|profile| self.settings.controller_options_for(profile).fx1_colour);
+                let fx1_key = profile.as_ref().map(crate::controllers::controller_settings_key).unwrap_or_default();
+                let fx1_view = cx.weak_entity();
+                let fx1 = Button::new("controller-fx1-target").outline().w(px(200.))
+                    .label(if fx1_colour { "Selected CFX" } else { "Deck Effects" })
+                    .dropdown_caret(true).dropdown_menu(move |mut menu, _, _| {
+                        for colour in [false, true] {
+                            let view = fx1_view.clone();
+                            let key = fx1_key.clone();
+                            menu = menu.item(PopupMenuItem::new(if colour { "Selected CFX" } else { "Deck Effects" })
+                                .checked(colour == fx1_colour).on_click(move |_, _, cx| {
+                                    view.update(cx, |view, cx| view.change(|settings| {
+                                        settings.controller_options.entry(key.clone()).or_default().fx1_colour = colour;
+                                    }, cx)).ok();
+                                }));
+                        }
+                        menu
+                    });
                 let current = displayed_mapping(&self.settings.controller_mapping, self.controller_present).to_owned();
                 let choices = crate::controllers::mapping_choices();
                 let label = choices.iter().find(|(key, _)| key == &current).map(|(_, name)| name.clone())
@@ -575,13 +593,16 @@ impl SettingsView {
                         }
                         Err(error) => error,
                     }};
-                vec![self.section("Controller mapping", vec![
-                    self.row("FX 1 controls", "Route the first FX button and encoder to deck effect slot 1 or the deck's selected Colour FX combination.", fx1, cx),
+                let mut rows = vec![
                     self.row("Mapping", "Choosing a mapping applies it immediately. One matching controller connects automatically.", mapping, cx),
                     self.row("Custom mapping", "Load a faderCraft JSON mapping. The original file is kept unchanged and must remain available.", import, cx),
                     self.info(detail, cx).into_any_element(),
                     self.info(self.controller_notice.clone(), cx).into_any_element(),
-                ], cx)]
+                ];
+                if mixtrack {
+                    rows.push(self.row("FX 1 controls", "Route the MixTrack Pro II's first FX button and encoder to deck effect slot 1 or the deck's selected Colour FX combination.", fx1, cx));
+                }
+                vec![self.section("Controller mapping", rows, cx)]
             }
             Page::Audio => {
                 let backend = self.dropdown("audio-backend", if self.settings.audio_asio { 2u8 } else if self.settings.audio_exclusive { 1 } else { 0 }, &[0, 1, 2],
@@ -618,9 +639,6 @@ impl SettingsView {
                 let cue = self.dropdown("cue-pair", self.settings.audio_cue_pair.unwrap_or(u16::MAX), &[u16::MAX, 0, 2, 4, 6],
                     |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
                     |s, n| s.audio_cue_pair = if n == u16::MAX { None } else { Some(n) }, cx);
-                let stems = self.dropdown("stem-device", self.settings.stem_gpu, &[true, false],
-                    |gpu| if gpu { "Auto (GPU preferred)" } else { "CPU only" },
-                    |s, gpu| s.stem_gpu = gpu, cx);
                 let model = self.dropdown("stem-model", self.settings.stem_model, &StemModel::ALL,
                     StemModel::label, |s, model| s.stem_model = model, cx);
                 let fast_download = self.model_download_button(StemModel::Fast, 0, cx);
@@ -628,8 +646,7 @@ impl SettingsView {
                 let mut stem_rows = vec![
                     self.row("Separation model", "Reload a deck after switching. Each model keeps its own stem cache.", model, cx),
                     self.row("Fast model", "Demucs: quicker four-stem separation.", fast_download, cx),
-                    self.row("Detailed model", "Fine-tuned Demucs: potentially cleaner separation, around four times slower.", detailed_download, cx),
-                    self.row("Processing device", "Applies to new jobs. Automatic falls back to CPU if needed; CPU uses at most four threads. Prepared stems stay cached.", stems, cx),
+                    self.row("Detailed model", "Four fine-tuned ONNX specialists (about 1.3 GB total). Slower, potentially cleaner separation.", detailed_download, cx),
                 ];
                 if !self.model_notice.is_empty() {
                     stem_rows.push(self.row("Download status", "", self.info(self.model_notice.clone(), cx), cx));

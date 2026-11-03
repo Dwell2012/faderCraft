@@ -5,6 +5,7 @@ mod flow_view;
 mod library_view;
 mod lookup_view;
 mod loop_store;
+mod onnx_stems;
 mod organise_view;
 mod pad_store;
 mod performance_settings;

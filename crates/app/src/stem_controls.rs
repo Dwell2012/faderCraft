@@ -1,9 +1,41 @@
 use super::*;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 impl Shell {
+    pub(super) fn sync_library_stem_states(&self, cx: &mut Context<Self>) {
+        use crate::library_view::StemState;
+        let mut states: std::collections::HashMap<PathBuf, StemState> = self
+            .ready_stem_paths
+            .iter()
+            .map(|path| (path.clone(), StemState::Ready))
+            .collect();
+        let state = |progress: u8| {
+            if progress > 100 {
+                StemState::Queued
+            } else {
+                StemState::Progress(progress)
+            }
+        };
+        for (path, progress) in &self.library_stem_jobs {
+            states.insert(path.clone(), state(progress.load(Ordering::Relaxed)));
+        }
+        for deck in 0..DECKS {
+            if self.stem_busy[deck] {
+                if let Some(path) = &self.deck_paths[deck] {
+                    states.insert(
+                        path.clone(),
+                        state(self.stem_progress[deck].load(Ordering::Relaxed)),
+                    );
+                }
+            }
+        }
+        for view in [&self.library, &self.browser] {
+            view.update(cx, |view, cx| view.set_stem_states(states.clone(), cx));
+        }
+    }
+
     pub(super) fn eq_mode_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let view = cx.weak_entity();
         let current = self.eq_mode;
@@ -112,13 +144,41 @@ impl Shell {
                 }
             }
         }
-        if !self.library_stem_jobs.insert(path.clone()) {
+        if self.library_stem_jobs.contains_key(&path) {
             self.stem_library_notice(
                 "This track is already queued for stem separation.".into(),
                 cx,
             );
             return;
         }
+        let progress = Arc::new(AtomicU8::new(255));
+        self.library_stem_jobs
+            .insert(path.clone(), progress.clone());
+        let watched_path = path.clone();
+        let watched_progress = progress.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let active = this
+                    .update(cx, |this, cx| {
+                        let active = this
+                            .library_stem_jobs
+                            .get(&watched_path)
+                            .is_some_and(|current| Arc::ptr_eq(current, &watched_progress));
+                        if active {
+                            this.sync_library_stem_states(cx);
+                        }
+                        active
+                    })
+                    .unwrap_or(false);
+                if !active {
+                    break;
+                }
+            }
+        })
+        .detach();
         self.stem_library_notice(
             format!(
                 "Separating stems for {}…",
@@ -126,6 +186,7 @@ impl Shell {
             ),
             cx,
         );
+        self.sync_library_stem_states(cx);
         let worker_path = path.clone();
         let rate = self
             .engine
@@ -133,18 +194,23 @@ impl Shell {
             .map_or(48000, |engine| engine.sample_rate());
         let root = data_dir().join("stems");
         let waves = crate::settings::waveform_dir();
-        let prefer_gpu = self.settings.stem_gpu;
         let model = self.settings.stem_model.name();
         let work = cx.background_executor().spawn(async move {
             let track = Track::decode_cached(&worker_path, rate, Some(&waves))
                 .map_err(|e| e.to_string())?;
-            crate::stems::load_or_prepare(&track, &root, true, &AtomicU8::new(0), prefer_gpu, model)
+            crate::stems::load_or_prepare(&track, &root, true, &progress, model)
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.library_stem_jobs.remove(&path);
                 if result.is_ok() {
+                    if this.settings.stem_model.name() == model {
+                        this.ready_stem_paths.insert(path.clone());
+                    }
+                    if let Err(error) = crate::stems::remember_ready(&path, model) {
+                        eprintln!("Could not record stem readiness: {error}");
+                    }
                     // A deck may have loaded this file while the menu job ran.
                     // Recheck its cache without reloading or moving its transport.
                     for deck in 0..DECKS {
@@ -161,6 +227,7 @@ impl Shell {
                     Err(error) => format!("Stem separation failed: {error}"),
                 };
                 this.stem_library_notice(message, cx);
+                this.sync_library_stem_states(cx);
                 cx.notify();
             });
         })
@@ -206,7 +273,7 @@ impl Shell {
                     .update(cx, |this, cx| {
                         if this.stem_busy[deck] && Arc::ptr_eq(&this.stem_progress[deck], &watched)
                         {
-                            cx.notify();
+                            this.sync_library_stem_states(cx);
                             true
                         } else {
                             false
@@ -221,7 +288,6 @@ impl Shell {
         .detach();
         let worker_track = track.clone();
         let completed_progress = progress.clone();
-        let prefer_gpu = self.settings.stem_gpu;
         let model = self.settings.stem_model.name();
         let work = cx.background_executor().spawn(async move {
             let ready = crate::stems::load_or_prepare_with_limit(
@@ -229,7 +295,6 @@ impl Shell {
                 &root,
                 prepare,
                 &progress,
-                prefer_gpu,
                 model,
                 automatic.then(|| crate::stems::automatic_budget(worker_track.duration_seconds())),
             )?;
@@ -253,6 +318,7 @@ impl Shell {
                         .is_some_and(|current| Arc::ptr_eq(current, &track))
                 {
                     this.stem_busy[deck] = false;
+                    let ready = matches!(&result, Ok(true));
                     this.stem_status[deck] = match result {
                         Ok(true) => "Stems ready · vocal map ready".into(),
                         Ok(false) => "Prepare stems".into(),
@@ -262,11 +328,23 @@ impl Shell {
                             format!("Retry stems: {error}")
                         }
                     };
+                    if ready {
+                        if let Some(path) = &this.deck_paths[deck] {
+                            if this.settings.stem_model.name() == model {
+                                this.ready_stem_paths.insert(path.clone());
+                            }
+                            if let Err(error) = crate::stems::remember_ready(path, model) {
+                                eprintln!("Could not record stem readiness: {error}");
+                            }
+                        }
+                    }
+                    this.sync_library_stem_states(cx);
                     cx.notify();
                 }
             });
         })
         .detach();
+        self.sync_library_stem_states(cx);
         cx.notify();
     }
 }

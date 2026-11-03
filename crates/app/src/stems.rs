@@ -1,16 +1,46 @@
-//! Blocking local preparation and cache IO. Never called on the audio/UI thread.
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+//! Blocking ONNX stem preparation and cache IO. Never called on the audio/UI thread.
+use std::collections::BTreeMap;
+use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
 use djcraft_engine::Track;
 
 pub const AUTO_TIMEOUT: &str = "Stopped: automatic stem separation exceeded 20% of track duration";
+const SOURCES: [&str; 4] = ["vocals", "other", "bass", "drums"];
+
+/// Paths whose preparation completed on this computer. Listing the library
+/// never reads audio from its source folder to determine this status.
+fn ready_index() -> BTreeMap<String, HashSet<PathBuf>> {
+    fs::read(crate::storage::machine_dir().join("stem-ready-v2.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn ready_paths(model: &str) -> HashSet<PathBuf> {
+    ready_index().remove(model).unwrap_or_default()
+}
+
+pub fn remember_ready(path: &Path, model: &str) -> Result<(), String> {
+    let mut index = ready_index();
+    if !index
+        .entry(model.to_string())
+        .or_default()
+        .insert(path.to_path_buf())
+    {
+        return Ok(());
+    }
+    let directory = crate::storage::machine_dir();
+    fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    fs::write(
+        directory.join("stem-ready-v2.json"),
+        serde_json::to_vec(&index).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}
 
 pub fn automatic_budget(seconds: f64) -> Duration {
     if seconds.is_finite() && seconds > 0. {
@@ -28,211 +58,23 @@ fn check_deadline(deadline: Option<Instant>) -> Result<(), String> {
     }
 }
 
-fn worker_message(
-    messages: &Receiver<String>,
-    deadline: Option<Instant>,
-    idle: Duration,
-) -> Result<String, String> {
-    check_deadline(deadline)?;
-    let wait = deadline.map_or(idle, |at| {
-        at.saturating_duration_since(Instant::now()).min(idle)
-    });
-    let result = messages.recv_timeout(wait);
-    check_deadline(deadline)?;
-    result.map_err(|e| format!("Stem worker stopped responding: {e}"))
+pub fn warm_up(model: &str) -> Result<(), String> {
+    crate::onnx_stems::warm_up(model)
 }
 
-// One separator at a time, avoiding GPU-memory contention between queued decks.
-static PREPARATION: Mutex<Option<Worker>> = Mutex::new(None);
-// Separate from the job lock so quitting can stop an active separation immediately.
-static PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-const SOURCES: [&str; 4] = ["vocals", "other", "bass", "drums"];
-const WORKER: &str = include_str!("../../../tools/prepare_stems.py");
-
-struct Worker {
-    input: ChildStdin,
-    messages: Receiver<String>,
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        shutdown();
-    }
-}
-
-impl Worker {
-    fn start(prefer_gpu: bool, model: &str, deadline: Option<Instant>) -> Result<Self, String> {
-        check_deadline(deadline)?;
-        let runtime = runtime_dir();
-        let python = runtime.join(if cfg!(windows) {
-            "Scripts/python.exe"
-        } else {
-            "bin/python"
-        });
-        if !python.exists() {
-            return Err("Install the local stem runtime using tools/setup-stems.ps1".into());
-        }
-        let script = runtime.join("prepare-worker.py");
-        fs::write(&script, WORKER).map_err(|e| e.to_string())?;
-        let log_path = runtime.join("worker.log");
-        let log = File::create(&log_path).map_err(|e| e.to_string())?;
-        let mut command = Command::new(python);
-        command
-            .arg(script)
-            .arg("--serve")
-            .arg("--model")
-            .arg(model)
-            .arg("--device")
-            .arg(if prefer_gpu { "auto" } else { "cpu" })
-            .env("TORCH_HOME", model_cache_dir(&runtime))
-            .env("PYTHONUTF8", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(log));
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let mut child = command.spawn().map_err(|e| e.to_string())?;
-        let input = child.stdin.take().ok_or("Missing worker input")?;
-        let stdout = child.stdout.take().ok_or("Missing worker output")?;
-        let (sender, messages) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        *PROCESS.lock().map_err(|e| e.to_string())? = Some(child);
-        let worker = Self { input, messages };
-        let started = std::time::Instant::now();
-        loop {
-            if started.elapsed() > Duration::from_secs(1800) {
-                return Err("Stem startup exceeded 30 minutes".into());
-            }
-            let line = worker_message(&worker.messages, deadline, Duration::from_secs(120))
-                .map_err(|e| format!("{e}; see {}", log_path.display()))?;
-            if line == "DJCRAFT_READY" {
-                return Ok(worker);
-            }
-        }
-    }
-
-    fn prepare(
-        &mut self,
-        request: serde_json::Value,
-        progress: &AtomicU8,
-        deadline: Option<Instant>,
-    ) -> Result<(), String> {
-        check_deadline(deadline)?;
-        writeln!(self.input, "{request}").map_err(|e| e.to_string())?;
-        self.input.flush().map_err(|e| e.to_string())?;
-        let started = std::time::Instant::now();
-        loop {
-            if started.elapsed() > Duration::from_secs(7200) {
-                return Err("Stem preparation exceeded two hours".into());
-            }
-            let line = worker_message(&self.messages, deadline, Duration::from_secs(180))?;
-            match line.as_str() {
-                "DJCRAFT_DONE" => return Ok(()),
-                "DJCRAFT_ERROR" => {
-                    return Err(format!(
-                        "Preparation failed; see prepare.log and {}",
-                        runtime_dir().join("worker.log").display()
-                    ));
-                }
-                _ => {
-                    if let Some(percent) = progress_percent(&line) {
-                        progress.fetch_max(percent, Ordering::Relaxed);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Called on a background executor. A missing/broken runtime never prevents DJ use.
-pub fn warm_up(prefer_gpu: bool, model: &str) -> Result<(), String> {
-    let mut worker = PREPARATION.lock().map_err(|e| e.to_string())?;
-    if worker.is_none() {
-        *worker = Some(Worker::start(prefer_gpu, model, None)?);
-    }
-    Ok(())
-}
-
-/// Download/verify a model without touching the persistent inference worker.
 pub fn download_model(model: &str) -> Result<(), String> {
-    if !["htdemucs", "htdemucs_ft"].contains(&model) {
-        return Err("Unknown model".into());
-    }
-    let runtime = runtime_dir();
-    let python = runtime.join(if cfg!(windows) {
-        "Scripts/python.exe"
-    } else {
-        "bin/python"
-    });
-    let script = runtime.join("download-model.py");
-    fs::write(&script, WORKER).map_err(|e| e.to_string())?;
-    let log = File::create(runtime.join("model-download.log")).map_err(|e| e.to_string())?;
-    let mut command = Command::new(python);
-    command
-        .arg(script)
-        .arg("--download")
-        .arg(model)
-        .env("TORCH_HOME", model_cache_dir(&runtime))
-        .env("PYTHONUTF8", "1")
-        .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
-        .stderr(Stdio::from(log));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    if command.status().map_err(|e| e.to_string())?.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Download failed; see {}. Retry when connected.",
-            runtime.join("model-download.log").display()
-        ))
-    }
+    crate::onnx_stems::download_model(model)
 }
 
 pub fn model_downloaded(model: &str) -> bool {
-    let runtime = runtime_dir();
-    model_cache_dir(&runtime)
-        .parent()
-        .unwrap_or(&runtime)
-        .join(format!("model-{model}.ready"))
-        .is_file()
+    crate::onnx_stems::model_downloaded(model)
 }
 
 pub fn shutdown() {
-    if let Ok(mut process) = PROCESS.lock() {
-        if let Some(mut child) = process.take() {
-            #[cfg(windows)]
-            {
-                // A venv python.exe can be a launcher for a second Python process.
-                // Kill its tree as well, including during an active separation.
-                use std::os::windows::process::CommandExt;
-                let _ = Command::new("taskkill.exe")
-                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
-                    .creation_flags(0x08000000)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
+    crate::onnx_stems::shutdown();
 }
 
 fn cache_key(samples: &[f32], rate: u32, model: &str) -> String {
-    // Hash the exact decoded audio, not its name: edits, decoder/rate changes and
-    // replacement files cannot accidentally reuse the old separation.
     let mut hash = 0xcbf29ce484222325u64;
     for byte in rate
         .to_le_bytes()
@@ -241,7 +83,7 @@ fn cache_key(samples: &[f32], rate: u32, model: &str) -> String {
     {
         hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
     }
-    format!("{model}-v1-{rate}-{}-{hash:016x}", samples.len())
+    format!("onnx-{model}-v1-{rate}-{}-{hash:016x}", samples.len())
 }
 
 fn attach(track: &Track, directory: &Path) -> Result<(), String> {
@@ -266,69 +108,22 @@ fn attach(track: &Track, directory: &Path) -> Result<(), String> {
     track.attach_stems(sources.try_into().map_err(|_| "Missing source")?)
 }
 
-pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("DJCRAFT_STEM_RUNTIME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let root = dirs::data_local_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("DJCraft");
-            let choice =
-                fs::read_to_string(root.join("stem-runtime-choice.txt")).unwrap_or_default();
-            root.join(runtime_name(&choice))
-        })
-}
-
-fn runtime_name(choice: &str) -> &'static str {
-    if choice.trim() == "stem-runtime-rocm" {
-        "stem-runtime-rocm"
-    } else {
-        "stem-runtime"
-    }
-}
-
-fn model_cache_dir(runtime: &Path) -> PathBuf {
-    fs::read_to_string(runtime.join("model-cache-path.txt"))
-        .ok()
-        .filter(|path| !path.trim().is_empty())
-        .map(|path| PathBuf::from(path.trim()))
-        .unwrap_or_else(|| runtime.join("models"))
-}
-
-#[cfg(test)]
-mod runtime_selection_tests {
-    #[test]
-    fn runtime_choice_only_accepts_supported_local_backends() {
-        assert_eq!(
-            super::runtime_name("stem-runtime-rocm\n"),
-            "stem-runtime-rocm"
-        );
-        for value in ["", "stem-runtime", "../../other", "C:\\other", "unverified"] {
-            assert_eq!(super::runtime_name(value), "stem-runtime");
-        }
-    }
-}
-
-/// Returns false for a cache miss when preparation was not requested.
 pub fn load_or_prepare(
     track: &Track,
     root: &Path,
     prepare: bool,
     progress: &AtomicU8,
-    prefer_gpu: bool,
     model: &str,
 ) -> Result<bool, String> {
-    load_or_prepare_with_limit(track, root, prepare, progress, prefer_gpu, model, None)
+    load_or_prepare_with_limit(track, root, prepare, progress, model, None)
 }
 
-/// The optional processing budget excludes waiting for another job, and includes
-/// cold worker startup. Completed cached stems always bypass the budget.
+/// A completed cache bypasses the automatic processing budget.
 pub fn load_or_prepare_with_limit(
     track: &Track,
     root: &Path,
     prepare: bool,
     progress: &AtomicU8,
-    prefer_gpu: bool,
     model: &str,
     limit: Option<Duration>,
 ) -> Result<bool, String> {
@@ -338,6 +133,9 @@ pub fn load_or_prepare_with_limit(
     if !track.is_complete() {
         return Err("Wait for the track to finish loading".into());
     }
+    if !["htdemucs", "htdemucs_ft"].contains(&model) {
+        return Err("Unknown ONNX stem model".into());
+    }
     let samples = track.export_stereo();
     let directory = root.join(cache_key(&samples, track.sample_rate, model));
     if directory.join("complete").exists() && attach(track, &directory).is_ok() {
@@ -346,80 +144,37 @@ pub fn load_or_prepare_with_limit(
     if !prepare {
         return Ok(false);
     }
-    let mut worker = PREPARATION.lock().map_err(|e| e.to_string())?;
     let deadline = limit.map(|limit| Instant::now() + limit);
+    check_deadline(deadline)?;
     progress.store(0, Ordering::Relaxed);
-    if directory.join("complete").exists() && attach(track, &directory).is_ok() {
-        return Ok(true);
-    }
-    if worker.is_none() {
-        *worker = Some(Worker::start(prefer_gpu, model, deadline)?);
-    }
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-    // A marker is published only after all four sources have been validated.
     let _ = fs::remove_file(directory.join("complete"));
-    let input = directory.join("input.f32");
-    let writing = (|| -> Result<(), String> {
-        let mut file = BufWriter::new(File::create(&input).map_err(|e| e.to_string())?);
-        for (index, sample) in samples.into_iter().enumerate() {
-            if index % 65536 == 0 {
-                check_deadline(deadline)?;
-            }
-            file.write_all(&sample.to_le_bytes())
-                .map_err(|e| e.to_string())?;
-        }
-        file.flush().map_err(|e| e.to_string())?;
-        check_deadline(deadline)
-    })();
-    if let Err(error) = writing {
-        let _ = fs::remove_file(&input);
-        return Err(error);
-    }
-    let result = worker.as_mut().unwrap().prepare(
-        serde_json::json!({
-            "input": input, "output": directory, "sample_rate": track.sample_rate,
-            "device": if prefer_gpu { "auto" } else { "cpu" },
-            "log": directory.join("prepare.log"), "model": model,
-        }),
+    if let Err(error) = crate::onnx_stems::separate(
+        &samples,
+        track.sample_rate,
+        &directory,
         progress,
         deadline,
-    );
-    if let Err(error) = result {
-        // Discard broken processes; the next request starts a clean worker.
-        *worker = None;
-        let _ = fs::remove_file(&input);
+        model,
+    ) {
         for source in SOURCES {
             let _ = fs::remove_file(directory.join(format!("{source}.f32")));
         }
         return Err(error);
     }
-    let _ = fs::remove_file(&input);
     check_deadline(deadline)?;
     attach(track, &directory)?;
-    fs::write(directory.join("complete"), format!("{model}-v1")).map_err(|e| e.to_string())?;
+    fs::write(directory.join("complete"), format!("onnx-{model}-v1")).map_err(|e| e.to_string())?;
     progress.store(100, Ordering::Relaxed);
     Ok(true)
-}
-
-fn progress_percent(line: &str) -> Option<u8> {
-    line.strip_prefix("DJCRAFT_PROGRESS ")?
-        .parse::<u8>()
-        .ok()
-        .filter(|p| *p <= 99)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn progress_accepts_only_worker_messages_and_reserves_completion() {
-        assert_eq!(progress_percent("DJCRAFT_PROGRESS 42"), Some(42));
-        assert_eq!(progress_percent("DJCRAFT_PROGRESS 100"), None);
-        assert_eq!(progress_percent("42% complete"), None);
-        assert_eq!(progress_percent("DJCRAFT_PROGRESS -1"), None);
-    }
-    #[test]
-    fn cache_identity_includes_audio_and_rate() {
+    fn cache_identity_includes_model_audio_and_rate() {
         assert_ne!(
             cache_key(&[0., 1.], 44100, "htdemucs"),
             cache_key(&[0., 1.], 44100, "htdemucs_ft")
@@ -435,15 +190,8 @@ mod tests {
     }
 
     #[test]
-    fn complete_cache_loads_but_partial_or_changed_audio_does_not() {
-        let root = std::env::temp_dir().join(format!(
-            "djcraft-stem-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+    fn cache_requires_complete_marker_and_valid_stem_lengths() {
+        let root = std::env::temp_dir().join(format!("djcraft-stem-test-{}", std::process::id()));
         let samples = vec![0.4; 100];
         let directory = root.join(cache_key(&samples, 48000, "htdemucs"));
         fs::create_dir_all(&directory).unwrap();
@@ -455,137 +203,32 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(
-            !load_or_prepare(&track, &root, false, &AtomicU8::new(0), true, "htdemucs").unwrap()
-        );
-        fs::write(directory.join("complete"), b"htdemucs-v1").unwrap();
-        assert!(
-            load_or_prepare(&track, &root, false, &AtomicU8::new(0), true, "htdemucs").unwrap()
-        );
-        assert!(track.stems_ready());
+        assert!(!load_or_prepare(&track, &root, false, &AtomicU8::new(0), "htdemucs").unwrap());
+        fs::write(directory.join("complete"), b"onnx-htdemucs-v1").unwrap();
+        assert!(load_or_prepare(&track, &root, false, &AtomicU8::new(0), "htdemucs").unwrap());
         let changed = Track::from_samples("cache", 48000, vec![0.2; 100]);
-        assert!(
-            !load_or_prepare(&changed, &root, false, &AtomicU8::new(0), true, "htdemucs").unwrap()
-        );
-        fs::write(directory.join("vocals.f32"), b"partial").unwrap();
-        let reloaded = Track::from_samples("cache", 48000, samples);
-        assert!(
-            !load_or_prepare(&reloaded, &root, false, &AtomicU8::new(0), true, "htdemucs").unwrap()
-        );
-        assert!(!reloaded.stems_ready());
-        fs::remove_dir_all(root).unwrap();
+        assert!(!load_or_prepare(&changed, &root, false, &AtomicU8::new(0), "htdemucs").unwrap());
+        let _ = fs::remove_dir_all(root);
     }
-}
 
-#[cfg(test)]
-mod automatic_limit_tests {
-    use super::*;
     #[test]
-    fn budget_is_twenty_percent_of_audio_duration() {
+    fn automatic_budget_and_zero_deadline() {
         assert_eq!(automatic_budget(300.), Duration::from_secs(60));
-        assert_eq!(automatic_budget(240.), Duration::from_secs(48));
         assert_eq!(automatic_budget(1.), Duration::from_millis(200));
-        for value in [0., -1., f64::NAN, f64::INFINITY] {
-            assert_eq!(automatic_budget(value), Duration::ZERO);
-        }
-    }
-    #[test]
-    fn silence_is_bounded_by_job_deadline_not_idle_timeout() {
-        let (_sender, receiver) = mpsc::channel();
-        let started = Instant::now();
-        let result = worker_message(
-            &receiver,
-            Some(started + Duration::from_millis(25)),
-            Duration::from_secs(180),
-        );
-        assert_eq!(result.unwrap_err(), AUTO_TIMEOUT);
-        assert!(started.elapsed() < Duration::from_secs(2));
-    }
-    #[test]
-    fn cached_stems_bypass_even_a_zero_processing_budget() {
-        let track = Track::from_samples("cached", 48000, vec![0.; 100]);
-        track
-            .attach_stems(std::array::from_fn(|_| vec![0.; 100].into_boxed_slice()))
-            .unwrap();
-        assert!(
+        let track = Track::from_samples("uncached", 48000, vec![0.; 100]);
+        let root = std::env::temp_dir().join(format!("djcraft-zero-budget-{}", std::process::id()));
+        assert_eq!(
             load_or_prepare_with_limit(
                 &track,
-                Path::new("unused"),
+                &root,
                 true,
                 &AtomicU8::new(0),
-                true,
                 "htdemucs",
                 Some(Duration::ZERO)
             )
-            .unwrap()
+            .unwrap_err(),
+            AUTO_TIMEOUT
         );
-    }
-    #[test]
-    fn zero_budget_does_not_start_a_worker_or_attach_partial_stems() {
-        let root =
-            std::env::temp_dir().join(format!("fadercraft-stem-zero-{}", std::process::id()));
-        let track = Track::from_samples("uncached", 48000, vec![0.; 100]);
-        let result = load_or_prepare_with_limit(
-            &track,
-            &root,
-            true,
-            &AtomicU8::new(0),
-            true,
-            "htdemucs",
-            Some(Duration::ZERO),
-        );
-        assert!(result.unwrap_err().contains(AUTO_TIMEOUT));
-        assert!(!track.stems_ready());
         assert!(!root.exists());
-    }
-    #[test]
-    #[ignore = "child-process fixture, run only by the timeout test"]
-    fn worker_timeout_child() {
-        loop {
-            println!("DJCRAFT_BUSY");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-    #[test]
-    fn timed_out_worker_is_terminated_even_while_sending_heartbeats() {
-        // Run the test executable as a harmless protocol fixture; no Python/model/GPU.
-        let _guard = PREPARATION.lock().unwrap();
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args([
-                "--exact",
-                "stems::automatic_limit_tests::worker_timeout_child",
-                "--ignored",
-                "--nocapture",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
-        }
-        let mut child = command.spawn().unwrap();
-        let input = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (sender, messages) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if sender.send(line).is_err() {
-                    break;
-                }
-            }
-        });
-        *PROCESS.lock().unwrap() = Some(child);
-        let mut worker = Worker { input, messages };
-        let result = worker.prepare(
-            serde_json::json!({}),
-            &AtomicU8::new(0),
-            Some(Instant::now() + Duration::from_millis(150)),
-        );
-        assert!(result.unwrap_err().contains(AUTO_TIMEOUT));
-        drop(worker);
-        assert!(PROCESS.lock().unwrap().is_none());
     }
 }

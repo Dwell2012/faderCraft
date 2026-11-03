@@ -113,7 +113,7 @@ impl StemModel {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub controller_fx1_colour: bool,
+    pub controller_options: std::collections::BTreeMap<String, ControllerOptions>,
     pub crossfader_curve: djcraft_protocol::CrossfaderCurve,
     pub crossfader_routing: djcraft_protocol::CrossfaderRouting,
     pub controller_mapping: String,
@@ -129,8 +129,6 @@ pub struct Settings {
     pub four_decks: bool,
     /// Red bass, green mids and blue highs in performance waveforms.
     pub rgb_waveforms: bool,
-    /// Prefer an available GPU for local stem preparation; false forces CPU.
-    pub stem_gpu: bool,
     pub stem_model: StemModel,
     /// Check the library's folders for changes when the app opens.
     pub scan_on_startup: bool,
@@ -163,6 +161,24 @@ pub struct Settings {
 }
 
 impl Global for Settings {}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ControllerOptions {
+    pub fx1_colour: bool,
+}
+
+impl Settings {
+    pub fn controller_options_for(
+        &self,
+        profile: &djcraft_controllers::Profile,
+    ) -> ControllerOptions {
+        self.controller_options
+            .get(&crate::controllers::controller_settings_key(profile))
+            .cloned()
+            .unwrap_or_default()
+    }
+}
 
 /// Choices for the lowest and highest tempo. Every lowest is below every
 /// highest, so no choice leaves an empty range.
@@ -209,7 +225,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             controller_mapping: String::new(),
-            controller_fx1_colour: false,
+            controller_options: Default::default(),
             crossfader_curve: Default::default(),
             crossfader_routing: Default::default(),
             audio_asio: false,
@@ -222,7 +238,6 @@ impl Default for Settings {
             start_tab: StartTab::default(),
             four_decks: false,
             rgb_waveforms: false,
-            stem_gpu: true,
             stem_model: StemModel::Fast,
             scan_on_startup: true,
             watch_folders: true,
@@ -274,7 +289,23 @@ impl Settings {
     pub fn load(dir: &Path) -> Self {
         std::fs::read_to_string(dir.join(FILE_NAME))
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(|text| {
+                let mut settings: Self = serde_json::from_str(&text).ok()?;
+                // Migrate the former global MixTrack-only switch once.
+                if serde_json::from_str::<serde_json::Value>(&text)
+                    .ok()?
+                    .get("controller_fx1_colour")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                {
+                    settings
+                        .controller_options
+                        .entry("numark-mixtrack-pro-ii".into())
+                        .or_default()
+                        .fx1_colour = true;
+                }
+                Some(settings)
+            })
             .unwrap_or_default()
     }
 
@@ -298,13 +329,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn old_fx1_switch_migrates_only_to_mixtrack_options() {
+        let dir = std::env::temp_dir().join(format!("djcraft-fx1-settings-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join(FILE_NAME), r#"{"controller_fx1_colour":true}"#).unwrap();
+        let settings = Settings::load(&dir);
+        let mixtrack = crate::controllers::read_mapping("@bundled").unwrap();
+        let grv6 = crate::controllers::read_mapping("@grv6").unwrap();
+        assert!(settings.controller_options_for(&mixtrack).fx1_colour);
+        assert!(!settings.controller_options_for(&grv6).fx1_colour);
+        settings.save(&dir).unwrap();
+        assert!(
+            !std::fs::read_to_string(dir.join(FILE_NAME))
+                .unwrap()
+                .contains("controller_fx1_colour")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn settings_round_trip_and_tolerate_old_files() {
         let dir = std::env::temp_dir().join(format!("djcraft-settings-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(Settings::load(&dir), Settings::default());
 
         let settings = Settings {
-            controller_fx1_colour: true,
+            controller_options: [(
+                "numark-mixtrack-pro-ii".into(),
+                ControllerOptions { fx1_colour: true },
+            )]
+            .into(),
             crossfader_curve: djcraft_protocol::CrossfaderCurve::Adjustable {
                 sharpness: 73,
                 power: true,
@@ -323,7 +377,6 @@ mod tests {
             start_tab: StartTab::Library,
             four_decks: true,
             rgb_waveforms: true,
-            stem_gpu: false,
             stem_model: StemModel::Detailed,
             scan_on_startup: false,
             watch_folders: false,
@@ -360,7 +413,6 @@ mod tests {
         assert_eq!(partial.audio_buffer, 0);
         assert!(partial.scan_on_startup);
         assert!(partial.watch_folders);
-        assert!(partial.stem_gpu);
         assert_eq!(partial.stem_model, StemModel::Fast);
         assert_eq!(partial.tempo_range(), TempoRange::default());
 
