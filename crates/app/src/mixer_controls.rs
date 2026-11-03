@@ -100,16 +100,18 @@ pub(super) fn initial_values() -> [f32; CONTROL_COUNT] {
 }
 fn control_action(index: usize, value: f32) -> Action {
     if index == 10 {
-        return Action::Mixer {
-            action: MixerAction::SetMasterGain {
-                level: value * value,
-            },
-        };
+        return Program::set_mixer_param(Param::MasterGain)
+            .unwrap()
+            .run(ControlSource::Skin, value)
+            .unwrap()
+            .action;
     }
     if index == 11 {
-        return Action::Mixer {
-            action: MixerAction::SetCrossfader { position: value },
-        };
+        return Program::set_mixer_param(Param::Crossfader)
+            .unwrap()
+            .run(ControlSource::Skin, value)
+            .unwrap()
+            .action;
     }
     let deck = control_deck(index).expect("deck control");
     let offset = index - channel_index(deck);
@@ -606,26 +608,21 @@ impl Shell {
             cx.notify();
             return;
         }
-        let action = if index == 20 {
-            Action::Mixer {
-                action: MixerAction::SetSamplerGain {
-                    level: value * value,
-                },
-            }
-        } else if index == 21 || index == 22 {
-            let mut monitor = self
-                .engine
-                .as_mut()
-                .map(|e| e.state().monitor)
-                .unwrap_or_default();
-            if index == 21 {
-                monitor.gain = value * value;
-            } else {
-                monitor.mix = value;
-            }
-            Action::Mixer {
-                action: MixerAction::SetMonitor { monitor },
-            }
+        let action = if (20..=22).contains(&index) {
+            let param = match index {
+                20 => Param::SamplerGain,
+                21 => Param::HeadphoneGain,
+                22 => Param::HeadphoneMix,
+                _ => unreachable!(),
+            };
+            let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
+                return;
+            };
+            Program::set_mixer_param(param)
+                .unwrap()
+                .run_with_state(ControlSource::Skin, value, Some(&state))
+                .unwrap()
+                .action
         } else if index >= 41 {
             let deck = index - 41;
             let Some(state) = self.engine.as_mut().map(|e| e.state()) else {
@@ -657,16 +654,17 @@ impl Shell {
         } else {
             control_action(index, value)
         };
-        if let Some(engine) = &mut self.engine {
-            match engine.apply(Role::Host, action) {
-                Ok(()) => {
-                    if (self.mixer_values[index] - value).abs() > 0.0001 {
-                        self.mixer_last_change[index] = Some(Instant::now());
-                    }
-                    self.mixer_values[index] = value;
-                }
-                Err(reason) => eprintln!("mixer action rejected: {reason:?}"),
+        if self.apply_control_dispatch(
+            djcraft_protocol::script::Dispatch {
+                source: ControlSource::Skin,
+                action,
+            },
+            cx,
+        ) {
+            if (self.mixer_values[index] - value).abs() > 0.0001 {
+                self.mixer_last_change[index] = Some(Instant::now());
             }
+            self.mixer_values[index] = value;
         }
         cx.notify();
     }

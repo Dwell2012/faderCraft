@@ -144,6 +144,7 @@ impl Shell {
                             .child(
                                 div()
                                     .id(("rhythm-deck", index))
+                                    .relative()
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
@@ -200,6 +201,43 @@ impl Shell {
                                                 .text_xs()
                                                 .text_color(cx.theme().muted_foreground)
                                                 .child("Drop a track to load"),
+                                        )
+                                    })
+                                    .when(grid.is_some() && self.deck_paths[index].is_some(), |this| {
+                                        this.child(
+                                            div()
+                                                .absolute()
+                                                .right_0()
+                                                .top_0()
+                                                .h_full()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
+                                                .px_1()
+                                                .bg(rgb(0x101010).opacity(0.9))
+                                                .child(
+                                                    Button::new(("grid-back", index))
+                                                        .xsmall()
+                                                        .outline()
+                                                        .label("◀")
+                                                        .disabled(grid.is_some_and(|g| g.first_beat_seconds < g.beat_seconds()))
+                                                        .tooltip("Move this track's beat grid back one beat and save it in the library")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.nudge_deck_grid(index, -1, cx);
+                                                            cx.stop_propagation();
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new(("grid-forward", index))
+                                                        .xsmall()
+                                                        .outline()
+                                                        .label("▶")
+                                                        .tooltip("Move this track's beat grid forward one beat and save it in the library")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.nudge_deck_grid(index, 1, cx);
+                                                            cx.stop_propagation();
+                                                        })),
+                                                ),
                                         )
                                     })
                                     .on_scroll_wheel(cx.listener(
@@ -921,15 +959,12 @@ impl Shell {
         };
         if let Ok(actions) = program.run_in(context, 0.0) {
             for dispatch in actions {
-                if let Action::Deck { deck, action } = dispatch.action {
-                    self.send(usize::from(deck), action);
-                }
+                self.apply_control_dispatch(dispatch, cx);
             }
-            cx.notify();
         }
     }
     /// Skin tempo gestures share fcScript's range-aware parameter projection.
-    pub(super) fn set_skin_tempo(&mut self, deck: usize, normalized: f32) {
+    pub(super) fn set_skin_tempo(&mut self, deck: usize, normalized: f32, cx: &mut Context<Self>) {
         use djcraft_protocol::script::{ControlSource, Param, Program};
         let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
             return;
@@ -937,10 +972,8 @@ impl Shell {
         let dispatch = Program::set_param(deck, Param::Tempo).and_then(|program| {
             program.run_with_state(ControlSource::Skin, normalized, Some(&state))
         });
-        if let Ok(dispatch) = dispatch
-            && let Action::Deck { deck, action } = dispatch.action
-        {
-            self.send(usize::from(deck), action);
+        if let Ok(dispatch) = dispatch {
+            self.apply_control_dispatch(dispatch, cx);
         }
     }
     pub(super) fn move_pitch(&mut self, y: f32, cx: &mut Context<Self>) {
@@ -958,7 +991,7 @@ impl Shell {
             let normalized = ((start_tempo - 1.) / range.extent()
                 + (start_y - y) as f64 / 140. * 2.)
                 .clamp(-1., 1.) as f32;
-            self.set_skin_tempo(deck, normalized);
+            self.set_skin_tempo(deck, normalized, cx);
             cx.notify();
             return;
         }
@@ -966,7 +999,7 @@ impl Shell {
         let fraction = ((y - bounds.origin.y.as_f32() - 5.)
             / (bounds.size.height.as_f32() - 10.).max(1.))
         .clamp(0., 1.);
-        self.set_skin_tempo(deck, fraction * 2. - 1.);
+        self.set_skin_tempo(deck, fraction * 2. - 1., cx);
         cx.notify();
     }
     fn four_deck_pitch_control(

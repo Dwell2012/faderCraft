@@ -3,7 +3,8 @@ use djcraft_protocol::QueueTrack;
 impl Shell {
     pub(super) fn library_side_panel(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
         div()
-            .w(px(310.))
+            .relative()
+            .w(px(self.library_side_width))
             .h_full()
             .flex_shrink_0()
             .flex()
@@ -12,7 +13,7 @@ impl Shell {
             .border_color(cx.theme().border)
             .child(
                 div().flex().w_full().h(px(29.)).flex_shrink_0().children(
-                    ["AUTOMIX", "SAVED LOOPS", "SAMPLER"]
+                    ["AUTOMIX", "SAVED LOOPS", "SAMPLER", "RHYTHM SHIFT"]
                         .into_iter()
                         .enumerate()
                         .map(|(tab, label)| {
@@ -25,7 +26,7 @@ impl Shell {
                                 .items_center()
                                 .justify_center()
                                 .text_size(px(11.))
-                                .when(tab < 2, |button| button.border_r_1())
+                                .when(tab < 3, |button| button.border_r_1())
                                 .border_color(cx.theme().border)
                                 .when(self.library_side_tab == tab, |button| {
                                     button.bg(cx.theme().background)
@@ -47,8 +48,27 @@ impl Shell {
             .child(match self.library_side_tab {
                 0 => self.automix_panel(cx),
                 1 => self.saved_loops_panel(self.saved_loops_deck.unwrap_or(self.active_deck), cx),
-                _ => self.sampler_side_panel(decks, cx),
+                2 => self.sampler_side_panel(decks, cx),
+                _ => self.rhythm_shift_panel(decks, cx),
             })
+            .child(
+                div()
+                    .id("library-side-resize")
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .h_full()
+                    .w(px(4.))
+                    .cursor_col_resize()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                            this.library_side_drag =
+                                Some((event.position.x.as_f32(), this.library_side_width));
+                            cx.stop_propagation();
+                        }),
+                    ),
+            )
     }
     fn automix_send(&mut self, action: MixerAction, cx: &mut Context<Self>) {
         if let Some(engine) = &mut self.engine {

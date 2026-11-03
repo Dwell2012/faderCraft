@@ -581,19 +581,6 @@ pub fn waveform(
                             );
                         }
                         let x = (columns / 2) as f32 * COLUMN_WIDTH;
-                        for (line_x, bar_line) in
-                            grid_lines(grid, position_seconds, width, x, tempo)
-                        {
-                            let (line_width, opacity) =
-                                if bar_line { (2., 0.55) } else { (1., 0.2) };
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    bounds.origin + point(px(line_x), px(0.)),
-                                    size(px(line_width), px(height)),
-                                ),
-                                playhead.opacity(opacity),
-                            ));
-                        }
                         window.paint_quad(fill(
                             Bounds::new(
                                 bounds.origin + point(px(x), px(0.)),
@@ -601,12 +588,50 @@ pub fn waveform(
                             ),
                             playhead,
                         ));
+                        // Paint grid ticks last so bright waveform peaks cannot hide them.
+                        for (line_x, bar_line) in
+                            grid_lines(grid, position_seconds, width, x, tempo)
+                        {
+                            paint_grid_ticks(window, bounds, line_x, height, bar_line);
+                        }
                     });
                 },
             )
             .size_full(),
         )
         .child(flags)
+}
+
+fn paint_grid_ticks(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    x: f32,
+    height: f32,
+    bar_line: bool,
+) {
+    let width = if bar_line { 2. } else { 1. };
+    let length = if bar_line { 11. } else { 8. };
+    let x = x.round();
+    for top in [0., (height - length).max(0.)] {
+        // Three concentric dark layers give the white tick a 3 px glow.
+        for radius in (1..=3).rev() {
+            let radius = radius as f32;
+            window.paint_quad(fill(
+                Bounds::new(
+                    bounds.origin + point(px(x - radius), px(top - radius)),
+                    size(px(width + radius * 2.), px(length + radius * 2.)),
+                ),
+                rgb(0x000000).opacity(if radius == 3. { 0.45 } else { 0.8 }),
+            ));
+        }
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(x), px(top)),
+                size(px(width), px(length)),
+            ),
+            rgb(0xffffff),
+        ));
+    }
 }
 
 /// Where the beat grid's lines fall across a scrolling waveform `width`

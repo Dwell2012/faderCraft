@@ -106,8 +106,7 @@ fn detail_help(kind: Kind) -> &'static str {
 }
 impl Shell {
     fn effect_slot_disabled(&self, deck: usize, slot: usize) -> bool {
-        self.settings.controller_fx1_colour
-            && slot == 0
+        slot == 0
             && self
                 .controllers
                 .as_ref()
