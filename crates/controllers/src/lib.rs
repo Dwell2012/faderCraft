@@ -1,5 +1,6 @@
 //! User-owned controller mappings. All processing happens on the control thread.
 //! The bridge produces protocol actions; the host must apply them under its Role.
+use djcraft_protocol::script::{ControlSource, ParamDomain, Program};
 use djcraft_protocol::{Action, DeckAction, MixerAction, SessionState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -52,9 +53,23 @@ impl HostCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Source {
-    Note { channel: u8, number: u8 },
-    Cc { channel: u8, number: u8 },
-    PitchBend { channel: u8 },
+    Note {
+        channel: u8,
+        number: u8,
+    },
+    Cc {
+        channel: u8,
+        number: u8,
+    },
+    /// One physical 14-bit control carried by two 7-bit CC messages.
+    Cc14 {
+        channel: u8,
+        msb: u8,
+        lsb: u8,
+    },
+    PitchBend {
+        channel: u8,
+    },
 }
 
 impl Source {
@@ -62,6 +77,9 @@ impl Source {
         match self {
             Self::Note { channel, number } | Self::Cc { channel, number } => {
                 channel < 16 && number < 128
+            }
+            Self::Cc14 { channel, msb, lsb } => {
+                channel < 16 && msb < 128 && lsb < 128 && msb != lsb
             }
             Self::PitchBend { channel } => channel < 16,
         }
@@ -230,6 +248,13 @@ pub enum Encoding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
+    /// Compile once at profile load; execute on a note press or every absolute
+    /// CC/pitch-bend value. A note release can run a separate program.
+    Script {
+        program: String,
+        #[serde(default)]
+        release: Option<String>,
+    },
     ToggleColourFx {
         deck: u8,
     },
@@ -370,8 +395,30 @@ impl Profile {
                 Source::Note { channel, number } | Source::Cc { channel, number } => {
                     channel < 16 && number < 128
                 }
+                Source::Cc14 { channel, msb, lsb } => {
+                    channel < 16 && msb < 128 && lsb < 128 && msb != lsb
+                }
                 Source::PitchBend { channel } => channel < 16,
             };
+            if let Binding::Script { program, release } = &m.binding {
+                let compiled =
+                    Program::compile(program).map_err(|error| format!("{}: {error}", m.id))?;
+                if compiled.uses_relative_target()
+                    || matches!(
+                        m.source,
+                        Source::Cc { .. } | Source::Cc14 { .. } | Source::PitchBend { .. }
+                    ) && (!compiled.is_parameter() || release.is_some())
+                {
+                    return Err(format!("{}: invalid script source or target", m.id));
+                }
+                if let Some(release) = release {
+                    let release = Program::compile(release)
+                        .map_err(|error| format!("{} release: {error}", m.id))?;
+                    if release.uses_relative_target() || !matches!(m.source, Source::Note { .. }) {
+                        return Err(format!("{}: invalid script release", m.id));
+                    }
+                }
+            }
             if matches!(
                 m.binding,
                 Binding::Browse {
@@ -529,6 +576,9 @@ impl Profile {
 
 #[derive(Default)]
 struct Memory {
+    cc14_msb: Option<u8>,
+    cc14_lsb: Option<u8>,
+    cc14_updated: u8,
     startup_snapshot: Option<Instant>,
     tempo_range: Option<djcraft_protocol::TempoFaderRange>,
     down: bool,
@@ -549,6 +599,7 @@ pub struct Bridge {
     pad_modes: [Option<PadMode>; djcraft_protocol::DECKS],
     tempo_bpms: Vec<Option<f64>>,
     profile: Profile,
+    scripts: BTreeMap<String, (Program, Option<Program>)>,
     memory: BTreeMap<String, Memory>,
     held: BTreeMap<(String, Source), bool>,
     jogs: BTreeMap<String, jog::Jog>,
@@ -559,10 +610,29 @@ pub struct Bridge {
 impl Bridge {
     pub fn new(profile: Profile) -> Result<Self, String> {
         profile.validate()?;
+        let scripts = profile
+            .mappings
+            .iter()
+            .filter_map(|mapping| {
+                let Binding::Script { program, release } = &mapping.binding else {
+                    return None;
+                };
+                Some((
+                    mapping.id.clone(),
+                    (
+                        Program::compile(program).expect("profile validated"),
+                        release
+                            .as_ref()
+                            .map(|source| Program::compile(source).expect("profile validated")),
+                    ),
+                ))
+            })
+            .collect();
         Ok(Self {
             pad_modes: [None; djcraft_protocol::DECKS],
             tempo_bpms: Vec::new(),
             profile,
+            scripts,
             memory: BTreeMap::new(),
             held: BTreeMap::new(),
             jogs: BTreeMap::new(),
@@ -874,7 +944,7 @@ impl Bridge {
         let mut takeovers = std::collections::BTreeSet::new();
         if event.value
             > match event.source {
-                Source::PitchBend { .. } => 16383,
+                Source::PitchBend { .. } | Source::Cc14 { .. } => 16383,
                 _ => 127,
             }
         {
@@ -901,9 +971,42 @@ impl Bridge {
                 }
                 continue;
             }
-            if mapping.port != port || mapping.source != event.source {
+            if mapping.port != port {
                 continue;
             }
+            let event = if let Source::Cc14 { channel, msb, lsb } = mapping.source {
+                let Source::Cc {
+                    channel: incoming_channel,
+                    number,
+                } = event.source
+                else {
+                    continue;
+                };
+                if channel != incoming_channel || (number != msb && number != lsb) {
+                    continue;
+                }
+                let pair = self.memory.entry(mapping.id.clone()).or_default();
+                if number == msb {
+                    pair.cc14_msb = Some(event.value as u8);
+                    pair.cc14_updated |= 1;
+                } else {
+                    pair.cc14_lsb = Some(event.value as u8);
+                    pair.cc14_updated |= 2;
+                }
+                if pair.cc14_updated != 3 {
+                    continue;
+                }
+                pair.cc14_updated = 0;
+                Event {
+                    source: mapping.source,
+                    value: (u16::from(pair.cc14_msb.unwrap()) << 7)
+                        | u16::from(pair.cc14_lsb.unwrap()),
+                }
+            } else if mapping.source == event.source {
+                event
+            } else {
+                continue;
+            };
             let memory = self.memory.entry(mapping.id.clone()).or_default();
             let modifiers_match = mapping.modifiers.iter().all(|m| {
                 self.held
@@ -940,6 +1043,43 @@ impl Bridge {
                 }
             }
             let action = match &mapping.binding {
+                Binding::Script { .. } => {
+                    let Some((press, release)) = self.scripts.get(&mapping.id) else {
+                        continue;
+                    };
+                    let selected = match event.source {
+                        Source::Note { .. } if rising => Some(*press),
+                        Source::Note { .. } if falling => *release,
+                        Source::Note { .. } => None,
+                        Source::Cc { .. } | Source::Cc14 { .. } | Source::PitchBend { .. } => {
+                            Some(*press)
+                        }
+                    };
+                    let Some(program) = selected else {
+                        continue;
+                    };
+                    let maximum =
+                        if matches!(event.source, Source::PitchBend { .. } | Source::Cc14 { .. }) {
+                            16383.
+                        } else {
+                            127.
+                        };
+                    let raw = event.value as f32;
+                    let normalized = if program.input_domain() == ParamDomain::Bipolar {
+                        let center = (maximum + 1.) / 2.;
+                        if raw <= center {
+                            raw / center - 1.
+                        } else {
+                            (raw - center) / (maximum - center)
+                        }
+                    } else {
+                        raw / maximum
+                    };
+                    program
+                        .run_with_state(ControlSource::Controller, normalized, Some(state))
+                        .ok()
+                        .map(|dispatch| dispatch.action)
+                }
                 Binding::EffectBeats { deck, encoding } => {
                     let raw = i32::from(event.value);
                     let steps = match encoding {
@@ -1166,7 +1306,10 @@ impl Bridge {
                     let neutral = Some(1.);
                     let center = if ranged.is_some() { &neutral } else { center };
                     let value = if *encoding == Encoding::Absolute {
-                        let full = if matches!(event.source, Source::PitchBend { .. }) {
+                        let full = if matches!(
+                            event.source,
+                            Source::PitchBend { .. } | Source::Cc14 { .. }
+                        ) {
                             16383.
                         } else {
                             127.

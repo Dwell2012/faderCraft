@@ -3,9 +3,9 @@
 fcScript is faderCraft's developing control language. It turns a control
 gesture into a validated faderCraft action. `set_param` and `do_action` are
 implemented as compiled commands; this page documents **what works now**.
-A script editor, custom buttons, controller script bindings, state queries,
-and custom skins are future work. There is currently no place in the app to
-type a script.
+A script editor, custom buttons, state queries, and custom skins are future
+work. Controller profiles can contain script bindings, but there is currently
+no place in the app to type a script.
 
 ## Commands
 
@@ -33,6 +33,11 @@ must be quoted with double quotes.
 | `trim` | −1…1 | −12 dB at −1 | 0 dB at 0 | +12 dB at +1 | No; manual trim disables auto-trim |
 | `tempo` | −1…1 | Slow end at −1 | Normal speed at 0 | Fast end at +1 | Yes, for selected range |
 | `cfx` | −1…1 | Full left at −1 | Neutral at 0 | Full right at +1 | Yes, to preserve selected effect |
+| `master_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | No |
+| `crossfader` (`mixer`) | 0…1 | Left at 0 | Centre at 0.5 | Right at 1 | No |
+| `sampler_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | No |
+| `headphone_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | Yes, to retain headphone mix |
+| `headphone_mix` (`mixer`) | 0…1 | Cue at 0 | — | Master at 1 | Yes, to retain headphone gain |
 
 These are normalized **parameter values**, independent of a skin's knob
 coordinates or a MIDI device's raw byte range. A skin or controller maps
@@ -40,6 +45,11 @@ its physical position into the parameter domain before invoking fcScript.
 The script then projects that value onto the parameter's existing curve.
 For example, `set_param("deck_a", "trim", 0)` sets 0 dB, while
 `set_param("deck_a", "volume", 0.5)` sets 25% linear gain.
+
+The five bus controls use `mixer` as their target, for example
+`set_param("mixer", "crossfader", $value)`. Deck parameters require a deck
+target, and bus parameters require `mixer`. Master, sampler and headphone
+gain retain the existing squared knob curve.
 
 `do_action(target, action)` is for discrete commands. The currently accepted
 actions are `play`, `pause`, `toggle_play`, and `unload`. `toggle_play` reads
@@ -57,6 +67,24 @@ the current deck range at invocation time. The fader retains its downward-fast
 direction, the knob retains its upward-fast direction, and scrolling retains
 its 0.1 percentage-point step. Sync, tempo-range selection and the gradual
 return-to-zero ramp still use their existing protocol paths.
+
+Controller profiles can use a `script` binding. The profile is validated and
+compiled when loaded, even without hardware connected. Note scripts run once
+on the press edge; an optional release script runs on release. Absolute CC
+and pitch-bend scripts receive a normalized value from 0 to 1, projected to
+−1…1 for bipolar parameters. For example:
+
+```json
+{"id":"grv6-crossfader","port":"DDJ-GRV6","source":{"kind":"cc14","channel":6,"msb":31,"lsb":63},"binding":{"type":"script","program":"set_param(\"mixer\", \"crossfader\", $value)"}}
+```
+
+The exact port name must match the connected device. These first script
+bindings support named decks and `mixer`; `active` and `inactive` need the
+host's selected-deck context before they can be used in controller profiles.
+Paired 14-bit CC controls use a `cc14` source with `msb` and `lsb` controller
+numbers on one MIDI channel. The bridge waits for both halves, in either order,
+before dispatching one normalized value. A physical 14-bit midpoint of 8192
+maps exactly to zero for bipolar parameters such as tempo and EQ.
 
 ## Legacy `set_eq` spelling
 
@@ -138,8 +166,19 @@ skin is active; a skin-originated change must reach the controller's feedback.
 Do not rely on a direct callback into one skin. A view may update its local
 drag indicator immediately, then reconcile it with the next state snapshot.
 
-**Current boundary:** the built-in mixer's channel EQ, trim, volume and CFX
-controls and the deck play button extract actions from dispatches and use
-their existing state-refresh paths. Controller scripts and a common
-dispatcher/subscription layer are not implemented yet. The origin field is
-preserved by the fcScript API but is not yet consumed by the app dispatcher.
+**Current boundary:** built-in mixer controls, tempo gestures, the deck play
+button and the Space shortcut use fcScript. Skin script dispatches and
+controller actions now enter one app action path, which retains load, cue and
+transport bookkeeping and applies actions under the host role. The origin is
+available there for diagnostics. Controller profiles accept text script
+bindings for note, absolute CC, paired 14-bit CC and pitch bend; relative
+encoder scripts and feedback expressions are not implemented yet. Controller
+LEDs continue to follow the authoritative session state through the existing
+bridge.
+
+Rhythm Shift uses the same deck action path. `do_action("deck_a", "rhythm_shift_on")`,
+`rhythm_shift_off`, `toggle_rhythm_shift`, and `rhythm_roll_1` through
+`rhythm_roll_4` control the swap and rolls. `set_param("deck_a", "rhythm_gain",
+$value)` maps a unipolar 0–1 input to zero through double gain, with unity at
+0.5. `toggle_rhythm_shift` needs a session snapshot. See [Rhythm Shift](RHYTHM_SHIFT.md)
+for pack timing and audio requirements.

@@ -1,5 +1,5 @@
 //! Small compiled control language. Execution produces ordinary protocol actions.
-use crate::{Action, DECKS, DeckAction, SessionState};
+use crate::{Action, DECKS, DeckAction, MixerAction, SessionState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlSource {
@@ -20,6 +20,7 @@ pub enum Target {
     Deck(u8),
     Active,
     Inactive,
+    Mixer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -52,9 +53,15 @@ impl EqBand {
 pub enum Param {
     Eq(EqBand),
     Volume,
+    RhythmGain,
     Trim,
     Tempo,
     ColourFx,
+    MasterGain,
+    Crossfader,
+    SamplerGain,
+    HeadphoneGain,
+    HeadphoneMix,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +73,13 @@ pub enum ParamDomain {
 impl Param {
     pub fn domain(self) -> ParamDomain {
         match self {
-            Self::Volume => ParamDomain::Unipolar,
+            Self::Volume
+            | Self::RhythmGain
+            | Self::MasterGain
+            | Self::Crossfader
+            | Self::SamplerGain
+            | Self::HeadphoneGain
+            | Self::HeadphoneMix => ParamDomain::Unipolar,
             Self::Eq(_) | Self::Trim | Self::Tempo | Self::ColourFx => ParamDomain::Bipolar,
         }
     }
@@ -78,6 +91,10 @@ pub enum ButtonAction {
     Pause,
     TogglePlay,
     Unload,
+    ToggleRhythmShift,
+    RhythmShiftOn,
+    RhythmShiftOff,
+    RhythmRoll(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -109,6 +126,7 @@ fn deck_id(name: &str) -> Result<Target, &'static str> {
         "deck_d" | "D" | "d" => Ok(Target::Deck(3)),
         "active" => Ok(Target::Active),
         "inactive" => Ok(Target::Inactive),
+        "mixer" => Ok(Target::Mixer),
         _ => Err("unknown deck target"),
     }
 }
@@ -144,11 +162,20 @@ impl Program {
                 "eq_mid" => Param::Eq(EqBand::Mid),
                 "eq_high" => Param::Eq(EqBand::High),
                 "volume" => Param::Volume,
+                "rhythm_gain" => Param::RhythmGain,
                 "trim" => Param::Trim,
                 "tempo" => Param::Tempo,
                 "cfx" => Param::ColourFx,
+                "master_gain" => Param::MasterGain,
+                "crossfader" => Param::Crossfader,
+                "sampler_gain" => Param::SamplerGain,
+                "headphone_gain" => Param::HeadphoneGain,
+                "headphone_mix" => Param::HeadphoneMix,
                 _ => return Err("unknown parameter"),
             };
+            if (target == Target::Mixer) != param.is_mixer() {
+                return Err("parameter target does not match its scope");
+            }
             let value = if parts[2] == "$value" {
                 Value::Input
             } else {
@@ -168,8 +195,18 @@ impl Program {
                 "pause" => ButtonAction::Pause,
                 "toggle_play" => ButtonAction::TogglePlay,
                 "unload" => ButtonAction::Unload,
+                "toggle_rhythm_shift" => ButtonAction::ToggleRhythmShift,
+                "rhythm_shift_on" => ButtonAction::RhythmShiftOn,
+                "rhythm_shift_off" => ButtonAction::RhythmShiftOff,
+                "rhythm_roll_1" => ButtonAction::RhythmRoll(0),
+                "rhythm_roll_2" => ButtonAction::RhythmRoll(1),
+                "rhythm_roll_3" => ButtonAction::RhythmRoll(2),
+                "rhythm_roll_4" => ButtonAction::RhythmRoll(3),
                 _ => return Err("unknown action"),
             };
+            if target == Target::Mixer {
+                return Err("deck action requires a deck target");
+            }
             return Ok(Self::DoAction { target, action });
         }
         // Preserve the initial spelling while mixer mappings migrate.
@@ -191,11 +228,22 @@ impl Program {
     }
 
     pub fn set_param(deck: usize, param: Param) -> Result<Self, &'static str> {
-        if deck >= DECKS {
+        if deck >= DECKS || param.is_mixer() {
             return Err("unknown deck");
         }
         Ok(Self::SetParam {
             target: Target::Deck(deck as u8),
+            param,
+            value: Value::Input,
+        })
+    }
+
+    pub fn set_mixer_param(param: Param) -> Result<Self, &'static str> {
+        if !param.is_mixer() {
+            return Err("expected mixer parameter");
+        }
+        Ok(Self::SetParam {
+            target: Target::Mixer,
             param,
             value: Value::Input,
         })
@@ -219,6 +267,22 @@ impl Program {
             target: Target::Deck(deck as u8),
             action,
         })
+    }
+
+    /// Controller profiles may bind absolute CCs only to parameter programs.
+    pub fn is_parameter(self) -> bool {
+        matches!(self, Self::SetParam { .. } | Self::LegacyEq { .. })
+    }
+
+    pub fn uses_relative_target(self) -> bool {
+        matches!(self.target(), Target::Active | Target::Inactive)
+    }
+
+    pub fn input_domain(self) -> ParamDomain {
+        match self {
+            Self::SetParam { param, .. } => param.domain(),
+            Self::LegacyEq { .. } | Self::DoAction { .. } => ParamDomain::Unipolar,
+        }
     }
 
     /// Resolve a relative target when the control is invoked. `inactive`
@@ -245,6 +309,13 @@ impl Program {
                 .filter(|deck| Some(*deck) != active)
                 .map(|deck| deck as u8)
                 .collect(),
+            Target::Mixer => {
+                return Ok(vec![self.run_with_state(
+                    context.source,
+                    input,
+                    context.state,
+                )?]);
+            }
         };
         decks
             .into_iter()
@@ -287,8 +358,18 @@ impl Program {
         state: Option<&SessionState>,
     ) -> Result<Dispatch, &'static str> {
         let target = self.target();
+        match self {
+            Self::SetParam { param, .. } if (target == Target::Mixer) != param.is_mixer() => {
+                return Err("parameter target does not match its scope");
+            }
+            Self::LegacyEq { .. } | Self::DoAction { .. } if target == Target::Mixer => {
+                return Err("deck action requires a deck target");
+            }
+            _ => {}
+        }
         let deck = match target {
             Target::Deck(deck) => deck,
+            Target::Mixer => 0,
             Target::Active | Target::Inactive => {
                 return Err("relative target requires invocation context");
             }
@@ -318,6 +399,35 @@ impl Program {
                 if !valid {
                     return Err("parameter value is outside its normalized domain");
                 }
+                if param.is_mixer() {
+                    let mixer = match param {
+                        Param::MasterGain => MixerAction::SetMasterGain {
+                            level: normalized * normalized,
+                        },
+                        Param::Crossfader => MixerAction::SetCrossfader {
+                            position: normalized,
+                        },
+                        Param::SamplerGain => MixerAction::SetSamplerGain {
+                            level: normalized * normalized,
+                        },
+                        Param::HeadphoneGain | Param::HeadphoneMix => {
+                            let mut monitor = state
+                                .ok_or("monitor parameter requires session state")?
+                                .monitor;
+                            if param == Param::HeadphoneGain {
+                                monitor.gain = normalized * normalized;
+                            } else {
+                                monitor.mix = normalized;
+                            }
+                            MixerAction::SetMonitor { monitor }
+                        }
+                        _ => unreachable!(),
+                    };
+                    return Ok(Dispatch {
+                        source,
+                        action: Action::Mixer { action: mixer },
+                    });
+                }
                 let action = match param {
                     Param::Eq(band) => DeckAction::SetEq {
                         band: band.engine_index(),
@@ -329,6 +439,9 @@ impl Program {
                     },
                     Param::Volume => DeckAction::SetVolume {
                         level: normalized * normalized,
+                    },
+                    Param::RhythmGain => DeckAction::SetRhythmGain {
+                        level: normalized * 2.,
                     },
                     Param::Trim => DeckAction::SetTrim {
                         db: normalized * 12.0,
@@ -356,6 +469,7 @@ impl Program {
                         fx.enabled = true;
                         DeckAction::SetColourFx { state: fx }
                     }
+                    _ => unreachable!("mixer parameter handled above"),
                 };
                 action
             }
@@ -364,6 +478,18 @@ impl Program {
                     ButtonAction::Play => DeckAction::Play,
                     ButtonAction::Pause => DeckAction::Pause,
                     ButtonAction::Unload => DeckAction::Unload,
+                    ButtonAction::RhythmRoll(slot) => DeckAction::TriggerRhythmRoll { slot },
+                    ButtonAction::RhythmShiftOn => DeckAction::SetRhythmShift { enabled: true },
+                    ButtonAction::RhythmShiftOff => DeckAction::SetRhythmShift { enabled: false },
+                    ButtonAction::ToggleRhythmShift => {
+                        let state = state.ok_or("toggle_rhythm_shift requires session state")?;
+                        let enabled = state
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?
+                            .rhythm_shift;
+                        DeckAction::SetRhythmShift { enabled: !enabled }
+                    }
                     ButtonAction::TogglePlay => {
                         let state = state.ok_or("toggle_play requires session state")?;
                         if state
@@ -388,9 +514,58 @@ impl Program {
     }
 }
 
+impl Param {
+    fn is_mixer(self) -> bool {
+        matches!(
+            self,
+            Self::MasterGain
+                | Self::Crossfader
+                | Self::SamplerGain
+                | Self::HeadphoneGain
+                | Self::HeadphoneMix
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rhythm_shift_actions_dispatch_to_the_selected_deck() {
+        let mut state = SessionState::default();
+        state.decks = vec![crate::DeckState::default(); DECKS];
+        state.decks[2].rhythm_shift = true;
+        let toggle = Program::compile("do_action(\"deck_c\", \"toggle_rhythm_shift\")").unwrap();
+        assert_eq!(
+            toggle
+                .run_with_state(ControlSource::Skin, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Deck {
+                deck: 2,
+                action: DeckAction::SetRhythmShift { enabled: false }
+            }
+        );
+        let roll = Program::compile("do_action(\"deck_c\", \"rhythm_roll_4\")").unwrap();
+        assert_eq!(
+            roll.run_with_state(ControlSource::Controller, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Deck {
+                deck: 2,
+                action: DeckAction::TriggerRhythmRoll { slot: 3 }
+            }
+        );
+        let gain = Program::compile("set_param(\"deck_c\", \"rhythm_gain\", $value)").unwrap();
+        assert_eq!(
+            gain.run(ControlSource::Controller, 0.5).unwrap().action,
+            Action::Deck {
+                deck: 2,
+                action: DeckAction::SetRhythmGain { level: 1. }
+            }
+        );
+    }
 
     #[test]
     fn parameter_commands_preserve_existing_mixer_curves() {
@@ -530,6 +705,9 @@ mod tests {
             "set_param(\"deck_a\", \"trim\", nope)",
             "do_action(\"deck_a\", \"explode\")",
             "do_action(\"deck_a\", \"play\", 1)",
+            "set_param(\"deck_a\", \"master_gain\", 0.5)",
+            "set_param(\"mixer\", \"eq_high\", 0.5)",
+            "do_action(\"mixer\", \"play\")",
         ] {
             assert!(Program::compile(source).is_err(), "{source}");
         }
@@ -542,6 +720,50 @@ mod tests {
         assert_eq!(Param::Volume.domain(), ParamDomain::Unipolar);
         assert_eq!(Param::Trim.domain(), ParamDomain::Bipolar);
         assert!(Program::set_param(DECKS, Param::Trim).is_err());
+    }
+
+    #[test]
+    fn mixer_parameters_preserve_skin_curves_and_monitor_state() {
+        let state = SessionState::default();
+        for (name, expected) in [
+            ("master_gain", MixerAction::SetMasterGain { level: 0.25 }),
+            ("crossfader", MixerAction::SetCrossfader { position: 0.5 }),
+            ("sampler_gain", MixerAction::SetSamplerGain { level: 0.25 }),
+        ] {
+            let program =
+                Program::compile(&format!("set_param(\"mixer\", \"{name}\", $value)")).unwrap();
+            assert_eq!(
+                program.run(ControlSource::Controller, 0.5).unwrap(),
+                Dispatch {
+                    source: ControlSource::Controller,
+                    action: Action::Mixer { action: expected },
+                }
+            );
+        }
+        for (name, gain, mix) in [
+            ("headphone_gain", 0.25, state.monitor.mix),
+            ("headphone_mix", state.monitor.gain, 0.5),
+        ] {
+            let program =
+                Program::compile(&format!("set_param(\"mixer\", \"{name}\", $value)")).unwrap();
+            let dispatch = program
+                .run_with_state(ControlSource::Skin, 0.5, Some(&state))
+                .unwrap();
+            assert_eq!(
+                dispatch.action,
+                Action::Mixer {
+                    action: MixerAction::SetMonitor {
+                        monitor: crate::MonitorState {
+                            gain,
+                            mix,
+                            ..state.monitor
+                        }
+                    },
+                }
+            );
+        }
+        assert!(Program::set_mixer_param(Param::MasterGain).is_ok());
+        assert!(Program::set_mixer_param(Param::Volume).is_err());
     }
 
     #[test]

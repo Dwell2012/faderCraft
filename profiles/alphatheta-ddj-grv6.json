@@ -1,0 +1,1168 @@
+{
+  "version": 1,
+  "name": "AlphaTheta DDJ-GRV6 (starter)",
+  "mappings": [
+    {
+      "id": "deck_a-play",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"toggle_play\")"
+      }
+    },
+    {
+      "id": "deck_a-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "cue",
+          "deck": 0,
+          "pressed": true
+        },
+        "release": {
+          "command": "cue",
+          "deck": 0,
+          "pressed": false
+        }
+      }
+    },
+    {
+      "id": "deck_a-sync",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 88
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "sync",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-key-lock",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 26
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "toggle_key_lock",
+        "deck": 0
+      }
+    },
+    {
+      "id": "deck_a-headphone-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "toggle_headphone_cue",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-tempo",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 0,
+        "lsb": 32
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"tempo\", $value)"
+      }
+    },
+    {
+      "id": "deck_a-trim",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 4,
+        "lsb": 36
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"trim\", $value)"
+      }
+    },
+    {
+      "id": "deck_a-eq-high",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 7,
+        "lsb": 39
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"eq_high\", $value)"
+      }
+    },
+    {
+      "id": "deck_a-eq-mid",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 11,
+        "lsb": 43
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"eq_mid\", $value)"
+      }
+    },
+    {
+      "id": "deck_a-eq-low",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 15,
+        "lsb": 47
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"eq_low\", $value)"
+      }
+    },
+    {
+      "id": "deck_a-volume",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 0,
+        "msb": 19,
+        "lsb": 51
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"volume\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-play",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"toggle_play\")"
+      }
+    },
+    {
+      "id": "deck_b-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "cue",
+          "deck": 1,
+          "pressed": true
+        },
+        "release": {
+          "command": "cue",
+          "deck": 1,
+          "pressed": false
+        }
+      }
+    },
+    {
+      "id": "deck_b-sync",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 88
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "sync",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-key-lock",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 26
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "toggle_key_lock",
+        "deck": 1
+      }
+    },
+    {
+      "id": "deck_b-headphone-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "toggle_headphone_cue",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-tempo",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 0,
+        "lsb": 32
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"tempo\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-trim",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 4,
+        "lsb": 36
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"trim\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-eq-high",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 7,
+        "lsb": 39
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"eq_high\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-eq-mid",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 11,
+        "lsb": 43
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"eq_mid\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-eq-low",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 15,
+        "lsb": 47
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"eq_low\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-volume",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 1,
+        "msb": 19,
+        "lsb": 51
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"volume\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-play",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"toggle_play\")"
+      }
+    },
+    {
+      "id": "deck_c-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "cue",
+          "deck": 2,
+          "pressed": true
+        },
+        "release": {
+          "command": "cue",
+          "deck": 2,
+          "pressed": false
+        }
+      }
+    },
+    {
+      "id": "deck_c-sync",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 88
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "sync",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-key-lock",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 26
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "toggle_key_lock",
+        "deck": 2
+      }
+    },
+    {
+      "id": "deck_c-headphone-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "toggle_headphone_cue",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-tempo",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 0,
+        "lsb": 32
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"tempo\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-trim",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 4,
+        "lsb": 36
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"trim\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-eq-high",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 7,
+        "lsb": 39
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"eq_high\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-eq-mid",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 11,
+        "lsb": 43
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"eq_mid\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-eq-low",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 15,
+        "lsb": 47
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"eq_low\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-volume",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 2,
+        "msb": 19,
+        "lsb": 51
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"volume\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-play",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"toggle_play\")"
+      }
+    },
+    {
+      "id": "deck_d-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "cue",
+          "deck": 3,
+          "pressed": true
+        },
+        "release": {
+          "command": "cue",
+          "deck": 3,
+          "pressed": false
+        }
+      }
+    },
+    {
+      "id": "deck_d-sync",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 88
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "sync",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-key-lock",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 26
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "toggle_key_lock",
+        "deck": 3
+      }
+    },
+    {
+      "id": "deck_d-headphone-cue",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "toggle_headphone_cue",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-tempo",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 0,
+        "lsb": 32
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"tempo\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-trim",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 4,
+        "lsb": 36
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"trim\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-eq-high",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 7,
+        "lsb": 39
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"eq_high\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-eq-mid",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 11,
+        "lsb": 43
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"eq_mid\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-eq-low",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 15,
+        "lsb": 47
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"eq_low\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-volume",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 3,
+        "msb": 19,
+        "lsb": 51
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"volume\", $value)"
+      }
+    },
+    {
+      "id": "mixer-crossfader",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 6,
+        "msb": 31,
+        "lsb": 63
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"mixer\", \"crossfader\", $value)"
+      }
+    },
+    {
+      "id": "mixer-master",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 6,
+        "msb": 9,
+        "lsb": 41
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"mixer\", \"master_gain\", $value)"
+      }
+    },
+    {
+      "id": "mixer-headphone-gain",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 6,
+        "msb": 12,
+        "lsb": 44
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"mixer\", \"headphone_gain\", $value)"
+      }
+    },
+    {
+      "id": "mixer-headphone-mix",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc14",
+        "channel": 6,
+        "msb": 13,
+        "lsb": 45
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"mixer\", \"headphone_mix\", $value)"
+      }
+    },
+    {
+      "id": "browser-scroll",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc",
+        "channel": 6,
+        "number": 64
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "browse",
+        "encoding": "twos_complement"
+      }
+    },
+    {
+      "id": "deck_a-load",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 6,
+        "number": 70
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_b-load",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 6,
+        "number": 71
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_c-load",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 6,
+        "number": 72
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_d-load",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 6,
+        "number": 73
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "host_button",
+        "press": {
+          "command": "load_selected",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_a-rhythm-swap-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 44 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_shift_on\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-roll-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 48 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_roll_1\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-roll-2",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 49 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_roll_2\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-roll-3",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_roll_3\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-roll-4",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 51 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_roll_4\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-release-forward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 36 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-release-backward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 38 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-swap-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 44 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_shift_on\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-roll-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 48 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_roll_1\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-roll-2",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 49 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_roll_2\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-roll-3",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_roll_3\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-roll-4",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 51 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_roll_4\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-release-forward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 36 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-release-backward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 38 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-swap-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 44 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_shift_on\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-roll-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 48 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_roll_1\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-roll-2",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 49 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_roll_2\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-roll-3",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_roll_3\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-roll-4",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 51 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_roll_4\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-release-forward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 36 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-release-backward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 38 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-swap-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 44 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_shift_on\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-roll-1",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 48 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_roll_1\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-roll-2",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 49 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_roll_2\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-roll-3",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_roll_3\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-roll-4",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 51 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_roll_4\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-release-forward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 36 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-release-backward",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 38 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"rhythm_shift_off\")"
+      }
+    },
+    {
+      "id": "deck_a-rhythm-gain",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 0, "msb": 18, "lsb": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_a\", \"rhythm_gain\", $value)"
+      }
+    },
+    {
+      "id": "deck_b-rhythm-gain",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 1, "msb": 18, "lsb": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_b\", \"rhythm_gain\", $value)"
+      }
+    },
+    {
+      "id": "deck_c-rhythm-gain",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 2, "msb": 18, "lsb": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_c\", \"rhythm_gain\", $value)"
+      }
+    },
+    {
+      "id": "deck_d-rhythm-gain",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 3, "msb": 18, "lsb": 50 },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "set_param(\"deck_d\", \"rhythm_gain\", $value)"
+      }
+    }
+  ]
+}

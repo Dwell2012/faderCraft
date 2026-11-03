@@ -11,7 +11,28 @@ When no matching controller is detected, the mapping selector displays Disabled.
 
 Settings > Controllers selects the mapping: Automatic (installed/default), bundled MixTrack, Disabled, or a valid JSON profile in the machine-data controllers folder. Load mapping opens a file picker for another faderCraft JSON profile and validates it before switching. The chosen path is remembered; keep external files at that path. Files are not overwritten. Selecting a different mapping releases held controls, closes the previous ports and enables matching currently connected devices; later reconnections still ask first. Controller hardware is matched by exact MIDI port name from the profile, not guessed or automatically remapped.
 
+Controller options are stored per profile. The FX 1 controls choice appears only for a Numark MixTrack Pro II mapping; its bundled and installed versions share that preference. Other controllers do not inherit it. Older global FX 1 settings are migrated to the MixTrack option when settings are loaded.
+
 ## Startup and hardware changes
+
+The bundled AlphaTheta DDJ-GRV6 starter is an explicit Settings > Controllers
+choice. It maps play, cue, sync, key lock, headphone cue, tempo, trim, EQ and
+volume for four decks, plus browser scroll, four deck-load buttons, crossfader,
+master and headphone controls. Its `DDJ-GRV6` MIDI port name is also used by
+the public Mixxx preset, though OS-specific names still need checking. Jog
+wheels, pads, feedback, advanced features and audio routing are not yet mapped.
+
+Hardware ownership is **not** a prerequisite for authoring a profile. For each
+device, derive MIDI addresses and value formats from the manufacturer's MIDI
+table, cross-check intended behaviour against official software manuals and
+public mappings, then run profile validation and simulated packet tests without
+the device. Keep a per-control source and status (`documented`, `cross-checked`,
+or `hardware-verified`) so a published profile does not imply more testing than
+it has received. Hardware reports can later correct quirks, timing, port names,
+LED initialization and audio routing; they should not gate writing the mapping.
+For GRV6, sources are AlphaTheta's *DDJ-GRV6 MIDI Message List E1*, the
+[Mixxx GRV6 mapping](https://github.com/joergbeyer/mixxx/blob/main/res/controllers/Pioneer-DDJ-GRV6.midi.xml),
+and the [VirtualDJ GRV6 manual](https://virtualdj.com/manuals/hardware/alphatheta/ddjgrv6/setup.html).
 
 Normal launches now offer **Use controller / Not now** when a uniquely named MIDI input matches the active mapping. Ports and LED output open only after acceptance. Detection polls once per second; disconnecting releases held controls and clears the decision, so reconnecting asks again. Not now suppresses repeat prompts until disconnect or restart. Identically named devices are not guessed between.
 
@@ -260,7 +281,7 @@ events for diagnostics; continuous CC movement is not traced by this option.
 ## Remaining work
 
 Graphical mapping editor, on-screen MIDI Learn/monitor, browser/mode LED integration and
-device initialization, physical jog calibration, paired 14-bit CC assembly,
+device initialization, physical jog calibration,
 effect selection/mix/beat encoders, and browser/load-selected-track commands are
 not implemented. VirtualDJ/Mixxx/Traktor scripts and presets are references, not
 directly executable or importable faderCraft profiles. Factory-profile status

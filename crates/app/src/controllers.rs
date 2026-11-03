@@ -156,7 +156,7 @@ impl Controllers {
             return Ok(None);
         }
         let mut profile = read_mapping(&settings.controller_mapping)?;
-        if settings.controller_fx1_colour {
+        if is_mixtrack_profile(&profile) && settings.controller_options_for(&profile).fx1_colour {
             route_fx1_to_colour(&mut profile);
         }
         // Upgrade only the named legacy headphone buttons; custom activation mappings stay intact.
@@ -543,6 +543,19 @@ impl Drop for Controllers {
 mod consent_tests {
     use super::*;
     #[test]
+    fn grv6_rhythm_shift_notes_are_valid_without_hardware() {
+        let profile = read_mapping("@grv6").unwrap();
+        for channel in 0..4 {
+            for number in [44, 48, 49, 50, 51, 36] {
+                assert!(profile.mappings.iter().any(|mapping| {
+                    mapping.id.starts_with(&format!("deck_{}-rhythm-", ["a", "b", "c", "d"][channel]))
+                        && matches!(mapping.source, djcraft_controllers::Source::Note { channel: c, number: n } if c == channel as u8 && n == number)
+                }));
+            }
+        }
+        Bridge::new(profile).unwrap();
+    }
+    #[test]
     fn fx1_colour_routing_changes_only_the_first_slot_and_follows_selected_combination() {
         use djcraft_controllers::{Binding, Event, LedFeedback, Parameter};
         use djcraft_protocol::{DeckAction, Role};
@@ -700,6 +713,9 @@ pub fn read_mapping(selection: &str) -> Result<Profile, String> {
     let installed = crate::storage::machine_dir().join("controllers/numark-mixtrack-pro-ii.json");
     let path = match selection {
         "@bundled" => None,
+        "@grv6" => {
+            return Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"));
+        }
         "" => std::env::var_os("DJCRAFT_CONTROLLER_MAP")
             .map(std::path::PathBuf::from)
             .or_else(|| installed.exists().then_some(installed)),
@@ -713,6 +729,18 @@ pub fn read_mapping(selection: &str) -> Result<Profile, String> {
     Profile::from_json(&json)
 }
 
+pub fn is_mixtrack_profile(profile: &Profile) -> bool {
+    profile.name.starts_with("Numark MixTrack Pro II")
+}
+
+pub fn controller_settings_key(profile: &Profile) -> String {
+    if is_mixtrack_profile(profile) {
+        "numark-mixtrack-pro-ii".into()
+    } else {
+        profile.name.to_lowercase()
+    }
+}
+
 pub fn mapping_choices() -> Vec<(String, String)> {
     let mut choices = vec![
         (
@@ -720,6 +748,7 @@ pub fn mapping_choices() -> Vec<(String, String)> {
             "Automatic (installed/default mapping)".into(),
         ),
         ("@bundled".into(), "Numark MixTrack Pro II (bundled)".into()),
+        ("@grv6".into(), "AlphaTheta DDJ-GRV6 (starter)".into()),
         ("@disabled".into(), "Disabled".into()),
     ];
     if let Ok(entries) = std::fs::read_dir(crate::storage::machine_dir().join("controllers")) {
