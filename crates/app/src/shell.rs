@@ -1019,7 +1019,7 @@ impl Shell {
                 1. - state.tempo_range.extent(),
                 1. + state.tempo_range.extent(),
             );
-            self.send(deck, DeckAction::SetTempo { ratio });
+            self.set_skin_tempo(deck, ((ratio - 1.) / state.tempo_range.extent()) as f32);
             cx.notify();
         }
         cx.stop_propagation();

@@ -51,6 +51,13 @@ press/release contract and are not yet supported by `do_action`.
 The deck-focused Space shortcut uses
 `do_action("active", "toggle_play")`. It retains its existing toggle behaviour.
 
+The two-deck pitch fader, four-deck tempo knob and tempo scroll gestures use
+`set_param` with `tempo`. Each gesture supplies a bipolar value; fcScript reads
+the current deck range at invocation time. The fader retains its downward-fast
+direction, the knob retains its upward-fast direction, and scrolling retains
+its 0.1 percentage-point step. Sync, tempo-range selection and the gradual
+return-to-zero ramp still use their existing protocol paths.
+
 ## Legacy `set_eq` spelling
 
 ```text

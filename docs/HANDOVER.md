@@ -1,5 +1,14 @@
 # Codex handover
 
+fcScript follow-up (2 November 2026): continued on codex/windows-controller-foundation,
+which holds the scripting foundation ahead of main. Two-deck pitch dragging,
+four-deck tempo-knob dragging and tempo scrolling now use Program::set_param
+with Param::Tempo and a current session snapshot. They still dispatch through
+Shell::send, retaining cue-anchor handling, Automix/manual-adjustment behaviour
+and tempo-return cancellation. Sync, range selection and the gradual return
+ramp retain their existing protocol paths. See SCRIPTING.md for the current
+conversion boundary; controller scripts and the remaining controls are pending.
+
 Stem preparation progress overlays the top edge of each deck overview waveform: 3px, deck colour at 50% opacity, no added layout height. Uses existing per-deck progress and refresh; queued/loading jobs show a short marker, and completion/failure/timeout clears it.
 
 Right-deck performance boxes mirror the left-deck arrangement: Effects/Pads outside, Loops inside, label strips on the right. Controls inside each box retain their original order.

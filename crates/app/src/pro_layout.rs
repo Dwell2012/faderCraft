@@ -928,6 +928,21 @@ impl Shell {
             cx.notify();
         }
     }
+    /// Skin tempo gestures share fcScript's range-aware parameter projection.
+    pub(super) fn set_skin_tempo(&mut self, deck: usize, normalized: f32) {
+        use djcraft_protocol::script::{ControlSource, Param, Program};
+        let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
+            return;
+        };
+        let dispatch = Program::set_param(deck, Param::Tempo).and_then(|program| {
+            program.run_with_state(ControlSource::Skin, normalized, Some(&state))
+        });
+        if let Ok(dispatch) = dispatch
+            && let Action::Deck { deck, action } = dispatch.action
+        {
+            self.send(usize::from(deck), action);
+        }
+    }
     pub(super) fn move_pitch(&mut self, y: f32, cx: &mut Context<Self>) {
         let Some(deck) = self.pitch_drag else {
             return;
@@ -940,9 +955,10 @@ impl Shell {
                 .as_mut()
                 .map(|e| e.state().decks[deck].tempo_range)
                 .unwrap_or_default();
-            let ratio = (start_tempo + (start_y - y) as f64 / 140. * range.extent() * 2.)
-                .clamp(1. - range.extent(), 1. + range.extent());
-            self.send(deck, DeckAction::SetTempo { ratio });
+            let normalized = ((start_tempo - 1.) / range.extent()
+                + (start_y - y) as f64 / 140. * 2.)
+                .clamp(-1., 1.) as f32;
+            self.set_skin_tempo(deck, normalized);
             cx.notify();
             return;
         }
@@ -950,17 +966,7 @@ impl Shell {
         let fraction = ((y - bounds.origin.y.as_f32() - 5.)
             / (bounds.size.height.as_f32() - 10.).max(1.))
         .clamp(0., 1.);
-        let range = self
-            .engine
-            .as_mut()
-            .map(|e| e.state().decks[deck].tempo_range)
-            .unwrap_or_default();
-        self.send(
-            deck,
-            DeckAction::SetTempo {
-                ratio: pitch_ratio(fraction as f64, range),
-            },
-        );
+        self.set_skin_tempo(deck, fraction * 2. - 1.);
         cx.notify();
     }
     fn four_deck_pitch_control(
@@ -1222,10 +1228,6 @@ fn playback_anchor(
     }
 }
 
-fn pitch_ratio(fraction: f64, range: djcraft_protocol::TempoFaderRange) -> f64 {
-    1. + (fraction.clamp(0., 1.) * 2. - 1.) * range.extent()
-}
-
 #[cfg(test)]
 mod pitch_tests {
     #[test]
@@ -1310,12 +1312,37 @@ mod pitch_tests {
     #[test]
     fn pitch_fader_has_unity_at_centre_and_preserves_full_tempo_range() {
         use djcraft_protocol::TempoFaderRange::*;
+        use djcraft_protocol::script::{ControlSource, Param, Program};
+        use djcraft_protocol::{Action, DECKS, DeckAction, DeckState, SessionState};
         for range in [Low, Medium, High, Wide] {
-            assert_eq!(super::pitch_ratio(0., range), 1. - range.extent());
-            assert_eq!(super::pitch_ratio(0.5, range), 1.);
-            assert_eq!(super::pitch_ratio(1., range), 1. + range.extent());
-            assert!(super::pitch_ratio(0.49, range) < 1.);
-            assert!(super::pitch_ratio(0.51, range) > 1.);
+            let state = SessionState {
+                decks: vec![
+                    DeckState {
+                        tempo_range: range,
+                        ..Default::default()
+                    };
+                    DECKS
+                ],
+                ..Default::default()
+            };
+            for deck in 0..DECKS {
+                for fraction in [0.0_f32, 0.49, 0.5, 0.51, 1.0] {
+                    let dispatch = Program::set_param(deck, Param::Tempo)
+                        .unwrap()
+                        .run_with_state(ControlSource::Skin, fraction * 2. - 1., Some(&state))
+                        .unwrap();
+                    let Action::Deck {
+                        deck: target,
+                        action: DeckAction::SetTempo { ratio },
+                    } = dispatch.action
+                    else {
+                        panic!("tempo gesture must dispatch SetTempo");
+                    };
+                    assert_eq!(usize::from(target), deck);
+                    let expected = 1. + (f64::from(fraction) * 2. - 1.) * range.extent();
+                    assert!((ratio - expected).abs() < 1e-7);
+                }
+            }
         }
     }
 }

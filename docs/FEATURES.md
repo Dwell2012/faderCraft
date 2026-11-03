@@ -1,5 +1,9 @@
 # djcraft feature list
 
+- [~] fcScript interaction conversion: mixer Classic EQ, trim, volume, CFX,
+      play controls and manual tempo gestures use compiled commands.
+      [Controller script bindings, other deck/mixer controls and a script editor remain pending.]
+
 - [x] Stem preparation progress overlays the top edge of each deck overview waveform: 3px, deck colour at 50% opacity, no added layout height. Uses existing per-deck progress and refresh; queued/loading jobs show a short marker, and completion/failure/timeout clears it.
 
 - [x] Right-deck performance boxes mirror the left-deck arrangement: Effects/Pads outside, Loops inside, label strips on the right. Controls inside each box retain their original order.
