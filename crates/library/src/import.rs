@@ -295,15 +295,21 @@ impl Library {
             // Imports are repeatable: keep intentional repeats in the source,
             // but do not append the same occurrences on every re-import.
             let mut existing_counts = HashMap::<i64, usize>::new();
-            for track in self.tracks(&crate::TrackQuery { playlist: Some(playlist), ..Default::default() })? {
+            for track in self.tracks(&crate::TrackQuery {
+                playlist: Some(playlist),
+                ..Default::default()
+            })? {
                 *existing_counts.entry(track.id).or_default() += 1;
             }
             let mut seen = HashMap::<i64, usize>::new();
-            let additions: Vec<_> = tracks.into_iter().filter(|track| {
-                let count = seen.entry(*track).or_default();
-                *count += 1;
-                *count > *existing_counts.get(track).unwrap_or(&0)
-            }).collect();
+            let additions: Vec<_> = tracks
+                .into_iter()
+                .filter(|track| {
+                    let count = seen.entry(*track).or_default();
+                    *count += 1;
+                    *count > *existing_counts.get(track).unwrap_or(&0)
+                })
+                .collect();
             summary.tracks += self.add_to_playlist(playlist, &additions)?;
             summary.playlists += 1;
         }

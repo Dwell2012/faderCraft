@@ -631,11 +631,25 @@ fn playlists_hold_tracks_from_several_sources_in_order() {
         [("Warm up".to_string(), 4), ("Peak".to_string(), 1)]
     );
 
-    let alpha_entry = library.tracks(&TrackQuery { playlist: Some(warmup.id), ..Default::default() }).unwrap()
-        .into_iter().find(|track| track.id == alpha).unwrap().playlist_entry.unwrap();
-    library.remove_from_playlist(warmup.id, alpha_entry).unwrap();
+    let alpha_entry = library
+        .tracks(&TrackQuery {
+            playlist: Some(warmup.id),
+            ..Default::default()
+        })
+        .unwrap()
+        .into_iter()
+        .find(|track| track.id == alpha)
+        .unwrap()
+        .playlist_entry
+        .unwrap();
+    library
+        .remove_from_playlist(warmup.id, alpha_entry)
+        .unwrap();
     library.rename_playlist(warmup.id, "Opening").unwrap();
-    assert_eq!(in_playlist(&library, warmup.id, ""), ["Gamma", "Gamma", "Beta"]);
+    assert_eq!(
+        in_playlist(&library, warmup.id, ""),
+        ["Gamma", "Gamma", "Beta"]
+    );
     assert_eq!(library.playlists().unwrap()[0].name, "Opening");
 
     // Removing a source takes its tracks out of every playlist.
@@ -661,15 +675,56 @@ fn crates_are_unique_nested_and_independently_queryable() {
     let tracks = library.tracks(&TrackQuery::default()).unwrap();
     let parent = library.create_crate("Parent", None).unwrap();
     let child = library.create_crate("Child", Some(parent.id)).unwrap();
-    assert_eq!(library.add_to_crate(child.id, &[tracks[0].id, tracks[0].id, tracks[1].id]).unwrap(), 2);
+    assert_eq!(
+        library
+            .add_to_crate(child.id, &[tracks[0].id, tracks[0].id, tracks[1].id])
+            .unwrap(),
+        2
+    );
     assert_eq!(library.add_to_crate(child.id, &[tracks[0].id]).unwrap(), 0);
-    assert_eq!(library.crates().unwrap().iter().find(|item| item.id == child.id).unwrap().track_count, 2);
-    assert_eq!(library.tracks(&TrackQuery { crate_id: Some(child.id), ..Default::default() }).unwrap().len(), 2);
+    assert_eq!(
+        library
+            .crates()
+            .unwrap()
+            .iter()
+            .find(|item| item.id == child.id)
+            .unwrap()
+            .track_count,
+        2
+    );
+    assert_eq!(
+        library
+            .tracks(&TrackQuery {
+                crate_id: Some(child.id),
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+        2
+    );
     assert!(library.move_crate(parent.id, Some(child.id)).is_err());
     library.move_crate(child.id, None).unwrap();
-    assert_eq!(library.crates().unwrap().iter().find(|item| item.id == child.id).unwrap().parent, None);
+    assert_eq!(
+        library
+            .crates()
+            .unwrap()
+            .iter()
+            .find(|item| item.id == child.id)
+            .unwrap()
+            .parent,
+        None
+    );
     library.remove_from_crate(child.id, tracks[0].id).unwrap();
-    assert_eq!(library.tracks(&TrackQuery { crate_id: Some(child.id), ..Default::default() }).unwrap().len(), 1);
+    assert_eq!(
+        library
+            .tracks(&TrackQuery {
+                crate_id: Some(child.id),
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -1309,22 +1364,45 @@ fn manual_first_beat_survives_analysis_rescan_and_reopen() {
     let source = library.add_folder(&dir.0).unwrap();
     library.scan(source.id, |_| {}).unwrap();
     let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
-    let measured = TempoResult { bpm: 120., first_beat_seconds: 0.13, downbeat: 2, confidence: 0.8 };
+    let measured = TempoResult {
+        bpm: 120.,
+        first_beat_seconds: 0.13,
+        downbeat: 2,
+        confidence: 0.8,
+    };
     library.store_tempo(id, 1, Some(measured)).unwrap();
     library.set_beat_grid_anchor(id, 0.25, 0).unwrap();
     assert!(library.beat_grid_anchor_is_manual(id).unwrap());
-    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.25);
+    assert_eq!(
+        library.beat_grid(id).unwrap().unwrap().first_beat_seconds,
+        0.25
+    );
     assert_eq!(library.beat_grid(id).unwrap().unwrap().downbeat, 0);
-    library.store_tempo(id, 2, Some(TempoResult { first_beat_seconds: 0.40, ..measured })).unwrap();
+    library
+        .store_tempo(
+            id,
+            2,
+            Some(TempoResult {
+                first_beat_seconds: 0.40,
+                ..measured
+            }),
+        )
+        .unwrap();
     write_tagged(&audio, "Song", "Artist", "", "120", "8A");
     library.scan(source.id, |_| {}).unwrap();
     drop(library);
     let library = Library::open(&db).unwrap();
-    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.25);
+    assert_eq!(
+        library.beat_grid(id).unwrap().unwrap().first_beat_seconds,
+        0.25
+    );
     assert!(library.set_beat_grid_anchor(id, f64::NAN, 0).is_err());
     library.clear_beat_grid_anchor(id).unwrap();
     assert!(!library.beat_grid_anchor_is_manual(id).unwrap());
-    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.40);
+    assert_eq!(
+        library.beat_grid(id).unwrap().unwrap().first_beat_seconds,
+        0.40
+    );
 }
 
 #[test]
@@ -1716,9 +1794,19 @@ fn playlists_have_folders_and_order() {
         playlist: Some(set.id),
         ..Default::default()
     };
-    let entry = |library: &Library, title: &str| library.tracks(&in_set).unwrap().into_iter()
-        .find(|track| track.title == title).unwrap().playlist_entry.unwrap();
-    library.move_in_playlist(set.id, entry(&library, "Three"), 0).unwrap();
+    let entry = |library: &Library, title: &str| {
+        library
+            .tracks(&in_set)
+            .unwrap()
+            .into_iter()
+            .find(|track| track.title == title)
+            .unwrap()
+            .playlist_entry
+            .unwrap()
+    };
+    library
+        .move_in_playlist(set.id, entry(&library, "Three"), 0)
+        .unwrap();
     let order: Vec<String> = library
         .tracks(&in_set)
         .unwrap()
@@ -1727,7 +1815,9 @@ fn playlists_have_folders_and_order() {
         .collect();
     assert_eq!(order, ["Three", "One", "Two"]);
     // Dropping onto a later row places the track at that row's old position.
-    library.move_in_playlist(set.id, entry(&library, "Three"), 2).unwrap();
+    library
+        .move_in_playlist(set.id, entry(&library, "Three"), 2)
+        .unwrap();
     let order = library
         .tracks(&in_set)
         .unwrap()
@@ -1736,7 +1826,9 @@ fn playlists_have_folders_and_order() {
         .collect::<Vec<_>>();
     assert_eq!(order, ["One", "Two", "Three"]);
     // Moving upward uses the target's position without an off-by-one shift.
-    library.move_in_playlist(set.id, entry(&library, "Two"), 0).unwrap();
+    library
+        .move_in_playlist(set.id, entry(&library, "Two"), 0)
+        .unwrap();
     assert_eq!(
         library
             .tracks(&in_set)

@@ -707,17 +707,21 @@ impl Library {
                 COMMIT;")?;
         }
         if version < 25 {
-            conn.execute_batch("BEGIN;
+            conn.execute_batch(
+                "BEGIN;
                 UPDATE playlists SET parent_playlist_id=NULL WHERE parent_playlist_id IS NOT NULL;
                 PRAGMA user_version=25;
-                COMMIT;")?;
+                COMMIT;",
+            )?;
         }
         if version < 26 {
-            conn.execute_batch("BEGIN;
+            conn.execute_batch(
+                "BEGIN;
                 ALTER TABLE tracks ADD COLUMN tempo_first_beat_manual REAL;
                 ALTER TABLE tracks ADD COLUMN tempo_downbeat_manual INTEGER;
                 PRAGMA user_version=26;
-                COMMIT;")?;
+                COMMIT;",
+            )?;
         }
         Ok(Self { conn })
     }
@@ -964,16 +968,27 @@ impl Library {
 
     /// Pins the beatgrid origin and bar phase independently of analysis.
     /// Re-analysis and file rescans leave this correction intact.
-    pub fn set_beat_grid_anchor(&self, id: i64, first_beat_seconds: f64, downbeat: u8) -> Result<()> {
+    pub fn set_beat_grid_anchor(
+        &self,
+        id: i64,
+        first_beat_seconds: f64,
+        downbeat: u8,
+    ) -> Result<()> {
         if !first_beat_seconds.is_finite() || first_beat_seconds < 0. || downbeat >= 4 {
-            return Err(Error::Library("first beat must be a non-negative time and bar beat must be 1–4".into()));
+            return Err(Error::Library(
+                "first beat must be a non-negative time and bar beat must be 1–4".into(),
+            ));
         }
         let changed = self.conn.execute(
             "UPDATE tracks SET tempo_first_beat_manual=?2, tempo_downbeat_manual=?3
              WHERE id=?1 AND (duration<=0 OR ?2<=duration)",
             params![id, first_beat_seconds, downbeat],
         )?;
-        if changed == 0 { return Err(Error::Library("first beat must fall within the track".into())); }
+        if changed == 0 {
+            return Err(Error::Library(
+                "first beat must fall within the track".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -986,7 +1001,9 @@ impl Library {
 
     pub fn beat_grid_anchor_is_manual(&self, id: i64) -> Result<bool> {
         Ok(self.conn.query_row(
-            "SELECT tempo_first_beat_manual IS NOT NULL FROM tracks WHERE id=?1", [id], |row| row.get(0),
+            "SELECT tempo_first_beat_manual IS NOT NULL FROM tracks WHERE id=?1",
+            [id],
+            |row| row.get(0),
         )?)
     }
 
@@ -1142,9 +1159,19 @@ impl Library {
 
     pub fn create_crate(&self, name: &str, parent: Option<i64>) -> Result<Crate> {
         let name = name.trim();
-        if name.is_empty() { return Err(Error::Library("a crate needs a name".into())); }
-        self.conn.execute("INSERT INTO crates(name, parent_id, created_at) VALUES (?1, ?2, unixepoch())", params![name, parent])?;
-        Ok(Crate { id: self.conn.last_insert_rowid(), name: name.into(), track_count: 0, parent })
+        if name.is_empty() {
+            return Err(Error::Library("a crate needs a name".into()));
+        }
+        self.conn.execute(
+            "INSERT INTO crates(name, parent_id, created_at) VALUES (?1, ?2, unixepoch())",
+            params![name, parent],
+        )?;
+        Ok(Crate {
+            id: self.conn.last_insert_rowid(),
+            name: name.into(),
+            track_count: 0,
+            parent,
+        })
     }
 
     pub fn crates(&self) -> Result<Vec<Crate>> {
@@ -1153,15 +1180,25 @@ impl Library {
              LEFT JOIN crate_tracks ct ON ct.crate_id=c.id
              GROUP BY c.id ORDER BY c.created_at, c.id",
         )?;
-        let rows = statement.query_map([], |row| Ok(Crate {
-            id: row.get(0)?, name: row.get(1)?, track_count: row.get::<_, i64>(2)? as usize, parent: row.get(3)?,
-        }))?;
+        let rows = statement.query_map([], |row| {
+            Ok(Crate {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                track_count: row.get::<_, i64>(2)? as usize,
+                parent: row.get(3)?,
+            })
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn rename_crate(&self, id: i64, name: &str) -> Result<()> {
-        if name.trim().is_empty() { return Err(Error::Library("a crate needs a name".into())); }
-        self.conn.execute("UPDATE crates SET name=?2 WHERE id=?1", params![id, name.trim()])?;
+        if name.trim().is_empty() {
+            return Err(Error::Library("a crate needs a name".into()));
+        }
+        self.conn.execute(
+            "UPDATE crates SET name=?2 WHERE id=?1",
+            params![id, name.trim()],
+        )?;
         Ok(())
     }
 
@@ -1173,10 +1210,19 @@ impl Library {
     pub fn move_crate(&self, id: i64, parent: Option<i64>) -> Result<()> {
         let mut at = parent;
         while let Some(candidate) = at {
-            if candidate == id { return Err(Error::Library("a crate cannot contain itself".into())); }
-            at = self.conn.query_row("SELECT parent_id FROM crates WHERE id=?1", [candidate], |row| row.get(0))?;
+            if candidate == id {
+                return Err(Error::Library("a crate cannot contain itself".into()));
+            }
+            at = self.conn.query_row(
+                "SELECT parent_id FROM crates WHERE id=?1",
+                [candidate],
+                |row| row.get(0),
+            )?;
         }
-        self.conn.execute("UPDATE crates SET parent_id=?2 WHERE id=?1", params![id, parent])?;
+        self.conn.execute(
+            "UPDATE crates SET parent_id=?2 WHERE id=?1",
+            params![id, parent],
+        )?;
         Ok(())
     }
 
@@ -1194,7 +1240,10 @@ impl Library {
     }
 
     pub fn remove_from_crate(&self, crate_id: i64, track: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM crate_tracks WHERE crate_id=?1 AND track_id=?2", params![crate_id, track])?;
+        self.conn.execute(
+            "DELETE FROM crate_tracks WHERE crate_id=?1 AND track_id=?2",
+            params![crate_id, track],
+        )?;
         Ok(())
     }
 
@@ -1277,8 +1326,12 @@ impl Library {
             key = shown_key_sql(),
             keep_key = option_sql("keep_tagged_key", KeepTagged::default().key),
         );
-        let mut values: Vec<rusqlite::types::Value> =
-            vec![query.source.into(), query.playlist.into(), query.id.into(), query.crate_id.into()];
+        let mut values: Vec<rusqlite::types::Value> = vec![
+            query.source.into(),
+            query.playlist.into(),
+            query.id.into(),
+            query.crate_id.into(),
+        ];
         for word in query.search.split_whitespace() {
             let escaped = word
                 .replace('\\', "\\\\")

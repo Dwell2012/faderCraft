@@ -665,7 +665,10 @@ impl Library {
     pub fn merge_duplicates(&mut self, keep: i64, others: &[i64]) -> Result<()> {
         let transaction = self.conn.transaction()?;
         for &other in others.iter().filter(|other| **other != keep) {
-            transaction.execute("UPDATE playlist_tracks SET track_id=?2 WHERE track_id=?1", params![other, keep])?;
+            transaction.execute(
+                "UPDATE playlist_tracks SET track_id=?2 WHERE track_id=?1",
+                params![other, keep],
+            )?;
             transaction.execute("INSERT OR IGNORE INTO crate_tracks(crate_id, track_id) SELECT crate_id, ?2 FROM crate_tracks WHERE track_id=?1", params![other, keep])?;
             transaction.execute(
                 "UPDATE flow_clips SET track_id = ?2 WHERE track_id = ?1",

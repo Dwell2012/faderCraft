@@ -277,7 +277,10 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
         let power = |at: f64| {
             let start = (at * sample_rate as f64) as usize;
             let end = (start + (0.08 * sample_rate as f64) as usize).min(samples.len());
-            samples[start..end].iter().map(|sample| (*sample as f64).powi(2)).sum::<f64>()
+            samples[start..end]
+                .iter()
+                .map(|sample| (*sample as f64).powi(2))
+                .sum::<f64>()
                 / (end - start).max(1) as f64
         };
         if power(0.) >= power(first_beat) * 0.45 {
@@ -528,7 +531,11 @@ fn project_kick_back(samples: &[f32], sample_rate: u32, anchor: f64, period: f64
     // edge. The confirmed run may consequently land one beat later, with a
     // phase just *before* the period boundary. Audio already present at the
     // file start is evidence for beat zero; a genuine later entrance is not.
-    let phase = if sound < 0.03 && period - phase < 0.03 { 0. } else { phase };
+    let phase = if sound < 0.03 && period - phase < 0.03 {
+        0.
+    } else {
+        phase
+    };
     // Project through a musical intro, but do not invent beats in leading
     // silence. Allow the short attack ramp after the exact beat timestamp.
     phase + ((sound - 0.03 - phase) / period).ceil().max(0.) * period
@@ -1045,9 +1052,13 @@ mod tests {
     fn four_bar_groove_keeps_its_first_attack() {
         for (bpm, first) in [(120., 0.0), (128., 0.18), (140., 0.35)] {
             let seconds = first + 16. * 60. / bpm;
-            let tempo = detect_tempo(&pattern(bpm, first, seconds), RATE, TempoRange::default()).unwrap();
+            let tempo =
+                detect_tempo(&pattern(bpm, first, seconds), RATE, TempoRange::default()).unwrap();
             assert!((tempo.bpm - bpm).abs() < 0.5, "{tempo:?}; expected {bpm}");
-            assert!((tempo.first_beat_seconds - first).abs() < 0.025, "{tempo:?}; expected {first}");
+            assert!(
+                (tempo.first_beat_seconds - first).abs() < 0.025,
+                "{tempo:?}; expected {first}"
+            );
         }
     }
 
