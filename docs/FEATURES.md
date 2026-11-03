@@ -1,5 +1,7 @@
 # djcraft feature list
 
+- [~] Rhythm Shift replaces a prepared deck drum stem with a beat-synced groove, triggers four rolls at bar boundaries, and returns to the groove at each roll's pack-defined point while the tail plays. The Perform side panel and fcScript actions expose it without hardware; the DDJ-GRV6 starter profile maps Swap 1, Roll 1–4, Release and gain. [Additional groove slots, Capture and the GRV6 Stem FX mode switch remain pending.]
+
 - [~] fcScript interaction conversion: mixer Classic EQ, trim, volume, CFX,
       play controls and manual tempo gestures use compiled commands.
       [Controller script bindings, other deck/mixer controls and a script editor remain pending.]
@@ -222,11 +224,11 @@ Feature set modelled on Mixed In Key 10.
 ### Organisation
 
 - [x] Track browser with virtualised table, sorting, column chooser, search
-- [~] Playlists and folders (folders inside folders, rename, move, reorder
-      tracks by menu or drag and drop in playlist order; sidebar reordering pending)
-- [x] Nested playlist sublists with independent tracks, expand/collapse and
-      creation from a playlist's menu in Library and the performance browser.
-      Deleting a parent retains its sublists; moving to a folder carries the subtree.
+- [~] Playlists and folders (fixed playlist order with repeat entries, folders
+      inside folders, rename, move, reorder by menu or drag and drop; sidebar
+      reordering pending). Former playlist sublists are flattened on upgrade.
+- [x] Crates and nested sub-crates in the Perform browser. Each crate contains
+      a track at most once; its table can be sorted by any column.
 - [x] Smart playlists (rule-based) (title, artist, album, genre, BPM,
       energy, year, key or keys that mix, and date added; every rule or any)
 - [x] Auto-classification by genre, energy and era (automatic groups in the
@@ -429,10 +431,10 @@ Feature set modelled on Mixed In Key 10.
 - [x] Sampler bus volume on the left of the mixer; affects all pads together
       while preserving their individual levels, with smoothed gain changes.
 
-- [x] Local cached four-source separation (vocals, instruments, bass, drums);
-      optional Demucs runtime/model installed with `tools/setup-stems.ps1`.
-      Settings > Audio selects Automatic (GPU preferred, default) or CPU only;
-      GPU failures retry with the existing four-thread CPU cap.
+- [x] Local cached four-source separation (vocals, instruments, bass, drums)
+      through native ONNX Runtime. Settings > Audio downloads the Fast or
+      Detailed model; no Python runtime is required. Inference currently uses
+      up to four CPU threads.
 - [x] EQ dropdown beside Stems: Classic, EZRemix, Modern EQ and four-stem layouts
       (see [STEMS.md](STEMS.md) for source grouping and setup)
 - [~] Per-stem level / full cut, mousewheel, double-click reset and smoothed gains
@@ -736,6 +738,7 @@ See [AUTOMIX.md](AUTOMIX.md) for control ownership and current limits.
 - [x] Opaque waveform layers: lows at the back, mids above lows and highs on top; whole-track overview envelopes cached between playhead updates.
 
 - [x] Beat analysis anchors the first beat to a repeated opening attack rather than extrapolating into leading silence. Opening accents determine bar phase, with the first supported kick as the default for unaccented percussive intros. Analysis version 6 refreshes cached grids.
+- [x] Track info can pin a manual first-beat time and bar phase, nudge the anchor by 10 ms or a beat, and reset to analysis. Manual corrections survive rescans, re-analysis and restarts. Short four-bar loops beginning on a kick no longer shift the first beat to beat two.
 
 - [x] Suggested cue labels use compact minutes:seconds; saved cue positions retain full sub-second precision.
 

@@ -23,6 +23,8 @@ mod pad_controls;
 mod preparation_controls;
 #[path = "pro_layout.rs"]
 mod pro_layout;
+#[path = "rhythm_shift_controls.rs"]
+mod rhythm_shift_controls;
 #[path = "sampler_controls.rs"]
 mod sampler_controls;
 #[path = "stem_controls.rs"]
@@ -232,7 +234,9 @@ pub struct Shell {
     deck_eq_modes: [EqMode; DECKS],
     stem_tracks: [Option<std::sync::Arc<djcraft_engine::Track>>; DECKS],
     stem_busy: [bool; DECKS],
-    library_stem_jobs: std::collections::HashSet<PathBuf>,
+    library_stem_jobs:
+        std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::atomic::AtomicU8>>,
+    ready_stem_paths: std::collections::HashSet<PathBuf>,
     stem_progress: [std::sync::Arc<std::sync::atomic::AtomicU8>; DECKS],
     stem_status: [String; DECKS],
     wheel_scrub: Option<(usize, f64, bool, Instant)>,
@@ -254,6 +258,10 @@ pub struct Shell {
     loop_view: [usize; DECKS],
     saved_loops_deck: Option<usize>,
     library_side_tab: usize,
+    library_side_width: f32,
+    library_side_drag: Option<(f32, f32)>,
+    rhythm_pack: Option<String>,
+    rhythm_notice: String,
     sampler_state: djcraft_protocol::SamplerState,
     sampler_ui: sampler_controls::SamplerUi,
     sampler_list: bool,
@@ -549,6 +557,7 @@ impl Shell {
             stem_tracks: std::array::from_fn(|_| None),
             stem_busy: [false; DECKS],
             library_stem_jobs: Default::default(),
+            ready_stem_paths: crate::stems::ready_paths(settings.stem_model.name()),
             stem_progress: std::array::from_fn(|_| {
                 std::sync::Arc::new(std::sync::atomic::AtomicU8::new(254))
             }),
@@ -571,6 +580,10 @@ impl Shell {
             loop_view: [0; DECKS],
             saved_loops_deck: None,
             library_side_tab: 0,
+            library_side_width: 400.,
+            library_side_drag: None,
+            rhythm_pack: None,
+            rhythm_notice: String::new(),
             sampler_state: Default::default(),
             sampler_ui: Default::default(),
             sampler_list: false,
@@ -588,11 +601,10 @@ impl Shell {
             loop_notice: std::array::from_fn(|_| String::new()),
         };
         if !quick {
-            let prefer_gpu = shell.settings.stem_gpu;
             let model = shell.settings.stem_model.name();
             let warmup = cx
                 .background_executor()
-                .spawn(async move { crate::stems::warm_up(prefer_gpu, model) });
+                .spawn(async move { crate::stems::warm_up(model) });
             cx.spawn(async move |this, cx| {
                 if let Err(error) = warmup.await {
                     eprintln!("Stem startup: {error}");
@@ -685,6 +697,7 @@ impl Shell {
         }
         shell.restore_automix(cx);
         shell.refresh_grids(cx);
+        shell.sync_library_stem_states(cx);
         shell
     }
 
@@ -741,6 +754,15 @@ impl Shell {
         }
     }
 
+    fn nudge_deck_grid(&mut self, deck: usize, beats: i32, cx: &mut Context<Self>) {
+        let Some(path) = self.deck_paths[deck].clone() else {
+            return;
+        };
+        self.library.update(cx, |view, cx| {
+            view.nudge_beat_grid_at(std::path::Path::new(&path), beats, cx);
+        });
+    }
+
     /// Hides the named columns in every track list, and remembers that.
     fn set_hidden_columns(&mut self, hidden: Vec<String>, cx: &mut Context<Self>) {
         self.settings.hidden_columns = hidden;
@@ -788,7 +810,7 @@ impl Shell {
         cx.subscribe(&view, |this, view, event: &SettingsEvent, cx| {
             match event {
                 SettingsEvent::Changed(settings) | SettingsEvent::MappingSelected(settings) => {
-                    if matches!(event, SettingsEvent::MappingSelected(_)) || this.settings.controller_mapping != settings.controller_mapping || this.settings.controller_fx1_colour != settings.controller_fx1_colour {
+                    if matches!(event, SettingsEvent::MappingSelected(_)) || this.settings.controller_mapping != settings.controller_mapping || this.settings.controller_options != settings.controller_options {
                         this.persist_performance_settings();
                         match crate::controllers::Controllers::load(settings, &this.performance_settings.scratch_modes) {
                             Ok(mut next) => {
@@ -813,7 +835,11 @@ impl Shell {
                             let _ = engine.apply(Role::Host, Action::Mixer { action: MixerAction::SetCrossfaderRouting { routing: settings.crossfader_routing } });
                         }
                     }
+                    if this.settings.stem_model != settings.stem_model {
+                        this.ready_stem_paths = crate::stems::ready_paths(settings.stem_model.name());
+                    }
                     this.settings = settings.clone();
+                    this.sync_library_stem_states(cx);
                     this.settings.apply_theme(cx);
                     cx.set_global(settings.clone());
                     this.library.update(cx, |view, cx| {
@@ -1019,7 +1045,7 @@ impl Shell {
                 1. - state.tempo_range.extent(),
                 1. + state.tempo_range.extent(),
             );
-            self.set_skin_tempo(deck, ((ratio - 1.) / state.tempo_range.extent()) as f32);
+            self.set_skin_tempo(deck, ((ratio - 1.) / state.tempo_range.extent()) as f32, cx);
             cx.notify();
         }
         cx.stop_propagation();
@@ -1310,7 +1336,25 @@ impl Shell {
     }
 
     fn controller_action(&mut self, action: Action, cx: &mut Context<Self>) {
-        match action {
+        self.apply_control_dispatch(
+            djcraft_protocol::script::Dispatch {
+                source: djcraft_protocol::script::ControlSource::Controller,
+                action,
+            },
+            cx,
+        );
+    }
+
+    /// Common destination for skin scripts and controller actions. Deck actions
+    /// retain the host's load, cue and transport bookkeeping before engine apply.
+    fn apply_control_dispatch(
+        &mut self,
+        dispatch: djcraft_protocol::script::Dispatch,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let source = dispatch.source;
+        let action = dispatch.action;
+        let applied = match action {
             Action::Deck { deck, action } if usize::from(deck) < self.deck_paths.len() => {
                 if deck >= 2 && !self.settings.four_decks {
                     self.set_four_decks(true, cx);
@@ -1322,16 +1366,24 @@ impl Shell {
                     }
                     action => self.send(usize::from(deck), action),
                 }
+                true
             }
             action => {
                 if let Some(engine) = &mut self.engine {
-                    if let Err(reason) = engine.apply(Role::Host, action) {
-                        eprintln!("Controller action rejected: {reason:?}");
+                    match engine.apply(Role::Host, action) {
+                        Ok(()) => true,
+                        Err(reason) => {
+                            eprintln!("{source:?} action rejected: {reason:?}");
+                            false
+                        }
                     }
+                } else {
+                    false
                 }
             }
-        }
+        };
         cx.notify();
+        applied
     }
 
     fn controller_command(
@@ -1717,10 +1769,7 @@ impl Shell {
                 else {
                     return;
                 };
-                if let Action::Deck { deck, action } = dispatch.action {
-                    this.send(usize::from(deck), action);
-                }
-                cx.notify();
+                this.apply_control_dispatch(dispatch, cx);
             }));
         let sync_button = Button::new(("sync", index))
             .outline()
@@ -2559,6 +2608,11 @@ impl Render for Shell {
                     this.move_pitch(event.position.y.as_f32(), cx);
                     this.move_mixer_control(event.position, cx);
                     this.move_effect_control(event.position.y.as_f32(), cx);
+                    if let Some((start_x, start_width)) = this.library_side_drag {
+                        this.library_side_width =
+                            (start_width + start_x - event.position.x.as_f32()).clamp(220., 640.);
+                        cx.notify();
+                    }
                 } else if event.pressed_button.is_none() {
                     this.end_cue_preview(cx);
                     this.pitch_drag = None;
@@ -2568,6 +2622,7 @@ impl Render for Shell {
                     this.end_waveform_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
+                    this.library_side_drag = None;
                 }
             }))
             .on_mouse_up(
@@ -2589,6 +2644,7 @@ impl Render for Shell {
                     this.end_waveform_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
+                    this.library_side_drag = None;
                 }),
             )
             .on_mouse_up_out(
@@ -2602,6 +2658,7 @@ impl Render for Shell {
                     this.end_waveform_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
+                    this.library_side_drag = None;
                 }),
             )
             .child(self.top_bar(cx))

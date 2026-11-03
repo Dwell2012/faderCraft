@@ -320,6 +320,18 @@ pub enum DeckAction {
     SetBeatGrid {
         grid: Option<BeatGrid>,
     },
+    /// Replace the deck's drum stem with the selected Rhythm Shift pack.
+    SetRhythmShift {
+        enabled: bool,
+    },
+    /// Rhythm Shift groove level, with 1.0 at unity.
+    SetRhythmGain {
+        level: f32,
+    },
+    /// Trigger one of the pack's four rolls at the next bar boundary.
+    TriggerRhythmRoll {
+        slot: u8,
+    },
     LoadSample {
         slot: u8,
         path: String,
@@ -908,6 +920,10 @@ impl TempoFaderRange {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeckState {
     #[serde(default)]
+    pub rhythm_shift: bool,
+    #[serde(default = "default_rhythm_gain")]
+    pub rhythm_gain: f32,
+    #[serde(default)]
     pub tempo_range: TempoFaderRange,
     /// Negative dB applied by the key-lock peak protector; zero when inactive.
     #[serde(default)]
@@ -967,6 +983,10 @@ pub struct DeckState {
     pub eq_mode: EqMode,
     pub stem_gains: [f32; 4],
     pub stems_ready: bool,
+}
+
+fn default_rhythm_gain() -> f32 {
+    1.
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

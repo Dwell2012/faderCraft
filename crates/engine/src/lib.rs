@@ -9,7 +9,9 @@ mod mixer;
 mod output;
 mod peak_guard;
 mod processed_peak;
+mod rhythm_shift;
 pub use processed_peak::measure_key_lock_peak;
+pub use rhythm_shift::Pack as RhythmShiftPack;
 mod sample_banks;
 mod sampler;
 mod sampler_assets;
@@ -60,6 +62,8 @@ impl fmt::Display for EngineError {
 impl std::error::Error for EngineError {}
 
 struct DeckControl {
+    rhythm_shift: bool,
+    rhythm_gain: f32,
     tempo_range: djcraft_protocol::TempoFaderRange,
     auto_trim: bool,
     loudness_applied: bool,
@@ -120,6 +124,7 @@ pub struct Engine {
     sample_banks: sample_banks::Banks,
     sampler_error: Option<String>,
     sample_rate: u32,
+    rhythm_pack_loaded: bool,
     commands: rtrb::Producer<Command>,
     garbage: rtrb::Consumer<Arc<Track>>,
     shared: Arc<Shared>,
@@ -218,6 +223,30 @@ impl Engine {
         &self.output_description
     }
 
+    /// Load a Rhythm Shift pack. The host supplies per-pack timing metadata;
+    /// the audio callback only receives fully decoded, validated audio.
+    pub fn load_rhythm_shift_pack(
+        &mut self,
+        folder: &std::path::Path,
+        bpm: f64,
+        loop_beats: f64,
+        return_beats: [f64; 4],
+    ) -> Result<(), String> {
+        let pack =
+            rhythm_shift::Pack::load(folder, self.sample_rate, bpm, loop_beats, return_beats)
+                .map_err(|error| format!("{error:?}"))?;
+        if !pack.valid(self.sample_rate) {
+            return Err("Invalid Rhythm Shift pack timing or audio".into());
+        }
+        self.send(Command::RhythmPack { pack })
+            .map_err(|error| format!("{error:?}"))?;
+        self.rhythm_pack_loaded = true;
+        for deck in &mut self.decks {
+            deck.rhythm_shift = false;
+        }
+        Ok(())
+    }
+
     /// Creates an engine with no audio device. The caller drives the returned
     /// [`Mixer`] itself, for offline rendering and tests.
     pub fn headless(sample_rate: u32) -> (Self, Mixer) {
@@ -238,10 +267,13 @@ impl Engine {
             sample_banks: Default::default(),
             sampler_error: None,
             sample_rate,
+            rhythm_pack_loaded: false,
             commands,
             garbage,
             shared,
             decks: std::array::from_fn(|_| DeckControl {
+                rhythm_shift: false,
+                rhythm_gain: 1.,
                 auto_trim: true,
                 loudness_applied: false,
                 processed_peak: None,
@@ -353,6 +385,29 @@ impl Engine {
         self.decks.get(deck)?.track.as_ref()
     }
 
+    /// Explain why Rhythm Shift cannot yet start on this deck.
+    pub fn rhythm_shift_readiness(&self, deck: usize) -> Result<(), &'static str> {
+        let control = self.decks.get(deck).ok_or("That deck is unavailable.")?;
+        if !self.rhythm_pack_loaded {
+            return Err("Select a Rhythm Shift pack first.");
+        }
+        let track = control
+            .track
+            .as_ref()
+            .ok_or("Load a track on this deck first.")?;
+        if !track.stems_ready() {
+            return Err(
+                "This deck's drum stem is not ready yet. Wait for stem preparation to finish, then try again.",
+            );
+        }
+        if control.grid.is_none() {
+            return Err(
+                "This track has no beat grid yet. Analyse it or set its beat grid before starting Rhythm Shift.",
+            );
+        }
+        Ok(())
+    }
+
     /// Whether replacing this playing deck could interrupt the master output.
     /// Use the signal route, not an instantaneous meter: quiet beats and breaks
     /// must not bypass a live-deck warning. Fully closed controls are safe.
@@ -388,10 +443,19 @@ impl Engine {
 
     /// Loads a track onto a deck. It may still be decoding.
     pub fn load_track(&mut self, deck: usize, track: Arc<Track>) -> Result<(), Rejection> {
+        self.install_track(deck, track, None)
+    }
+
+    fn install_track(
+        &mut self,
+        deck: usize,
+        track: Arc<Track>,
+        grid: Option<djcraft_protocol::BeatGrid>,
+    ) -> Result<(), Rejection> {
         if deck >= DECKS {
             return Err(Rejection::UnknownDeck);
         }
-        if self.commands.slots() < 2 {
+        if self.commands.slots() < 3 {
             return Err(Rejection::Busy);
         }
         self.send(Command::Load {
@@ -399,13 +463,14 @@ impl Engine {
             track: track.clone(),
         })?;
         self.send(Command::Trim { deck, gain: 1. })?;
+        self.send(Command::RhythmGrid { deck, grid })?;
         let control = &mut self.decks[deck];
         control.auto_trim = true;
         control.loudness_applied = false;
         control.processed_peak = None;
         control.trim_refresh_live = false;
         control.trim_db = 0.;
-        control.grid = None;
+        control.grid = grid;
         control.track = Some(track);
         control.path = None;
         control.last_load = None;
@@ -688,6 +753,31 @@ impl Engine {
 
     fn apply_deck(&mut self, deck: usize, action: DeckAction) -> Result<(), Rejection> {
         match action {
+            DeckAction::SetRhythmShift { enabled } => {
+                if enabled && self.rhythm_shift_readiness(deck).is_err() {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::RhythmEnable { deck, enabled })?;
+                self.decks[deck].rhythm_shift = enabled;
+                Ok(())
+            }
+            DeckAction::SetRhythmGain { level } => {
+                if !level.is_finite() || !(0. ..=2.).contains(&level) {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::RhythmGain { deck, level })?;
+                self.decks[deck].rhythm_gain = level;
+                Ok(())
+            }
+            DeckAction::TriggerRhythmRoll { slot } => {
+                if slot >= 4 || !self.decks[deck].rhythm_shift {
+                    return Err(Rejection::InvalidValue);
+                }
+                self.send(Command::RhythmRoll {
+                    deck,
+                    slot: slot as usize,
+                })
+            }
             DeckAction::SetBeatGrid { grid } => {
                 if grid.is_some_and(|g| !g.valid()) {
                     return Err(Rejection::InvalidValue);
@@ -696,6 +786,7 @@ impl Engine {
                     self.automix.state.plan = None;
                 }
                 self.decks[deck].grid = grid;
+                self.send(Command::RhythmGrid { deck, grid })?;
                 Ok(())
             }
             DeckAction::LoadSample { slot, path } => {
@@ -1047,6 +1138,7 @@ impl Engine {
             DeckAction::Unload => {
                 self.send(Command::Unload { deck })?;
                 let control = &mut self.decks[deck];
+                control.rhythm_shift = false;
                 control.track = None;
                 control.path = None;
                 control.requested_path = None;
@@ -1065,6 +1157,9 @@ impl Engine {
                 Ok(())
             }
             DeckAction::Load { path } => {
+                self.send(Command::RhythmGrid { deck, grid: None })?;
+                self.decks[deck].grid = None;
+                self.decks[deck].rhythm_shift = false;
                 self.decks[deck].requested_path = Some(path.clone());
                 let load_id = self.next_load_id;
                 self.next_load_id += 1;
@@ -1386,9 +1481,10 @@ impl Engine {
             {
                 continue;
             }
+            let grid = self.decks[loaded.deck].grid;
             let outcome = match loaded.result {
                 Ok(track) => self
-                    .load_track(loaded.deck, track)
+                    .install_track(loaded.deck, track, grid)
                     .map_err(|_| "engine busy".to_string()),
                 Err(error) => Err(error.to_string()),
             };
@@ -1452,6 +1548,8 @@ impl Engine {
                 .iter()
                 .zip(&self.shared.decks)
                 .map(|(control, shared)| DeckState {
+                    rhythm_shift: control.rhythm_shift,
+                    rhythm_gain: control.rhythm_gain,
                     key_lock_protection_db: shared.protection_db(),
                     loudness: control.loudness(),
                     auto_trim: control.auto_trim,
@@ -1520,5 +1618,82 @@ fn unit_level(level: f32) -> Result<f32, Rejection> {
         Ok(level)
     } else {
         Err(Rejection::InvalidValue)
+    }
+}
+
+#[cfg(test)]
+mod rhythm_readiness_tests {
+    use super::*;
+
+    #[test]
+    fn asynchronous_track_load_keeps_the_grid_supplied_while_decoding() {
+        let (mut engine, _) = Engine::headless(8000);
+        let grid = djcraft_protocol::BeatGrid {
+            bpm: 125.,
+            first_beat: 0.08,
+            downbeat: 0,
+            confidence: 1.,
+        };
+        engine.decks[0].loading = Some(7);
+        engine.decks[0].grid = Some(grid);
+        let track = Arc::new(Track::from_samples("loading", 8000, vec![0.; 16000]));
+        engine
+            .loaded_tx
+            .send(Loaded {
+                deck: 0,
+                load_id: 7,
+                result: Ok(track),
+            })
+            .unwrap();
+        engine.poll();
+        assert_eq!(engine.decks[0].grid, Some(grid));
+    }
+
+    #[test]
+    fn readiness_identifies_the_missing_deck_prerequisite() {
+        let (mut engine, _) = Engine::headless(8000);
+        assert_eq!(
+            engine.rhythm_shift_readiness(0),
+            Err("Select a Rhythm Shift pack first.")
+        );
+        engine.rhythm_pack_loaded = true;
+        assert_eq!(
+            engine.rhythm_shift_readiness(0),
+            Err("Load a track on this deck first.")
+        );
+        let track = Arc::new(Track::from_samples("test", 8000, vec![0.; 16000]));
+        engine.load_track(0, track.clone()).unwrap();
+        assert!(
+            engine
+                .rhythm_shift_readiness(0)
+                .unwrap_err()
+                .contains("drum stem")
+        );
+        track
+            .attach_stems(std::array::from_fn(|_| vec![0.; 16000].into_boxed_slice()))
+            .unwrap();
+        assert!(
+            engine
+                .rhythm_shift_readiness(0)
+                .unwrap_err()
+                .contains("beat grid")
+        );
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck: 0,
+                    action: DeckAction::SetBeatGrid {
+                        grid: Some(djcraft_protocol::BeatGrid {
+                            bpm: 125.,
+                            first_beat: 0.,
+                            downbeat: 0,
+                            confidence: 1.,
+                        }),
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(engine.rhythm_shift_readiness(0), Ok(()));
     }
 }

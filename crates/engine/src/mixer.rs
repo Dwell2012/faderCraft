@@ -30,6 +30,25 @@ const BLOCK: usize = 512;
 const SPEED_SMOOTHING_SECONDS: f64 = 0.004;
 
 pub(crate) enum Command {
+    RhythmPack {
+        pack: crate::rhythm_shift::Pack,
+    },
+    RhythmEnable {
+        deck: usize,
+        enabled: bool,
+    },
+    RhythmGain {
+        deck: usize,
+        level: f32,
+    },
+    RhythmRoll {
+        deck: usize,
+        slot: usize,
+    },
+    RhythmGrid {
+        deck: usize,
+        grid: Option<djcraft_protocol::BeatGrid>,
+    },
     ColourFx {
         deck: usize,
         state: djcraft_protocol::ColourFxState,
@@ -337,6 +356,9 @@ pub fn routed_crossfader_gain(deck: usize, routing: CrossfaderRouting, gains: [f
 }
 
 struct Deck {
+    rhythm: crate::rhythm_shift::Voice,
+    rhythm_gain: f32,
+    rhythm_grid: Option<djcraft_protocol::BeatGrid>,
     auto: Option<AutoScratch>,
     loop_armed: bool,
     loop_roll: bool,
@@ -390,6 +412,48 @@ struct Deck {
 }
 
 impl Deck {
+    fn render_rhythm(
+        &mut self,
+        out: &mut [f32],
+        pack: &crate::rhythm_shift::Pack,
+        sample_rate: u32,
+    ) {
+        if !self.playing || self.track.as_ref().is_none_or(|track| !track.stems_ready()) {
+            return;
+        }
+        let Some(grid) = self.rhythm_grid else { return };
+        let frames = out.len() / CHANNELS;
+        let start = self.audible_position() - frames as f64 * self.tempo;
+        let step = grid.bpm * self.tempo / pack.bpm;
+        for (index, frame) in out.chunks_exact_mut(CHANNELS).enumerate() {
+            let position = armed_position(
+                start + index as f64 * self.tempo,
+                self.loop_region,
+                self.loop_armed,
+            );
+            let beat = (position / sample_rate as f64 - grid.first_beat) * grid.bpm / 60.;
+            let bar_phase = (beat - grid.downbeat as f64).rem_euclid(4.);
+            let at_bar = beat >= 0.
+                && (bar_phase < grid.bpm * self.tempo / (60. * sample_rate as f64)
+                    || index == 0 && bar_phase < 0.03);
+            if self.rhythm.pending && at_bar {
+                self.rhythm.pending = false;
+                self.rhythm.enabled = true;
+                self.rhythm.phase = 0.;
+            }
+            if self.rhythm.enabled && at_bar {
+                if let Some(slot) = self.rhythm.pending_roll.take() {
+                    self.rhythm.roll = Some(slot);
+                    self.rhythm.roll_phase = 0.;
+                    self.rhythm.tail = None;
+                }
+            }
+            let sample = self.rhythm.sample(pack, step, sample_rate);
+            frame[0] += sample[0] * self.rhythm_gain;
+            frame[1] += sample[1] * self.rhythm_gain;
+        }
+    }
+
     fn new(sample_rate: u32) -> Self {
         let mut stretch = Stretch::preset_default(CHANNELS as u32, sample_rate);
         let preroll_frames = stretch
@@ -403,6 +467,9 @@ impl Deck {
         stretch.reset();
         let max_input = (BLOCK as f64 * (MAX_TEMPO + 0.08)) as usize + 1;
         Self {
+            rhythm: Default::default(),
+            rhythm_gain: 1.,
+            rhythm_grid: None,
             auto: None,
             track: None,
             loop_region: None,
@@ -588,7 +655,7 @@ impl Deck {
             for frame in out.chunks_exact_mut(CHANNELS) {
                 smooth_stems(
                     &mut self.current_stems,
-                    self.stem_gains,
+                    rhythm_stem_gains(self.stem_gains, self.rhythm.enabled),
                     self.speed_smoothing,
                 );
                 if self.playing {
@@ -694,7 +761,7 @@ impl Deck {
                 self.position = armed_position(self.position, region, self.loop_armed);
                 smooth_stems(
                     &mut self.current_stems,
-                    self.stem_gains,
+                    rhythm_stem_gains(self.stem_gains, self.rhythm.enabled),
                     self.speed_smoothing,
                 );
                 frame.copy_from_slice(&interpolate_stem_fx(
@@ -769,7 +836,7 @@ impl Deck {
                 }
                 smooth_stems(
                     &mut self.current_stems,
-                    self.stem_gains,
+                    rhythm_stem_gains(self.stem_gains, self.rhythm.enabled),
                     self.speed_smoothing,
                 );
                 if self.loop_armed && region.is_some_and(|r| self.position >= r[0]) {
@@ -842,6 +909,13 @@ fn smooth_stems(current: &mut [f32; 4], target: [f32; 4], smoothing: f64) {
             *value = target;
         }
     }
+}
+
+fn rhythm_stem_gains(mut gains: [f32; 4], enabled: bool) -> [f32; 4] {
+    if enabled {
+        gains[3] = 0.;
+    }
+    gains
 }
 
 /// Cubic Hermite interpolation of the first `frames` frames of a track.
@@ -1069,7 +1143,85 @@ struct PendingMix {
     preserve_entry: bool,
     matching: Option<(djcraft_protocol::BeatGrid, djcraft_protocol::BeatGrid, f64)>,
 }
+#[cfg(test)]
+mod rhythm_shift_tests {
+    use super::*;
+
+    #[test]
+    fn first_replacement_kick_is_not_faded() {
+        let rate = 8_000;
+        let kick = Arc::new(Track::from_samples(
+            "kick",
+            rate,
+            vec![1.; rate as usize * 2],
+        ));
+        let pack = crate::rhythm_shift::Pack {
+            bpm: 120.,
+            loop_beats: 1.,
+            loop_audio: kick.clone(),
+            rolls: std::array::from_fn(|_| kick.clone()),
+            return_beats: [1.; 4],
+        };
+        let mut deck = Deck::new(rate);
+        let silent = vec![0.; rate as usize * 2].into_boxed_slice();
+        kick.attach_stems(std::array::from_fn(|_| silent.clone()))
+            .unwrap();
+        deck.track = Some(kick);
+        deck.playing = true;
+        deck.position = 1.;
+        deck.rhythm_grid = Some(djcraft_protocol::BeatGrid {
+            bpm: 120.,
+            first_beat: 0.,
+            downbeat: 0,
+            confidence: 1.,
+        });
+        deck.rhythm.pending = true;
+        let mut out = [0.; 2];
+        deck.render_rhythm(&mut out, &pack, rate);
+        assert_eq!(out, [1.; 2]);
+    }
+
+    #[test]
+    fn replacing_drums_mutes_only_the_drum_stem_and_restores_it() {
+        let rate = 8000;
+        let frames = rate * 2;
+        let track = Arc::new(Track::from_samples(
+            "drums",
+            rate,
+            vec![0.5; frames as usize * 2],
+        ));
+        let silent = vec![0.; frames as usize * 2].into_boxed_slice();
+        track
+            .attach_stems([
+                silent.clone(),
+                silent.clone(),
+                silent,
+                vec![0.5; frames as usize * 2].into_boxed_slice(),
+            ])
+            .unwrap();
+        let mut deck = Deck::new(rate);
+        deck.track = Some(track);
+        deck.playing = true;
+        deck.rhythm.enabled = true;
+        let mut buffer = vec![0.; 1024];
+        assert!(deck.render(&mut buffer));
+        assert!(
+            buffer[1022].abs() < 0.001,
+            "drum stem was not suppressed: {}",
+            buffer[1022]
+        );
+        deck.rhythm.enabled = false;
+        assert!(deck.render(&mut buffer));
+        assert!(
+            (buffer[1022] - 0.5).abs() < 0.001,
+            "drum stem was not restored: {}",
+            buffer[1022]
+        );
+    }
+}
+
 pub struct Mixer {
+    rhythm_pack: Option<crate::rhythm_shift::Pack>,
     deck_guards: [crate::peak_guard::PeakGuard; DECKS],
     sampler_gain: f32,
     current_sampler_gain: f32,
@@ -1103,6 +1255,7 @@ impl Mixer {
         shared: Arc<Shared>,
     ) -> Self {
         Self {
+            rhythm_pack: None,
             monitor: Default::default(),
             deck_guards: std::array::from_fn(|_| crate::peak_guard::PeakGuard::new(sample_rate)),
             sampler_gain: 1.,
@@ -1150,6 +1303,19 @@ impl Mixer {
         if let Some(deck) = cancel {
             self.deck_guards[deck].reset();
             self.decks[deck].auto = None;
+            if !matches!(
+                &command,
+                Command::Load { .. } | Command::Unload { .. } | Command::Pause { .. }
+            ) {
+                let voice = &mut self.decks[deck].rhythm;
+                if voice.enabled {
+                    voice.enabled = false;
+                    voice.pending = true;
+                    voice.roll = None;
+                    voice.pending_roll = None;
+                    voice.tail = None;
+                }
+            }
         }
         let invalidate_preparation = match &command {
             Command::Cue { deck, .. }
@@ -1169,6 +1335,30 @@ impl Mixer {
             self.decks[deck].prepared_at = None;
         }
         match command {
+            Command::RhythmPack { pack } => {
+                if let Some(old) = self.rhythm_pack.replace(pack) {
+                    let _ = self.garbage.push(old.loop_audio);
+                    for roll in old.rolls {
+                        let _ = self.garbage.push(roll);
+                    }
+                }
+                for deck in &mut self.decks {
+                    deck.rhythm.reset();
+                }
+            }
+            Command::RhythmEnable { deck, enabled } => {
+                let voice = &mut self.decks[deck].rhythm;
+                if enabled {
+                    voice.pending = true;
+                } else {
+                    voice.reset();
+                }
+            }
+            Command::RhythmGain { deck, level } => self.decks[deck].rhythm_gain = level,
+            Command::RhythmRoll { deck, slot } => {
+                self.decks[deck].rhythm.pending_roll = Some(slot);
+            }
+            Command::RhythmGrid { deck, grid } => self.decks[deck].rhythm_grid = grid,
             Command::CancelFade => {
                 self.fade = None;
                 self.pending_mix = None;
@@ -1505,6 +1695,7 @@ impl Mixer {
             Command::Load { deck, track } => {
                 self.deck_guards[deck].reset();
                 let deck = &mut self.decks[deck];
+                deck.rhythm.reset();
                 if let Some(old) = deck.track.replace(track) {
                     // Freeing memory is the control side's job. If its queue
                     // is full the old track is dropped here as a last resort.
@@ -1536,6 +1727,8 @@ impl Mixer {
             Command::Unload { deck } => {
                 self.deck_guards[deck].reset();
                 let deck = &mut self.decks[deck];
+                deck.rhythm.reset();
+                deck.rhythm_grid = None;
                 if let Some(old) = deck.track.take() {
                     let _ = self.garbage.push(old);
                 }
@@ -1879,6 +2072,9 @@ impl Mixer {
                             }
                         }
                     }
+                }
+                if source_running && let Some(pack) = &self.rhythm_pack {
+                    deck.render_rhythm(buffer, pack, self.sample_rate);
                 }
                 let bpm = deck.effect_bpm.map(|bpm| bpm * deck.tempo);
                 for effect in deck
