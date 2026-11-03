@@ -217,7 +217,7 @@ fn metadata_migration_preserves_existing_tracks_and_empty_fields_do_not_erase_th
     drop(library);
     let raw = rusqlite::Connection::open(&db).unwrap();
     raw.execute_batch("DROP TRIGGER tracks_assign_identity; DROP TABLE track_identities; DROP TABLE track_metadata;
-        DROP INDEX playlist_children; ALTER TABLE playlists DROP COLUMN parent_playlist_id; ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=17;")
+        DROP TABLE crate_tracks; DROP TABLE crates; DROP INDEX playlist_children; ALTER TABLE playlists DROP COLUMN parent_playlist_id; ALTER TABLE tracks DROP COLUMN tempo_first_beat_manual; ALTER TABLE tracks DROP COLUMN tempo_downbeat_manual; ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=17;")
         .unwrap();
     drop(raw);
     let mut library = Library::open(&db).unwrap();
@@ -542,8 +542,11 @@ fn version_19_playlists_migrate_and_sublists_persist() {
     drop(library);
     let old = rusqlite::Connection::open(&db).unwrap();
     old.execute_batch(
-        "DROP INDEX playlist_children;
+        "DROP TABLE crate_tracks; DROP TABLE crates;
+        DROP INDEX playlist_children;
         ALTER TABLE playlists DROP COLUMN parent_playlist_id;
+        ALTER TABLE tracks DROP COLUMN tempo_first_beat_manual;
+        ALTER TABLE tracks DROP COLUMN tempo_downbeat_manual;
         ALTER TABLE tracks DROP COLUMN key_modal;
         PRAGMA user_version=19;",
     )
@@ -590,10 +593,10 @@ fn playlists_hold_tracks_from_several_sources_in_order() {
         library.add_to_playlist(warmup.id, &[gamma, alpha]).unwrap(),
         2
     );
-    // Adding a track twice keeps one copy, in its original place.
+    // A playlist keeps every occurrence in its fixed order.
     assert_eq!(
         library.add_to_playlist(warmup.id, &[gamma, beta]).unwrap(),
-        1
+        2
     );
     library.add_to_playlist(peak.id, &[beta]).unwrap();
 
@@ -612,7 +615,7 @@ fn playlists_hold_tracks_from_several_sources_in_order() {
     };
     assert_eq!(
         in_playlist(&library, warmup.id, ""),
-        ["Gamma", "Alpha", "Beta"]
+        ["Gamma", "Alpha", "Gamma", "Beta"]
     );
     assert_eq!(in_playlist(&library, warmup.id, "alpha"), ["Alpha"]);
     assert_eq!(in_playlist(&library, peak.id, ""), ["Beta"]);
@@ -625,23 +628,48 @@ fn playlists_hold_tracks_from_several_sources_in_order() {
         .collect();
     assert_eq!(
         counts,
-        [("Warm up".to_string(), 3), ("Peak".to_string(), 1)]
+        [("Warm up".to_string(), 4), ("Peak".to_string(), 1)]
     );
 
-    library.remove_from_playlist(warmup.id, alpha).unwrap();
+    let alpha_entry = library.tracks(&TrackQuery { playlist: Some(warmup.id), ..Default::default() }).unwrap()
+        .into_iter().find(|track| track.id == alpha).unwrap().playlist_entry.unwrap();
+    library.remove_from_playlist(warmup.id, alpha_entry).unwrap();
     library.rename_playlist(warmup.id, "Opening").unwrap();
-    assert_eq!(in_playlist(&library, warmup.id, ""), ["Gamma", "Beta"]);
+    assert_eq!(in_playlist(&library, warmup.id, ""), ["Gamma", "Gamma", "Beta"]);
     assert_eq!(library.playlists().unwrap()[0].name, "Opening");
 
     // Removing a source takes its tracks out of every playlist.
     library.remove_source(one.id).unwrap();
-    assert_eq!(in_playlist(&library, warmup.id, ""), ["Gamma"]);
+    assert_eq!(in_playlist(&library, warmup.id, ""), ["Gamma", "Gamma"]);
     assert_eq!(in_playlist(&library, peak.id, ""), Vec::<String>::new());
 
     // Deleting a playlist leaves the tracks in the library.
     library.delete_playlist(warmup.id).unwrap();
     assert_eq!(titles(&library, ""), ["Gamma"]);
     assert_eq!(library.playlists().unwrap().len(), 1);
+}
+
+#[test]
+fn crates_are_unique_nested_and_independently_queryable() {
+    let dir = TempDir::new("crates");
+    let music = dir.0.join("music");
+    write_tagged(&music.join("one.wav"), "One", "Artist", "", "120", "8A");
+    write_tagged(&music.join("two.wav"), "Two", "Artist", "", "120", "8A");
+    let mut library = Library::open(&dir.0.join("library.db")).unwrap();
+    let source = library.add_folder(&music).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let tracks = library.tracks(&TrackQuery::default()).unwrap();
+    let parent = library.create_crate("Parent", None).unwrap();
+    let child = library.create_crate("Child", Some(parent.id)).unwrap();
+    assert_eq!(library.add_to_crate(child.id, &[tracks[0].id, tracks[0].id, tracks[1].id]).unwrap(), 2);
+    assert_eq!(library.add_to_crate(child.id, &[tracks[0].id]).unwrap(), 0);
+    assert_eq!(library.crates().unwrap().iter().find(|item| item.id == child.id).unwrap().track_count, 2);
+    assert_eq!(library.tracks(&TrackQuery { crate_id: Some(child.id), ..Default::default() }).unwrap().len(), 2);
+    assert!(library.move_crate(parent.id, Some(child.id)).is_err());
+    library.move_crate(child.id, None).unwrap();
+    assert_eq!(library.crates().unwrap().iter().find(|item| item.id == child.id).unwrap().parent, None);
+    library.remove_from_crate(child.id, tracks[0].id).unwrap();
+    assert_eq!(library.tracks(&TrackQuery { crate_id: Some(child.id), ..Default::default() }).unwrap().len(), 1);
 }
 
 #[test]
@@ -652,7 +680,8 @@ fn an_existing_library_gains_playlists_on_upgrade() {
     // Put the file back to how the first schema left it.
     let raw = rusqlite::Connection::open(&db).unwrap();
     raw.execute_batch(
-        "DROP TRIGGER tracks_assign_identity;
+        "DROP TABLE crate_tracks; DROP TABLE crates;
+         DROP TRIGGER tracks_assign_identity;
          DROP TABLE track_identities;
          DROP TABLE track_metadata;
          DROP TABLE play_history;
@@ -671,6 +700,8 @@ fn an_existing_library_gains_playlists_on_upgrade() {
          ALTER TABLE tracks DROP COLUMN key_manual;
          ALTER TABLE tracks DROP COLUMN key_detected;
          ALTER TABLE tracks DROP COLUMN key_confidence;
+         ALTER TABLE tracks DROP COLUMN tempo_first_beat_manual;
+         ALTER TABLE tracks DROP COLUMN tempo_downbeat_manual;
          ALTER TABLE tracks DROP COLUMN key_modal;
          ALTER TABLE tracks DROP COLUMN cues_manual;
          DROP TABLE cues; ALTER TABLE tracks DROP COLUMN energy;
@@ -1269,6 +1300,34 @@ fn tagged_tempo_and_key_can_be_kept_over_measured_ones() {
 }
 
 #[test]
+fn manual_first_beat_survives_analysis_rescan_and_reopen() {
+    let dir = TempDir::new("manual-beatgrid");
+    let audio = dir.0.join("song.wav");
+    write_tagged(&audio, "Song", "Artist", "", "120", "8A");
+    let db = dir.0.join("library.db");
+    let mut library = Library::open(&db).unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let id = library.tracks(&TrackQuery::default()).unwrap()[0].id;
+    let measured = TempoResult { bpm: 120., first_beat_seconds: 0.13, downbeat: 2, confidence: 0.8 };
+    library.store_tempo(id, 1, Some(measured)).unwrap();
+    library.set_beat_grid_anchor(id, 0.25, 0).unwrap();
+    assert!(library.beat_grid_anchor_is_manual(id).unwrap());
+    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.25);
+    assert_eq!(library.beat_grid(id).unwrap().unwrap().downbeat, 0);
+    library.store_tempo(id, 2, Some(TempoResult { first_beat_seconds: 0.40, ..measured })).unwrap();
+    write_tagged(&audio, "Song", "Artist", "", "120", "8A");
+    library.scan(source.id, |_| {}).unwrap();
+    drop(library);
+    let library = Library::open(&db).unwrap();
+    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.25);
+    assert!(library.set_beat_grid_anchor(id, f64::NAN, 0).is_err());
+    library.clear_beat_grid_anchor(id).unwrap();
+    assert!(!library.beat_grid_anchor_is_manual(id).unwrap());
+    assert_eq!(library.beat_grid(id).unwrap().unwrap().first_beat_seconds, 0.40);
+}
+
+#[test]
 fn batch_tag_changes_are_reviewed_applied_and_undone() {
     let dir = TempDir::new("batch-tags");
     write_tagged(&dir.0.join("a.wav"), "losing  it", "fisher", "", "", "");
@@ -1653,11 +1712,13 @@ fn playlists_have_folders_and_order() {
     library
         .add_to_playlist(set.id, &[id("One"), id("Two"), id("Three")])
         .unwrap();
-    library.move_in_playlist(set.id, id("Three"), 0).unwrap();
     let in_set = TrackQuery {
         playlist: Some(set.id),
         ..Default::default()
     };
+    let entry = |library: &Library, title: &str| library.tracks(&in_set).unwrap().into_iter()
+        .find(|track| track.title == title).unwrap().playlist_entry.unwrap();
+    library.move_in_playlist(set.id, entry(&library, "Three"), 0).unwrap();
     let order: Vec<String> = library
         .tracks(&in_set)
         .unwrap()
@@ -1666,7 +1727,7 @@ fn playlists_have_folders_and_order() {
         .collect();
     assert_eq!(order, ["Three", "One", "Two"]);
     // Dropping onto a later row places the track at that row's old position.
-    library.move_in_playlist(set.id, id("Three"), 2).unwrap();
+    library.move_in_playlist(set.id, entry(&library, "Three"), 2).unwrap();
     let order = library
         .tracks(&in_set)
         .unwrap()
@@ -1675,7 +1736,7 @@ fn playlists_have_folders_and_order() {
         .collect::<Vec<_>>();
     assert_eq!(order, ["One", "Two", "Three"]);
     // Moving upward uses the target's position without an off-by-one shift.
-    library.move_in_playlist(set.id, id("Two"), 0).unwrap();
+    library.move_in_playlist(set.id, entry(&library, "Two"), 0).unwrap();
     assert_eq!(
         library
             .tracks(&in_set)
@@ -2146,7 +2207,7 @@ fn modal_keys_migrate_persist_and_respect_manual_or_tagged_keys() {
     drop(library);
     // Build the previous schema, with an existing track and its tags.
     let old = rusqlite::Connection::open(&db).unwrap();
-    old.execute_batch("ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=20;")
+    old.execute_batch("DROP TABLE crate_tracks; DROP TABLE crates; ALTER TABLE tracks DROP COLUMN tempo_first_beat_manual; ALTER TABLE tracks DROP COLUMN tempo_downbeat_manual; ALTER TABLE tracks DROP COLUMN key_modal; PRAGMA user_version=20;")
         .unwrap();
     drop(old);
     let mut library = Library::open(&db).unwrap();

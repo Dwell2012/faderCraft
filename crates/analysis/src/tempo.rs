@@ -239,7 +239,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
     let window_centre = FRAME as f64 / 2.0 / sample_rate as f64;
     let anchor = kick_anchor(&kicks, rate, bpm);
     let mut kick_entrance = false;
-    let (first_beat, opening) = if let Some(anchor) = anchor {
+    let (mut first_beat, opening) = if let Some(anchor) = anchor {
         let expected = anchor + window_centre + ONSET_LAG_SECONDS;
         // Refine only the confirmed kick run. The melodic intro must not move
         // this anchor back onto its own offbeat attacks afterwards.
@@ -269,6 +269,21 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
         let opening = opening_attack(samples, sample_rate, phase_beat, period);
         (opening.unwrap_or(phase_beat), opening)
     };
+    // A four-bar loop can begin exactly on a kick. Its first onset has no
+    // preceding audio for the onset detector to compare against, so the
+    // detected run may begin at beat two. Accept beat zero only when the
+    // opening carries energy comparable to the confirmed next kick.
+    if seconds <= 16. && (first_beat - period).abs() < 0.03 {
+        let power = |at: f64| {
+            let start = (at * sample_rate as f64) as usize;
+            let end = (start + (0.08 * sample_rate as f64) as usize).min(samples.len());
+            samples[start..end].iter().map(|sample| (*sample as f64).powi(2)).sum::<f64>()
+                / (end - start).max(1) as f64
+        };
+        if power(0.) >= power(first_beat) * 0.45 {
+            first_beat = 0.;
+        }
+    }
     // Where on the envelope something heard at `seconds` shows.
     let envelope_index = |seconds: f64| (seconds - window_centre - ONSET_LAG_SECONDS) * rate;
     let mut downbeat = downbeat(
@@ -509,6 +524,11 @@ fn project_kick_back(samples: &[f32], sample_rate: u32, anchor: f64, period: f64
         * hop as f64
         / sample_rate as f64;
     let phase = anchor.rem_euclid(period);
+    // With a kick at the first sample, onset windows cannot see its leading
+    // edge. The confirmed run may consequently land one beat later, with a
+    // phase just *before* the period boundary. Audio already present at the
+    // file start is evidence for beat zero; a genuine later entrance is not.
+    let phase = if sound < 0.03 && period - phase < 0.03 { 0. } else { phase };
     // Project through a musical intro, but do not invent beats in leading
     // silence. Allow the short attack ramp after the exact beat timestamp.
     phase + ((sound - 0.03 - phase) / period).ceil().max(0.) * period
@@ -1019,6 +1039,16 @@ mod tests {
         assert_tempo(174.0, 0.10);
         assert_tempo(90.5, 0.40);
         assert_tempo(122.37, 0.0);
+    }
+
+    #[test]
+    fn four_bar_groove_keeps_its_first_attack() {
+        for (bpm, first) in [(120., 0.0), (128., 0.18), (140., 0.35)] {
+            let seconds = first + 16. * 60. / bpm;
+            let tempo = detect_tempo(&pattern(bpm, first, seconds), RATE, TempoRange::default()).unwrap();
+            assert!((tempo.bpm - bpm).abs() < 0.5, "{tempo:?}; expected {bpm}");
+            assert!((tempo.first_beat_seconds - first).abs() < 0.025, "{tempo:?}; expected {first}");
+        }
     }
 
     /// The drum pattern with bars: a crash on the first beat of every bar,

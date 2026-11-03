@@ -1030,6 +1030,7 @@ mod tests {
     fn file_names_come_from_the_template() {
         let track = crate::Track {
             modal_key: None,
+            playlist_entry: None,
             id: 1,
             source_id: 1,
             source_name: String::new(),

@@ -42,7 +42,7 @@ pub use watch::FolderWatcher;
 pub use history::PlayHistoryEntry;
 pub use metadata::SavedLookup;
 
-const SCHEMA_VERSION: i64 = 21;
+const SCHEMA_VERSION: i64 = 26;
 
 /// A measured tempo is shown only when the analysis was at least this sure
 /// of it. Below that (mixes with several tempos, music with no clear beat)
@@ -181,6 +181,8 @@ pub struct Track {
     /// Additional estimated mode; Camelot remains the legacy compatibility key.
     pub modal_key: Option<ModalKeyResult>,
     pub id: i64,
+    /// A particular occurrence in an ordered playlist, if listed from one.
+    pub playlist_entry: Option<i64>,
     pub source_id: i64,
     /// The name of the source the track came from, such as its folder.
     pub source_name: String,
@@ -288,6 +290,14 @@ pub struct Playlist {
     pub rules: Option<SmartRules>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Crate {
+    pub id: i64,
+    pub name: String,
+    pub track_count: usize,
+    pub parent: Option<i64>,
+}
+
 /// Which tracks to list.
 #[derive(Clone, Debug, Default)]
 pub struct TrackQuery {
@@ -297,6 +307,8 @@ pub struct TrackQuery {
     pub source: Option<i64>,
     /// Only tracks in this playlist, in playlist order.
     pub playlist: Option<i64>,
+    /// Only tracks in this crate; each track appears at most once.
+    pub crate_id: Option<i64>,
     /// Words that must each appear in the track or its saved online metadata.
     pub search: String,
     /// Only tracks in one of these keys. Empty means any key.
@@ -651,6 +663,62 @@ impl Library {
         if version < 21 {
             conn.execute_batch("BEGIN; ALTER TABLE tracks ADD COLUMN key_modal TEXT; PRAGMA user_version=21; COMMIT;")?;
         }
+        if version < 22 {
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE playlist_tracks RENAME TO old_playlist_tracks;
+                 CREATE TABLE playlist_tracks (
+                     id INTEGER PRIMARY KEY,
+                     playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+                     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                     position INTEGER NOT NULL
+                 );
+                 INSERT INTO playlist_tracks (playlist_id, track_id, position)
+                     SELECT playlist_id, track_id, position FROM old_playlist_tracks
+                     ORDER BY playlist_id, position;
+                 DROP TABLE old_playlist_tracks;
+                 CREATE INDEX playlist_tracks_order ON playlist_tracks(playlist_id, position);
+                 PRAGMA user_version=22;
+                 COMMIT;",
+            )?;
+        }
+        if version < 23 {
+            conn.execute_batch(
+                "BEGIN;
+                 CREATE TABLE crates (
+                     id INTEGER PRIMARY KEY,
+                     name TEXT NOT NULL,
+                     created_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE crate_tracks (
+                     crate_id INTEGER NOT NULL REFERENCES crates(id) ON DELETE CASCADE,
+                     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                     PRIMARY KEY(crate_id, track_id)
+                 );
+                 PRAGMA user_version=23;
+                 COMMIT;",
+            )?;
+        }
+        if version < 24 {
+            conn.execute_batch("BEGIN;
+                ALTER TABLE crates ADD COLUMN parent_id INTEGER REFERENCES crates(id) ON DELETE SET NULL;
+                CREATE INDEX crate_children ON crates(parent_id);
+                PRAGMA user_version=24;
+                COMMIT;")?;
+        }
+        if version < 25 {
+            conn.execute_batch("BEGIN;
+                UPDATE playlists SET parent_playlist_id=NULL WHERE parent_playlist_id IS NOT NULL;
+                PRAGMA user_version=25;
+                COMMIT;")?;
+        }
+        if version < 26 {
+            conn.execute_batch("BEGIN;
+                ALTER TABLE tracks ADD COLUMN tempo_first_beat_manual REAL;
+                ALTER TABLE tracks ADD COLUMN tempo_downbeat_manual INTEGER;
+                PRAGMA user_version=26;
+                COMMIT;")?;
+        }
         Ok(Self { conn })
     }
 
@@ -871,11 +939,16 @@ impl Library {
 
     /// The beat grid measured for a track: its tempo, first beat and bars.
     pub fn beat_grid(&self, id: i64) -> Result<Option<TempoResult>> {
+        let bpm = shown_bpm_sql();
         Ok(self
             .conn
             .query_row(
-                "SELECT tempo_bpm, tempo_first_beat, tempo_confidence, tempo_downbeat FROM tracks
-                 WHERE id = ?1 AND tempo_bpm IS NOT NULL AND tempo_confidence >= ?2",
+                &format!("SELECT CASE WHEN tempo_first_beat_manual IS NOT NULL THEN COALESCE({bpm}, tempo_bpm)
+                        ELSE tempo_bpm END, COALESCE(tempo_first_beat_manual, tempo_first_beat),
+                    CASE WHEN tempo_first_beat_manual IS NOT NULL THEN 1.0 ELSE tempo_confidence END,
+                    COALESCE(tempo_downbeat_manual, tempo_downbeat)
+                 FROM tracks t WHERE id = ?1 AND (tempo_bpm IS NOT NULL OR (tempo_first_beat_manual IS NOT NULL AND {bpm} IS NOT NULL))
+                   AND (tempo_first_beat_manual IS NOT NULL OR tempo_confidence >= ?2)"),
                 params![id, MIN_TEMPO_CONFIDENCE],
                 |row| {
                     Ok(TempoResult {
@@ -887,6 +960,34 @@ impl Library {
                 },
             )
             .optional()?)
+    }
+
+    /// Pins the beatgrid origin and bar phase independently of analysis.
+    /// Re-analysis and file rescans leave this correction intact.
+    pub fn set_beat_grid_anchor(&self, id: i64, first_beat_seconds: f64, downbeat: u8) -> Result<()> {
+        if !first_beat_seconds.is_finite() || first_beat_seconds < 0. || downbeat >= 4 {
+            return Err(Error::Library("first beat must be a non-negative time and bar beat must be 1–4".into()));
+        }
+        let changed = self.conn.execute(
+            "UPDATE tracks SET tempo_first_beat_manual=?2, tempo_downbeat_manual=?3
+             WHERE id=?1 AND (duration<=0 OR ?2<=duration)",
+            params![id, first_beat_seconds, downbeat],
+        )?;
+        if changed == 0 { return Err(Error::Library("first beat must fall within the track".into())); }
+        Ok(())
+    }
+
+    pub fn clear_beat_grid_anchor(&self, id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE tracks SET tempo_first_beat_manual=NULL, tempo_downbeat_manual=NULL WHERE id=?1", [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn beat_grid_anchor_is_manual(&self, id: i64) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT tempo_first_beat_manual IS NOT NULL FROM tracks WHERE id=?1", [id], |row| row.get(0),
+        )?)
     }
 
     pub fn create_playlist(&self, name: &str) -> Result<Playlist> {
@@ -1004,7 +1105,7 @@ impl Library {
         })
     }
 
-    /// Appends tracks to a playlist, skipping any it already contains.
+    /// Appends tracks to a playlist, including repeated occurrences.
     /// Returns how many were added. A smart playlist chooses its own tracks.
     pub fn add_to_playlist(&mut self, playlist: i64, tracks: &[i64]) -> Result<usize> {
         if self.playlist_rules(playlist)?.is_some() {
@@ -1022,7 +1123,7 @@ impl Library {
         for track in tracks {
             position += 1;
             added += transaction.execute(
-                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position)
+                "INSERT INTO playlist_tracks (playlist_id, track_id, position)
                  VALUES (?1, ?2, ?3)",
                 params![playlist, track, position],
             )?;
@@ -1031,11 +1132,69 @@ impl Library {
         Ok(added)
     }
 
-    pub fn remove_from_playlist(&self, playlist: i64, track: i64) -> Result<()> {
+    pub fn remove_from_playlist(&self, playlist: i64, entry: i64) -> Result<()> {
         self.conn.execute(
-            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",
-            params![playlist, track],
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND id = ?2",
+            params![playlist, entry],
         )?;
+        Ok(())
+    }
+
+    pub fn create_crate(&self, name: &str, parent: Option<i64>) -> Result<Crate> {
+        let name = name.trim();
+        if name.is_empty() { return Err(Error::Library("a crate needs a name".into())); }
+        self.conn.execute("INSERT INTO crates(name, parent_id, created_at) VALUES (?1, ?2, unixepoch())", params![name, parent])?;
+        Ok(Crate { id: self.conn.last_insert_rowid(), name: name.into(), track_count: 0, parent })
+    }
+
+    pub fn crates(&self) -> Result<Vec<Crate>> {
+        let mut statement = self.conn.prepare(
+            "SELECT c.id, c.name, COUNT(ct.track_id), c.parent_id FROM crates c
+             LEFT JOIN crate_tracks ct ON ct.crate_id=c.id
+             GROUP BY c.id ORDER BY c.created_at, c.id",
+        )?;
+        let rows = statement.query_map([], |row| Ok(Crate {
+            id: row.get(0)?, name: row.get(1)?, track_count: row.get::<_, i64>(2)? as usize, parent: row.get(3)?,
+        }))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn rename_crate(&self, id: i64, name: &str) -> Result<()> {
+        if name.trim().is_empty() { return Err(Error::Library("a crate needs a name".into())); }
+        self.conn.execute("UPDATE crates SET name=?2 WHERE id=?1", params![id, name.trim()])?;
+        Ok(())
+    }
+
+    pub fn delete_crate(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM crates WHERE id=?1", [id])?;
+        Ok(())
+    }
+
+    pub fn move_crate(&self, id: i64, parent: Option<i64>) -> Result<()> {
+        let mut at = parent;
+        while let Some(candidate) = at {
+            if candidate == id { return Err(Error::Library("a crate cannot contain itself".into())); }
+            at = self.conn.query_row("SELECT parent_id FROM crates WHERE id=?1", [candidate], |row| row.get(0))?;
+        }
+        self.conn.execute("UPDATE crates SET parent_id=?2 WHERE id=?1", params![id, parent])?;
+        Ok(())
+    }
+
+    pub fn add_to_crate(&mut self, crate_id: i64, tracks: &[i64]) -> Result<usize> {
+        let transaction = self.conn.transaction()?;
+        let mut added = 0;
+        for track in tracks {
+            added += transaction.execute(
+                "INSERT OR IGNORE INTO crate_tracks(crate_id, track_id) VALUES (?1, ?2)",
+                params![crate_id, track],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(added)
+    }
+
+    pub fn remove_from_crate(&self, crate_id: i64, track: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM crate_tracks WHERE crate_id=?1 AND track_id=?2", params![crate_id, track])?;
         Ok(())
     }
 
@@ -1106,17 +1265,20 @@ impl Library {
                     t.genre, t.duration, {bpm}, {key}, t.energy, s.name, s.kind,
                     t.year, t.missing, t.added_at,
                     CASE WHEN t.key_manual=0 AND t.key_confidence >= {MIN_KEY_CONFIDENCE}
-                         AND NOT (t.key IS NOT NULL AND {keep_key}) THEN t.key_modal END
+                         AND NOT (t.key IS NOT NULL AND {keep_key}) THEN t.key_modal END,
+                    pt.id
              FROM tracks t JOIN sources s ON s.id = t.source_id
              LEFT JOIN playlist_tracks pt ON pt.track_id = t.id AND pt.playlist_id = ?2
+             LEFT JOIN crate_tracks ct ON ct.track_id = t.id AND ct.crate_id = ?4
              WHERE (?1 IS NULL OR t.source_id = ?1) AND (?2 IS NULL OR pt.track_id IS NOT NULL)
+               AND (?4 IS NULL OR ct.track_id IS NOT NULL)
                AND (?3 IS NULL OR t.id = ?3)",
             bpm = shown_bpm_sql(),
             key = shown_key_sql(),
             keep_key = option_sql("keep_tagged_key", KeepTagged::default().key),
         );
         let mut values: Vec<rusqlite::types::Value> =
-            vec![query.source.into(), query.playlist.into(), query.id.into()];
+            vec![query.source.into(), query.playlist.into(), query.id.into(), query.crate_id.into()];
         for word in query.search.split_whitespace() {
             let escaped = word
                 .replace('\\', "\\\\")
@@ -1152,6 +1314,7 @@ impl Library {
                     .get::<_, Option<String>>(17)?
                     .and_then(|json| serde_json::from_str(&json).ok()),
                 id: row.get(0)?,
+                playlist_entry: row.get(18)?,
                 source_id: row.get(1)?,
                 path: Path::new(&root).join(locator),
                 title: row.get(4)?,

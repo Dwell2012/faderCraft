@@ -327,23 +327,23 @@ impl Library {
 
     /// Moves a track to another place in a playlist, counting from 0. The
     /// tracks between shift up or down to make room.
-    pub fn move_in_playlist(&mut self, playlist: i64, track: i64, to: usize) -> Result<()> {
+    pub fn move_in_playlist(&mut self, playlist: i64, entry: i64, to: usize) -> Result<()> {
         let transaction = self.conn.transaction()?;
         let mut order: Vec<i64> = {
             let mut statement = transaction.prepare(
-                "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+                "SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
             )?;
             let rows = statement.query_map([playlist], |row| row.get(0))?;
             rows.collect::<rusqlite::Result<_>>()?
         };
-        let Some(from) = order.iter().position(|id| *id == track) else {
+        let Some(from) = order.iter().position(|id| *id == entry) else {
             return Ok(());
         };
         let moved = order.remove(from);
         order.insert(to.min(order.len()), moved);
         for (position, id) in order.iter().enumerate() {
             transaction.execute(
-                "UPDATE playlist_tracks SET position = ?3 WHERE playlist_id = ?1 AND track_id = ?2",
+                "UPDATE playlist_tracks SET position = ?3 WHERE playlist_id = ?1 AND id = ?2",
                 params![playlist, id, position as i64 + 1],
             )?;
         }
@@ -665,30 +665,8 @@ impl Library {
     pub fn merge_duplicates(&mut self, keep: i64, others: &[i64]) -> Result<()> {
         let transaction = self.conn.transaction()?;
         for &other in others.iter().filter(|other| **other != keep) {
-            let playlists: Vec<i64> = {
-                let mut statement = transaction
-                    .prepare("SELECT playlist_id FROM playlist_tracks WHERE track_id = ?1")?;
-                let rows = statement.query_map([other], |row| row.get(0))?;
-                rows.collect::<rusqlite::Result<_>>()?
-            };
-            for playlist in playlists {
-                let has_keep: bool = transaction.query_row(
-                    "SELECT COUNT(*) > 0 FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",
-                    params![playlist, keep],
-                    |row| row.get(0),
-                )?;
-                if has_keep {
-                    transaction.execute(
-                        "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",
-                        params![playlist, other],
-                    )?;
-                } else {
-                    transaction.execute(
-                        "UPDATE playlist_tracks SET track_id = ?3 WHERE playlist_id = ?1 AND track_id = ?2",
-                        params![playlist, other, keep],
-                    )?;
-                }
-            }
+            transaction.execute("UPDATE playlist_tracks SET track_id=?2 WHERE track_id=?1", params![other, keep])?;
+            transaction.execute("INSERT OR IGNORE INTO crate_tracks(crate_id, track_id) SELECT crate_id, ?2 FROM crate_tracks WHERE track_id=?1", params![other, keep])?;
             transaction.execute(
                 "UPDATE flow_clips SET track_id = ?2 WHERE track_id = ?1",
                 params![other, keep],
@@ -833,6 +811,7 @@ mod tests {
     fn track(title: &str, artist: &str, bpm: f64, key: &str, energy: u8) -> Track {
         Track {
             modal_key: None,
+            playlist_entry: None,
             id: 0,
             source_id: 1,
             source_name: String::new(),
