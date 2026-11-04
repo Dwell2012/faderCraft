@@ -493,7 +493,7 @@ impl Shell {
                         let snapped = hot_cue_position(
                             cue.seconds,
                             self.grids[deck],
-                            self.pads[deck].quantize,
+                            self.pads[deck].quantize && !state.quantize_disabled,
                             self.pads[deck].quantize_window,
                         );
                         if state
@@ -794,7 +794,7 @@ impl Shell {
         }
         let grid = self.grids[deck];
         let step = grid.map(|g| g.beat_seconds());
-        let quantize = self.pads[deck].quantize;
+        let quantize = self.pads[deck].quantize && !state.quantize_disabled;
         let start = snapped(state.position_seconds, grid, quantize).min(track.loaded_seconds);
         let loop_hold = self.pads[deck].loop_mode;
         match page {

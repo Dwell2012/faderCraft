@@ -347,7 +347,7 @@ impl Shell {
                         cx.theme().border
                     })
             })
-            .when(compact, |row| row.h(px(29.)).gap(px(2.)));
+            .when(compact, |row| row.h(px(30.)).gap(px(2.)));
         let selector = div()
             .flex()
             .flex_1()
@@ -365,7 +365,7 @@ impl Shell {
                         .when(compact, |button| {
                             button
                                 .w_full()
-                                .h(px(29.))
+                                .h(px(30.))
                                 .p_0()
                                 .rounded(ButtonRounded::None)
                                 .bg(cx.theme().secondary.opacity(0.4))
@@ -431,7 +431,7 @@ impl Shell {
                             button
                                 .w(px(28.))
                                 .min_w_0()
-                                .h(px(29.))
+                                .h(px(30.))
                                 .px_1()
                                 .rounded(ButtonRounded::None)
                                 .bg(cx.theme().secondary.opacity(0.4))
@@ -476,7 +476,7 @@ impl Shell {
                             button
                                 .rounded(ButtonRounded::None)
                                 .w(px(28.))
-                                .h(px(29.))
+                                .h(px(30.))
                                 .p_0()
                                 .bg(cx.theme().secondary.opacity(0.4))
                         })
@@ -497,7 +497,7 @@ impl Shell {
                 .child(
                     div()
                         .w(px(36.))
-                        .h(px(29.))
+                        .h(px(30.))
                         .flex()
                         .flex_shrink_0()
                         .items_center()

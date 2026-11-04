@@ -12,7 +12,7 @@ impl Shell {
             .border_l_1()
             .border_color(cx.theme().border)
             .child(
-                div().flex().w_full().h(px(29.)).flex_shrink_0().children(
+                div().flex().w_full().h(px(30.)).flex_shrink_0().children(
                     ["AUTOMIX", "SAVED LOOPS", "SAMPLER", "RHYTHM SHIFT"]
                         .into_iter()
                         .enumerate()
@@ -22,7 +22,7 @@ impl Shell {
                                 .flex()
                                 .flex_1()
                                 .min_w_0()
-                                .h(px(29.))
+                                .h(px(30.))
                                 .items_center()
                                 .justify_center()
                                 .text_size(px(11.))

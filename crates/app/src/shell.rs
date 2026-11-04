@@ -1690,7 +1690,7 @@ impl Shell {
             .as_ref()
             .map_or(1., |track| track.duration_seconds.max(0.001));
         let overview_height = if self.settings.four_decks {
-            29.
+            30.
         } else {
             OVERVIEW_HEIGHT
         };
@@ -1705,7 +1705,7 @@ impl Shell {
             .small()
             .icon(IconName::FolderOpen)
             .when(self.settings.four_decks, |button| {
-                button.rounded(ButtonRounded::None).w(px(29.)).h(px(29.))
+                button.rounded(ButtonRounded::None).w(px(30.)).h(px(30.))
             })
             .on_click(cx.listener(move |_, _, _, cx| {
                 let paths = cx.prompt_for_paths(PathPromptOptions {
@@ -1735,8 +1735,8 @@ impl Shell {
             .outline()
             .small()
             .rounded(ButtonRounded::None)
-            .w(px(29.))
-            .h(px(29.))
+            .w(px(30.))
+            .h(px(30.))
             .icon(IconName::Eject)
             .tooltip("Eject the loaded track from this deck.")
             .disabled(state.track.is_none())
@@ -1793,10 +1793,10 @@ impl Shell {
             .small()
             .label("Sync")
             .when(self.settings.four_decks, |button| {
-                button.rounded(ButtonRounded::None).w_full().h(px(29.))
+                button.rounded(ButtonRounded::None).w_full().h(px(30.))
             })
             .when(!self.settings.four_decks, |button| {
-                button.rounded(ButtonRounded::None).w_full().h(px(33.))
+                button.rounded(ButtonRounded::None).w_full().h(px(30.))
             })
             .tooltip(if self.settings.four_decks {
                 "Match the longest-playing other deck with a beat grid; align the nearest beat when both play. If none is playing, prefer the paired deck."
@@ -1829,13 +1829,13 @@ impl Shell {
                     .when(self.settings.four_decks, |button| {
                         button
                             .rounded(ButtonRounded::None)
-                            .h(px(29.))
+                            .h(px(30.))
                             .text_color(rgb(0xd94b4b))
                     })
                     .when(!self.settings.four_decks, |button| {
                         button
                             .rounded(ButtonRounded::None)
-                            .h(px(33.))
+                            .h(px(30.))
                             .text_color(rgb(0xd94b4b))
                     })
                     .tooltip("Hold to preview; release to stop and return to the starting point.")
@@ -1843,8 +1843,8 @@ impl Shell {
             );
         let deck_select = Button::new(("select-deck", index))
             .outline()
-            .w(px(29.))
-            .h(px(29.))
+            .w(px(30.))
+            .h(px(30.))
             .when(self.settings.four_decks, |button| {
                 button.rounded(ButtonRounded::None).min_w_0().p_0()
             })
@@ -1875,7 +1875,7 @@ impl Shell {
         let headphone_button = Button::new(("headphone-cue", index))
             .outline()
             .small()
-            .rounded(ButtonRounded::None).w(px(29.)).h(px(29.))
+            .rounded(ButtonRounded::None).w(px(30.)).h(px(30.))
             .icon(IconName::Headphones)
             .selected(headphone_cued)
             .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
@@ -1884,12 +1884,36 @@ impl Shell {
                 this.toggle_headphone_cue(index);
                 cx.notify();
             }));
-        let (controls, display_identity) = if self.settings.four_decks {
+        let quantize_button = Button::new(("platter-quantize", index))
+            .outline()
+            .rounded(ButtonRounded::None)
+            .w(px(60.))
+            .h(px(13.))
+            .min_w_0()
+            .p_0()
+            .child(div().text_size(px(9.)).line_height(px(9.)).font_weight(FontWeight::NORMAL).child("QUANTIZE"))
+            .selected(!state.quantize_disabled)
+            .border_color(if state.quantize_disabled { cx.theme().border } else { Hsla::from(deck_accent) })
+            .bg(if state.quantize_disabled {
+                cx.theme().background
+            } else {
+                Hsla::from(deck_accent)
+            })
+            .text_color(if state.quantize_disabled { cx.theme().muted_foreground } else { Hsla::from(rgb(0x070b12)) })
+            .tooltip("Deck quantize: bypass or restore Hot Cue, loop and scratch quantize without changing their settings.")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.run_skin_button(
+                    index,
+                    djcraft_protocol::script::ButtonAction::ToggleQuantize,
+                    cx,
+                );
+            }));
+        let (controls, display_identity, display_sync) = if self.settings.four_decks {
             let controls = div()
                 .flex()
                 .flex_col()
-                .w(px(62.))
-                .h(px(96.))
+                .w(px(64.))
+                .h(px(98.))
                 .gap(px(4.))
                 .flex_shrink_0()
                 .child(
@@ -1901,33 +1925,68 @@ impl Shell {
                         .child(eject_button),
                 )
                 .child(cue_button)
-                .child(sync_button);
+                .child(play_button);
             let identity = div()
                 .flex()
-                .flex_col()
-                .w(px(62.))
-                .h(px(96.))
+                .w(px(64.))
+                .h(px(30.))
                 .gap(px(4.))
-                .flex_shrink_0()
-                .child(play_button)
-                .child(
-                    div()
-                        .flex()
-                        .w_full()
-                        .gap(px(4.))
-                        .child(deck_select)
-                        .child(headphone_button),
-                )
+                .when(index % 2 == 1, |row| row.flex_row_reverse())
+                .child(headphone_button)
+                .child(deck_select)
                 .into_any_element();
-            (controls.into_any_element(), Some(identity))
+            (
+                controls.into_any_element(),
+                Some(identity),
+                Some(sync_button.xsmall().p_0().w(px(30.)).into_any_element()),
+            )
         } else {
+            let identity = div()
+                .flex()
+                .w_full()
+                .h(px(30.))
+                .items_center()
+                .justify_center()
+                .gap(px(4.))
+                .when(index == 1, |row| row.flex_row_reverse())
+                .child(headphone_button)
+                .child(deck_select)
+                .into_any_element();
             let controls = div()
                 .flex()
                 .flex_col()
-                .w(px(62.))
+                .w(px(64.))
                 .h_full()
                 .flex_shrink_0()
                 .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .w_full()
+                        .h(px(30.))
+                        .gap(px(4.))
+                        .child(quantize_button)
+                        .child(
+                            Button::new(("slip-vinyl-placeholder", index))
+                                .outline()
+                                .rounded(ButtonRounded::None)
+                                .w(px(60.))
+                                .h(px(13.))
+                                .min_w_0()
+                                .p_0()
+                                .child(
+                                    div()
+                                        .text_size(px(9.))
+                                        .line_height(px(9.))
+                                        .font_weight(FontWeight::NORMAL)
+                                        .child("VINYL"),
+                                )
+                                .disabled(true)
+                                .tooltip("Vinyl mode is not implemented yet."),
+                        ),
+                )
                 .child(
                     div()
                         .flex()
@@ -1937,24 +1996,15 @@ impl Shell {
                         .child(
                             load_button
                                 .rounded(ButtonRounded::None)
-                                .w(px(29.))
-                                .h(px(29.)),
+                                .w(px(30.))
+                                .h(px(30.)),
                         )
                         .child(eject_button),
                 )
                 .child(sync_button)
                 .child(cue_button)
-                .child(play_button)
-                .child(
-                    div()
-                        .flex()
-                        .w_full()
-                        .gap(px(4.))
-                        .when(index == 1, |row| row.flex_row_reverse())
-                        .child(deck_select)
-                        .child(headphone_button),
-                );
-            (controls.into_any_element(), None)
+                .child(play_button);
+            (controls.into_any_element(), Some(identity), None)
         };
         let display_controls = Some(controls);
 
@@ -2145,7 +2195,14 @@ impl Shell {
                     })
                     .child(self.deck_header_times(index, state, cx)),
             )
-            .child(self.deck_display(index, state, display_controls, display_identity, cx))
+            .child(self.deck_display(
+                index,
+                state,
+                display_controls,
+                display_identity,
+                display_sync,
+                cx,
+            ))
     }
 
     fn deck_column(&self, side: usize, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
@@ -2161,7 +2218,7 @@ impl Shell {
             .filter(|&d| d < self.visible_decks())
         {
             if self.settings.four_decks {
-                let slot = div().h(px(183.)).flex_shrink_0().flex().flex_col();
+                let slot = div().h(px(186.)).flex_shrink_0().flex().flex_col();
                 column = column.child(
                     slot.children(decks.get(index).map(|state| self.deck(index, state, cx))),
                 );
@@ -2202,7 +2259,7 @@ impl Shell {
                                 div()
                                     .flex()
                                     .flex_shrink_0()
-                                    .h(px(if self.settings.four_decks { 370. } else { 328. }))
+                                    .h(px(if self.settings.four_decks { 376. } else { 328. }))
                                     .gap(px(4.))
                                     .child(self.deck_column(0, decks, cx))
                                     .child(self.mixer_panel(cx))

@@ -590,6 +590,7 @@ impl Shell {
         state: &DeckState,
         controls: Option<AnyElement>,
         identity: Option<AnyElement>,
+        sync_control: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> Div {
         let colour = deck_colour(index);
@@ -599,8 +600,8 @@ impl Shell {
         let platter = div()
             .id(("platter", index))
             .relative()
-            .w(px(if self.settings.four_decks { 96. } else { 185. }))
-            .h(px(if self.settings.four_decks { 96. } else { 185. }))
+            .w(px(if self.settings.four_decks { 96. } else { 177. }))
+            .h(px(if self.settings.four_decks { 96. } else { 177. }))
             .flex_shrink_0()
             .rounded_full()
             .border_3()
@@ -670,6 +671,32 @@ impl Shell {
                     cx.stop_propagation();
                 }),
             );
+        let quantize_button = Button::new(("platter-quantize", index))
+            .outline()
+            .rounded(ButtonRounded::None)
+            .w(px(30.))
+            .h(px(30.))
+            .min_w_0()
+            .px_0()
+            .text_xs()
+            .font_weight(FontWeight::BOLD)
+            .label("Q")
+            .selected(!state.quantize_disabled)
+            .border_color(if state.quantize_disabled { cx.theme().border } else { Hsla::from(colour) })
+            .bg(if state.quantize_disabled {
+                cx.theme().background
+            } else {
+                Hsla::from(colour)
+            })
+            .text_color(if state.quantize_disabled { cx.theme().muted_foreground } else { Hsla::from(rgb(0x070b12)) })
+            .tooltip("Deck quantize: bypass or restore Hot Cue, loop and scratch quantize without changing their settings.")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.run_skin_button(
+                    index,
+                    djcraft_protocol::script::ButtonAction::ToggleQuantize,
+                    cx,
+                );
+            }));
 
         if self.settings.four_decks {
             let panel = self.deck_panel[index];
@@ -711,7 +738,7 @@ impl Shell {
             }
             return div()
                 .flex()
-                .h(px(96.))
+                .h(px(98.))
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(4.))
@@ -721,15 +748,25 @@ impl Shell {
                         .flex()
                         .flex_1()
                         .min_w_0()
-                        .h(px(96.))
+                        .h(px(98.))
                         .gap(px(4.))
                         .when(index % 2 == 1, |row| row.flex_row_reverse())
                         .children(sections),
                 )
                 .child(platter)
+                .child(
+                    div()
+                        .w(px(30.))
+                        .h(px(98.))
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(quantize_button)
+                        .children(sync_control),
+                )
                 .children(controls)
-                .children(identity)
-                .child(self.pitch_control(index, state, cx));
+                .child(self.pitch_control(index, state, identity, cx));
         }
 
         div()
@@ -744,7 +781,7 @@ impl Shell {
                     .flex_1()
                     .min_h_0()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(px(4.))
                     .when(index % 2 == 1, |row| row.flex_row_reverse())
                     .child(
                         div()
@@ -858,7 +895,16 @@ impl Shell {
                             .justify_center()
                             .when(index % 2 == 0, |area| area.items_end())
                             .when(index % 2 == 1, |area| area.items_start())
-                            .child(platter),
+                            .child(
+                                div()
+                                    .w(px(185.))
+                                    .h_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .flex_shrink_0()
+                                    .child(platter),
+                            ),
                     )
                     .child(
                         div()
@@ -871,10 +917,10 @@ impl Shell {
                             .children(controls)
                             .child(
                                 div()
-                                    .w(px(66.))
+                                    .w(px(64.))
                                     .h_full()
                                     .flex_shrink_0()
-                                    .child(self.pitch_control(index, state, cx)),
+                                    .child(self.pitch_control(index, state, identity, cx)),
                             ),
                     ),
             )
@@ -1006,6 +1052,7 @@ impl Shell {
         &self,
         deck: usize,
         state: &DeckState,
+        identity: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> Div {
         let range = state.tempo_range;
@@ -1016,39 +1063,22 @@ impl Shell {
         let highlight = smooth_knob_svg(value, 0.5, true);
         let adjustment = (tempo - 1.) * 100.;
         let tempo_tooltip = if state.key_lock {
-            "Key Lock on: changing tempo preserves the musical key. Drag vertically or scroll to adjust."
+            "Tempo — Key Lock on: changing speed preserves the musical key. Drag vertically or scroll to adjust."
         } else {
-            "Key Lock off: changing tempo also changes pitch and musical key. Drag vertically or scroll to adjust."
+            "Pitch — Key Lock off: changing speed also changes musical key. Drag vertically or scroll to adjust."
         };
+        let weak = cx.weak_entity();
         div()
             .flex()
             .flex_col()
-            .w(px(62.))
-            .h(px(96.))
+            .w(px(64.))
+            .h(px(98.))
             .flex_shrink_0()
             .gap(px(4.))
             .child(
-                Button::new(("pitch-range", deck))
-                    .outline()
-                    .xsmall()
-                    .rounded(ButtonRounded::None)
-                    .w_full()
-                    .h(px(29.))
-                    .p_0()
-                    .bg(cx.theme().secondary.opacity(0.5))
-                    .label(format!("±{}%", range.percent()))
-                    .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.run_skin_button(
-                            deck,
-                            djcraft_protocol::script::ButtonAction::CycleTempoRange,
-                            cx,
-                        );
-                    })),
-            )
-            .child(
                 div()
                     .id(("pitch-knob", deck))
+                    .relative()
                     .flex()
                     .w_full()
                     .h(px(30.))
@@ -1059,8 +1089,8 @@ impl Shell {
                     .child(
                         div()
                             .relative()
-                            .w(px(29.))
-                            .h(px(29.))
+                            .w(px(30.))
+                            .h(px(30.))
                             .child(
                                 Icon::default()
                                     .data(base.as_bytes())
@@ -1074,6 +1104,52 @@ impl Shell {
                                         .text_color(colour)
                                         .size_full(),
                                 ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .when(deck % 2 == 0, |cog| cog.right_0())
+                            .when(deck % 2 == 1, |cog| cog.left_0())
+                            .child(
+                                Button::new(("pitch-range-cog", deck))
+                                    .ghost()
+                                    .rounded(ButtonRounded::None)
+                                    .w(px(18.))
+                                    .h(px(18.))
+                                    .min_w_0()
+                                    .p_0()
+                                    .child(small_solid_cog())
+                                    .dropdown_caret(false)
+                                    .tooltip("Choose tempo range")
+                                    .dropdown_menu(move |mut menu, _, _| {
+                                        use djcraft_protocol::TempoFaderRange::*;
+                                        for (value, label) in [
+                                            (Low, "±8%"),
+                                            (Medium, "±16%"),
+                                            (High, "±32%"),
+                                            (Wide, "±48%"),
+                                        ] {
+                                            let weak = weak.clone();
+                                            menu = menu.item(
+                                                PopupMenuItem::new(label)
+                                                    .checked(range == value)
+                                                    .on_click(move |_, _, cx| {
+                                                        let _ = weak.update(cx, |this, cx| {
+                                                            this.send(
+                                                                deck,
+                                                                DeckAction::SetTempoRange {
+                                                                    range: value,
+                                                                },
+                                                            );
+                                                            cx.notify();
+                                                        });
+                                                    }),
+                                            );
+                                        }
+                                        menu
+                                    }),
                             ),
                     )
                     .on_scroll_wheel(cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
@@ -1095,7 +1171,7 @@ impl Shell {
                     .xsmall()
                     .rounded(ButtonRounded::None)
                     .w_full()
-                    .h(px(29.))
+                    .h(px(30.))
                     .p_0()
                     .bg(cx.theme().secondary.opacity(0.5))
                     .label(if adjustment.abs() < 0.05 {
@@ -1109,54 +1185,38 @@ impl Shell {
                         cx.notify();
                     })),
             )
+            .children(identity)
     }
 
-    fn pitch_control(&self, deck: usize, state: &DeckState, cx: &mut Context<Self>) -> Div {
+    fn pitch_control(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        identity: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Div {
         if self.settings.four_decks {
-            return self.four_deck_pitch_control(deck, state, cx);
+            return self.four_deck_pitch_control(deck, state, identity, cx);
         }
         let area = self.pitch_areas[deck].clone();
-        let four_decks = self.settings.four_decks;
         let colour = deck_colour(deck);
         let tempo = state.tempo;
         let range = state.tempo_range;
+        let weak = cx.weak_entity();
         div()
             .flex()
             .flex_col()
             .items_center()
-            .w(px(if self.settings.four_decks { 80. } else { 66. }))
+            .w(px(64.))
             .h_full()
-            .gap_1()
-            .child(
-                Button::new(("pitch-range", deck))
-                    .outline()
-                    .xsmall()
-                    .when(!self.settings.four_decks, |button| {
-                        button
-                            .rounded(ButtonRounded::None)
-                            .w_full()
-                            .h(px(29.))
-                            .p_0()
-                            .bg(cx.theme().secondary.opacity(0.5))
-                    })
-                    .label(format!("±{}%", range.percent()))
-                    .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.run_skin_button(
-                            deck,
-                            djcraft_protocol::script::ButtonAction::CycleTempoRange,
-                            cx,
-                        );
-                    })),
-            )
+            .gap(px(4.))
             .child(
                 div()
                     .id(("pitch-fader", deck))
-                    .w(px(if self.settings.four_decks { 42. } else { 66. }))
+                    .relative()
+                    .w(px(64.))
                     .flex_1()
-                    .when(!self.settings.four_decks, |fader| {
-                        fader.bg(cx.theme().secondary.opacity(0.5))
-                    })
+                    .bg(cx.theme().secondary.opacity(0.5))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -1181,8 +1241,8 @@ impl Shell {
                                 ));
                                 for i in 0..=10 {
                                     let major = i == 0 || i == 5 || i == 10;
-                                    let tick_w = if !four_decks && major { 22. } else { 16. };
-                                    let tick_h = if !four_decks && major { 2. } else { 1. };
+                                    let tick_w = if major { 22. } else { 16. };
+                                    let tick_h = if major { 2. } else { 1. };
                                     window.paint_quad(fill(
                                         Bounds::new(
                                             point(x - px(tick_w / 2.), y + px(h * i as f32 / 10.)),
@@ -1202,20 +1262,63 @@ impl Shell {
                             },
                         )
                         .size_full(),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .when(deck % 2 == 0, |cog| cog.right_0())
+                            .when(deck % 2 == 1, |cog| cog.left_0())
+                            .child(
+                                Button::new(("pitch-range-cog", deck))
+                                    .ghost()
+                                    .rounded(ButtonRounded::None)
+                                    .w(px(18.))
+                                    .h(px(18.))
+                                    .min_w_0()
+                                    .p_0()
+                                    .child(small_solid_cog())
+                                    .dropdown_caret(false)
+                                    .tooltip("Choose tempo range")
+                                    .dropdown_menu(move |mut menu, _, _| {
+                                        use djcraft_protocol::TempoFaderRange::*;
+                                        for (value, label) in [
+                                            (Low, "±8%"),
+                                            (Medium, "±16%"),
+                                            (High, "±32%"),
+                                            (Wide, "±48%"),
+                                        ] {
+                                            let weak = weak.clone();
+                                            menu = menu.item(
+                                                PopupMenuItem::new(label)
+                                                    .checked(range == value)
+                                                    .on_click(move |_, _, cx| {
+                                                        let _ = weak.update(cx, |this, cx| {
+                                                            this.send(
+                                                                deck,
+                                                                DeckAction::SetTempoRange {
+                                                                    range: value,
+                                                                },
+                                                            );
+                                                            cx.notify();
+                                                        });
+                                                    }),
+                                            );
+                                        }
+                                        menu
+                                    }),
+                            ),
                     ),
             )
             .child(
                 Button::new(("tempo-reset", deck))
                     .outline()
                     .xsmall()
-                    .when(!self.settings.four_decks, |button| {
-                        button
-                            .rounded(ButtonRounded::None)
-                            .w_full()
-                            .h(px(29.))
-                            .p_0()
-                            .bg(cx.theme().secondary.opacity(0.5))
-                    })
+                    .rounded(ButtonRounded::None)
+                    .w_full()
+                    .h(px(30.))
+                    .p_0()
+                    .bg(cx.theme().secondary.opacity(0.5))
                     .label(format!("{:+.1}%", (tempo - 1.) * 100.))
                     .tooltip("Gradually return tempo to zero adjustment.")
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1223,6 +1326,7 @@ impl Shell {
                         cx.notify();
                     })),
             )
+            .children(identity)
     }
 }
 fn playback_anchor(

@@ -62,6 +62,16 @@ fn manual_region(
 }
 
 impl Shell {
+    fn effective_loop_options(&self, deck: usize) -> LoopOptions {
+        let mut options = self.loop_options[deck];
+        let enabled = self
+            .engine
+            .as_ref()
+            .is_some_and(|e| e.quantize_enabled(deck));
+        options.quantize &= enabled;
+        options.smart &= enabled;
+        options
+    }
     pub(super) fn saved_loops_panel(&self, deck: usize, cx: &mut Context<Self>) -> Div {
         let path = self.deck_paths[deck].as_ref();
         let slots = path
@@ -99,7 +109,7 @@ impl Shell {
                                 .small()
                                 .outline()
                                 .rounded(ButtonRounded::None)
-                                .w(px(29.))
+                                .w(px(30.))
                                 .label("×")
                                 .tooltip("Delete this saved loop")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -182,7 +192,7 @@ impl Shell {
                         start,
                         state.position_seconds,
                         self.grids[deck],
-                        self.loop_options[deck],
+                        self.effective_loop_options(deck),
                     );
                     self.apply_loop(deck, a, b, cx);
                 }
@@ -246,7 +256,7 @@ impl Shell {
                 state.position_seconds,
                 grid,
                 2f64.powi(self.loop_size[deck]),
-                self.loop_options[deck],
+                self.effective_loop_options(deck),
             );
             self.apply_loop(deck, start, end, cx);
         }
@@ -384,8 +394,8 @@ impl Shell {
             .when(compact, |button| {
                 button
                     .rounded(ButtonRounded::None)
-                    .w(px(29.))
-                    .h(px(29.))
+                    .w(px(30.))
+                    .h(px(30.))
                     .min_w_0()
                     .p_0()
                     .label("⋯")
@@ -453,8 +463,8 @@ impl Shell {
                             .xsmall()
                             .outline()
                             .rounded(ButtonRounded::None)
-                            .w(px(29.))
-                            .h(px(29.))
+                            .w(px(30.))
+                            .h(px(30.))
                             .min_w_0()
                             .p_0()
                             .label("<")
@@ -469,7 +479,7 @@ impl Shell {
                             .outline()
                             .rounded(ButtonRounded::None)
                             .flex_1()
-                            .h(px(29.))
+                            .h(px(30.))
                             .min_w_0()
                             .p_0()
                             .label(size_label)
@@ -491,8 +501,8 @@ impl Shell {
                             .xsmall()
                             .outline()
                             .rounded(ButtonRounded::None)
-                            .w(px(29.))
-                            .h(px(29.))
+                            .w(px(30.))
+                            .h(px(30.))
                             .min_w_0()
                             .p_0()
                             .label(">")
@@ -513,7 +523,7 @@ impl Shell {
                             .outline()
                             .rounded(ButtonRounded::None)
                             .flex_1()
-                            .h(px(29.))
+                            .h(px(30.))
                             .min_w_0()
                             .p_0()
                             .label("IN")
@@ -534,7 +544,7 @@ impl Shell {
                             .outline()
                             .rounded(ButtonRounded::None)
                             .flex_1()
-                            .h(px(29.))
+                            .h(px(30.))
                             .min_w_0()
                             .p_0()
                             .label("OUT")
@@ -548,7 +558,7 @@ impl Shell {
                                         start,
                                         state.position_seconds,
                                         this.grids[deck],
-                                        this.loop_options[deck],
+                                        this.effective_loop_options(deck),
                                     );
                                     this.apply_loop(deck, a, b, cx);
                                 }
@@ -561,7 +571,7 @@ impl Shell {
                     .outline()
                     .rounded(ButtonRounded::None)
                     .w_full()
-                    .h(px(29.))
+                    .h(px(30.))
                     .min_w_0()
                     .p_0()
                     .label("RELOOP")
@@ -606,8 +616,8 @@ impl Shell {
                         .xsmall()
                         .outline()
                         .rounded(ButtonRounded::None)
-                        .w(px(29.))
-                        .h(px(29.))
+                        .w(px(30.))
+                        .h(px(30.))
                         .min_w_0()
                         .p_0()
                         .label("<")
@@ -622,7 +632,7 @@ impl Shell {
                         .outline()
                         .rounded(ButtonRounded::None)
                         .flex_1()
-                        .h(px(29.))
+                        .h(px(30.))
                         .min_w_0()
                         .p_0()
                         .label(size_label)
@@ -644,8 +654,8 @@ impl Shell {
                         .xsmall()
                         .outline()
                         .rounded(ButtonRounded::None)
-                        .w(px(29.))
-                        .h(px(29.))
+                        .w(px(30.))
+                        .h(px(30.))
                         .min_w_0()
                         .p_0()
                         .label(">")
@@ -676,7 +686,7 @@ impl Shell {
                     .rounded(ButtonRounded::None)
                     .flex_1()
                     .min_w_0()
-                    .h(px(29.))
+                    .h(px(30.))
                     .p_0()
                     .accessibility_label(format!("{length} beats"))
                     .label(label)
@@ -885,7 +895,7 @@ impl Shell {
                                             start,
                                             state.position_seconds,
                                             this.grids[deck],
-                                            this.loop_options[deck],
+                                            this.effective_loop_options(deck),
                                         );
                                         this.apply_loop(deck, a, b, cx);
                                     }

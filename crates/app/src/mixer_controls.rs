@@ -366,7 +366,7 @@ impl Shell {
     }
 
     fn mixer_tabs(&self, cx: &mut Context<Self>) -> Div {
-        div().flex().w_full().h(px(29.)).flex_shrink_0().children(
+        div().flex().w_full().h(px(30.)).flex_shrink_0().children(
             ["MIXER", "OUTPUT"]
                 .into_iter()
                 .enumerate()
@@ -376,7 +376,7 @@ impl Shell {
                         .flex()
                         .flex_1()
                         .min_w_0()
-                        .h(px(29.))
+                        .h(px(30.))
                         .items_center()
                         .justify_center()
                         .text_size(px(11.))
@@ -488,7 +488,7 @@ impl Shell {
                                     .min_w_0()
                                     .id("mic-toggle")
                                     .flex()
-                                    .h(px(29.))
+                                    .h(px(30.))
                                     .items_center()
                                     .justify_center()
                                     .border_1()
@@ -539,8 +539,8 @@ impl Shell {
                                 .xsmall()
                                 .outline()
                                 .rounded(ButtonRounded::None)
-                                .w(px(29.))
-                                .h(px(29.))
+                                .w(px(30.))
+                                .h(px(30.))
                                 .p_0()
                                 .label(deck_label(deck))
                                 .selected(mask & (1 << deck) != 0)
@@ -1098,7 +1098,7 @@ impl Shell {
                             .flex()
                             .flex_1()
                             .min_w_0()
-                            .h(px(62.))
+                            .h(px(64.))
                             .items_center()
                             .p(px(4.))
                             .bg(cx.theme().secondary.opacity(0.5))
