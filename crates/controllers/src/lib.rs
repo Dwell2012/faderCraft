@@ -277,6 +277,10 @@ pub enum Binding {
     HotCueDeleteMode {
         deck: u8,
     },
+    PadMode {
+        deck: u8,
+        mode: PadMode,
+    },
     ToggleEffect {
         deck: u8,
         slot: u8,
@@ -458,6 +462,12 @@ impl Profile {
                     ));
                 }
             }
+            if let Binding::PadMode { deck, .. } = m.binding
+                && (usize::from(deck) >= djcraft_protocol::DECKS
+                    || !matches!(m.source, Source::Note { .. }))
+            {
+                return Err(format!("{}: pad mode requires a valid deck and note", m.id));
+            }
             if !valid_source
                 || m.modifiers
                     .iter()
@@ -594,11 +604,14 @@ struct Memory {
     bend_at: Option<Instant>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PadMode {
     HotCues,
     Loop,
     Sampler,
+    Stems,
+    BeatJump,
 }
 
 pub struct Bridge {
@@ -1033,6 +1046,7 @@ impl Bridge {
             memory.down = down;
             if rising {
                 let mode = match &mapping.binding {
+                    Binding::PadMode { deck, mode } => Some((*deck, *mode)),
                     Binding::HotCue { deck, .. }
                     | Binding::HotCueDelete { deck, .. }
                     | Binding::HotCueDeleteMode { deck } => Some((*deck, PadMode::HotCues)),
@@ -1144,6 +1158,7 @@ impl Bridge {
                     }
                     None
                 }
+                Binding::PadMode { .. } => None,
                 Binding::ToggleColourFx { deck } if rising => state
                     .decks
                     .get(usize::from(*deck))

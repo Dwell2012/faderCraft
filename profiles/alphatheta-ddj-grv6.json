@@ -88,6 +88,33 @@
       }
     },
     {
+      "id": "deck_a-select",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 114 },
+      "modifiers": [],
+      "binding": { "type": "host_button", "press": { "command": "select_deck", "deck": 0 } }
+    },
+    {
+      "id": "deck_a-hot-cue-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 27 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 0, "mode": "hot_cues" }
+    },
+    {
+      "id": "deck_a-stems-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 30 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 0, "mode": "stems" }
+    },
+    {
+      "id": "deck_a-beat-jump-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 32 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 0, "mode": "beat_jump" }
+    },
+    {
+      "id": "deck_a-sampler-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 34 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 0, "mode": "sampler" }
+    },
+    {
       "id": "deck_a-tempo",
       "port": "DDJ-GRV6",
       "source": {
@@ -261,6 +288,33 @@
           "deck": 1
         }
       }
+    },
+    {
+      "id": "deck_b-select",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 114 },
+      "modifiers": [],
+      "binding": { "type": "host_button", "press": { "command": "select_deck", "deck": 1 } }
+    },
+    {
+      "id": "deck_b-hot-cue-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 27 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 1, "mode": "hot_cues" }
+    },
+    {
+      "id": "deck_b-stems-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 30 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 1, "mode": "stems" }
+    },
+    {
+      "id": "deck_b-beat-jump-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 32 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 1, "mode": "beat_jump" }
+    },
+    {
+      "id": "deck_b-sampler-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 34 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 1, "mode": "sampler" }
     },
     {
       "id": "deck_b-tempo",
@@ -438,6 +492,33 @@
       }
     },
     {
+      "id": "deck_c-select",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 114 },
+      "modifiers": [],
+      "binding": { "type": "host_button", "press": { "command": "select_deck", "deck": 2 } }
+    },
+    {
+      "id": "deck_c-hot-cue-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 27 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 2, "mode": "hot_cues" }
+    },
+    {
+      "id": "deck_c-stems-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 30 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 2, "mode": "stems" }
+    },
+    {
+      "id": "deck_c-beat-jump-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 32 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 2, "mode": "beat_jump" }
+    },
+    {
+      "id": "deck_c-sampler-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 34 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 2, "mode": "sampler" }
+    },
+    {
       "id": "deck_c-tempo",
       "port": "DDJ-GRV6",
       "source": {
@@ -611,6 +692,33 @@
           "deck": 3
         }
       }
+    },
+    {
+      "id": "deck_d-select",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 114 },
+      "modifiers": [],
+      "binding": { "type": "host_button", "press": { "command": "select_deck", "deck": 3 } }
+    },
+    {
+      "id": "deck_d-hot-cue-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 27 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 3, "mode": "hot_cues" }
+    },
+    {
+      "id": "deck_d-stems-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 30 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 3, "mode": "stems" }
+    },
+    {
+      "id": "deck_d-beat-jump-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 32 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 3, "mode": "beat_jump" }
+    },
+    {
+      "id": "deck_d-sampler-mode", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 34 },
+      "modifiers": [], "binding": { "type": "pad_mode", "deck": 3, "mode": "sampler" }
     },
     {
       "id": "deck_d-tempo",

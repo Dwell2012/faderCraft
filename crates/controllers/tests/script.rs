@@ -1,5 +1,5 @@
 use djcraft_controllers::{
-    Binding, Bridge, Event, HostCommand, Mapping, PROFILE_VERSION, Profile, Source,
+    Binding, Bridge, Event, HostCommand, Mapping, PROFILE_VERSION, PadMode, Profile, Source,
 };
 use djcraft_protocol::{Action, DeckAction, MixerAction, SessionState};
 
@@ -301,7 +301,7 @@ fn fourteen_bit_tempo_waits_for_both_halves_and_preserves_center() {
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 189);
+    assert_eq!(profile.mappings.len(), 209);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -317,6 +317,27 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
                 action: DeckAction::Play
             }]
         );
+    }
+    for deck in 0..4 {
+        let source = Source::Note {
+            channel: deck,
+            number: 114,
+        };
+        assert!(
+            bridge
+                .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                .is_empty()
+        );
+        assert_eq!(
+            bridge.take_commands(),
+            vec![HostCommand::SelectDeck { deck }]
+        );
+        assert!(
+            bridge
+                .process("DDJ-GRV6", Event { source, value: 0 }, &state)
+                .is_empty()
+        );
+        assert!(bridge.take_commands().is_empty());
     }
     for deck in 0..4 {
         bridge.process(
@@ -350,6 +371,41 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
         bridge.take_commands(),
         vec![HostCommand::Browse { steps: -1 }]
     );
+}
+
+#[test]
+fn grv6_mode_buttons_select_each_decks_visible_pad_page() {
+    let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
+        .expect("GRV6 mode mappings should validate without hardware");
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    for (number, mode) in [
+        (27, PadMode::HotCues),
+        (30, PadMode::Stems),
+        (32, PadMode::BeatJump),
+        (34, PadMode::Sampler),
+    ] {
+        for deck in 0..4 {
+            let source = Source::Note {
+                channel: deck,
+                number,
+            };
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            let modes = bridge.take_pad_modes();
+            assert_eq!(modes[usize::from(deck)], Some(mode));
+            assert_eq!(modes.iter().flatten().count(), 1);
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 0 }, &state)
+                    .is_empty()
+            );
+            assert!(bridge.take_pad_modes().iter().all(Option::is_none));
+        }
+    }
 }
 
 #[test]

@@ -266,6 +266,8 @@ impl Shell {
             djcraft_controllers::PadMode::HotCues => Page::HotCues,
             djcraft_controllers::PadMode::Loop => Page::ManualLoop,
             djcraft_controllers::PadMode::Sampler => Page::Sampler,
+            djcraft_controllers::PadMode::Stems => Page::Stems,
+            djcraft_controllers::PadMode::BeatJump => Page::BeatJump,
         };
         if self.pads[deck].page != page || self.pads[deck].split.is_some() {
             self.release_pad(deck);
