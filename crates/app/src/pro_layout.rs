@@ -1039,13 +1039,11 @@ impl Shell {
                     .label(format!("±{}%", range.percent()))
                     .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.send(
+                        this.run_skin_button(
                             deck,
-                            DeckAction::SetTempoRange {
-                                range: range.next(),
-                            },
+                            djcraft_protocol::script::ButtonAction::CycleTempoRange,
+                            cx,
                         );
-                        cx.notify();
                     })),
             )
             .child(
@@ -1144,13 +1142,11 @@ impl Shell {
                     .label(format!("±{}%", range.percent()))
                     .tooltip("Cycle tempo range: Low 8%, Medium 16%, High 32%, Wide 48%.")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.send(
+                        this.run_skin_button(
                             deck,
-                            DeckAction::SetTempoRange {
-                                range: range.next(),
-                            },
+                            djcraft_protocol::script::ButtonAction::CycleTempoRange,
+                            cx,
                         );
-                        cx.notify();
                     })),
             )
             .child(

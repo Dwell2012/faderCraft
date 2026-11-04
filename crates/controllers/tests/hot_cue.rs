@@ -26,6 +26,76 @@ fn apply(engine: &mut Engine, actions: Vec<Action>) {
 }
 
 #[test]
+fn rapid_hotcue_burst_reaches_last_cue_on_next_callback_without_late_retriggers() {
+    let (mut engine, mut mixer) = Engine::headless(48_000);
+    engine
+        .load_track(
+            0,
+            Arc::new(Track::from_samples(
+                "cue burst",
+                48_000,
+                vec![0.2; 48_000 * 8],
+            )),
+        )
+        .unwrap();
+    apply(
+        &mut engine,
+        vec![
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetKeyLock { on: true },
+            },
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetTempo { ratio: 1.08 },
+            },
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetHotCues {
+                    cues: std::array::from_fn(|slot| {
+                        (slot < 4).then_some(djcraft_protocol::HotCue {
+                            seconds: 0.5 * (slot + 1) as f64,
+                            loop_end: None,
+                        })
+                    }),
+                },
+            },
+        ],
+    );
+    let mut block = [0.; 960];
+    mixer.render(&mut block);
+    let mut bridge = bridge();
+    // Delayed UI input drain: all edges arrive before the next audio callback.
+    for hit in 0..32 {
+        let note = 0x6d + hit % 4;
+        let actions = press(&mut bridge, &mut engine, note, 127);
+        assert_eq!(actions.len(), 1);
+        apply(&mut engine, actions);
+        assert!(press(&mut bridge, &mut engine, note, 0).is_empty());
+    }
+    mixer.render(&mut block);
+    let final_position = engine.state().decks[0].position_seconds;
+    assert!(
+        (final_position - 2.0108).abs() < 0.002,
+        "last cue was delayed: {final_position}"
+    );
+    for callback in 1..=20 {
+        let actions = bridge.tick(&engine.state());
+        assert!(
+            actions.is_empty(),
+            "input silence must not emit queued hotcues"
+        );
+        mixer.render(&mut block);
+        let position = engine.state().decks[0].position_seconds;
+        let expected = final_position + f64::from(callback) * 0.0108;
+        assert!(
+            (position - expected).abs() < 0.002,
+            "late retrigger: {position} != {expected}"
+        );
+    }
+}
+
+#[test]
 fn empty_hot_cue_is_set_without_starting_playback_and_next_press_recalls_it() {
     let (mut engine, mut mixer) = Engine::headless(48000);
     engine

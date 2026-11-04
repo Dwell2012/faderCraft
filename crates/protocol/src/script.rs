@@ -91,6 +91,10 @@ pub enum ButtonAction {
     Pause,
     TogglePlay,
     Unload,
+    KeyLockOn,
+    KeyLockOff,
+    ToggleKeyLock,
+    CycleTempoRange,
     ToggleRhythmShift,
     RhythmShiftOn,
     RhythmShiftOff,
@@ -195,6 +199,10 @@ impl Program {
                 "pause" => ButtonAction::Pause,
                 "toggle_play" => ButtonAction::TogglePlay,
                 "unload" => ButtonAction::Unload,
+                "key_lock_on" => ButtonAction::KeyLockOn,
+                "key_lock_off" => ButtonAction::KeyLockOff,
+                "toggle_key_lock" => ButtonAction::ToggleKeyLock,
+                "cycle_tempo_range" => ButtonAction::CycleTempoRange,
                 "toggle_rhythm_shift" => ButtonAction::ToggleRhythmShift,
                 "rhythm_shift_on" => ButtonAction::RhythmShiftOn,
                 "rhythm_shift_off" => ButtonAction::RhythmShiftOff,
@@ -478,6 +486,26 @@ impl Program {
                     ButtonAction::Play => DeckAction::Play,
                     ButtonAction::Pause => DeckAction::Pause,
                     ButtonAction::Unload => DeckAction::Unload,
+                    ButtonAction::KeyLockOn => DeckAction::SetKeyLock { on: true },
+                    ButtonAction::KeyLockOff => DeckAction::SetKeyLock { on: false },
+                    ButtonAction::ToggleKeyLock => {
+                        let deck = state
+                            .ok_or("toggle_key_lock requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        DeckAction::SetKeyLock { on: !deck.key_lock }
+                    }
+                    ButtonAction::CycleTempoRange => {
+                        let deck = state
+                            .ok_or("cycle_tempo_range requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        DeckAction::SetTempoRange {
+                            range: deck.tempo_range.next(),
+                        }
+                    }
                     ButtonAction::RhythmRoll(slot) => DeckAction::TriggerRhythmRoll { slot },
                     ButtonAction::RhythmShiftOn => DeckAction::SetRhythmShift { enabled: true },
                     ButtonAction::RhythmShiftOff => DeckAction::SetRhythmShift { enabled: false },
@@ -530,6 +558,35 @@ impl Param {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deck_setup_buttons_require_state_only_for_relative_changes() {
+        for command in ["toggle_key_lock", "cycle_tempo_range"] {
+            let program =
+                Program::compile(&format!("do_action(\"deck_d\", \"{command}\")")).unwrap();
+            assert!(program.run(ControlSource::Skin, 0.).is_err());
+            assert!(
+                program
+                    .run_with_state(ControlSource::Skin, 0., Some(&SessionState::default()))
+                    .is_err()
+            );
+            assert!(Program::compile(&format!("do_action(\"mixer\", \"{command}\")")).is_err());
+        }
+        for (command, on) in [("key_lock_on", true), ("key_lock_off", false)] {
+            let program =
+                Program::compile(&format!("do_action(\"deck_d\", \"{command}\")")).unwrap();
+            assert_eq!(
+                program.run(ControlSource::Custom, 0.).unwrap(),
+                Dispatch {
+                    source: ControlSource::Custom,
+                    action: Action::Deck {
+                        deck: 3,
+                        action: DeckAction::SetKeyLock { on }
+                    },
+                }
+            );
+        }
+    }
 
     #[test]
     fn rhythm_shift_actions_dispatch_to_the_selected_deck() {

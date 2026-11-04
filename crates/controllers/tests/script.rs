@@ -25,6 +25,65 @@ fn mapping(id: &str, source: Source, program: &str, release: Option<&str>) -> Ma
 }
 
 #[test]
+fn deck_setup_script_buttons_run_once_per_press_and_read_latest_state() {
+    let source = Source::Note {
+        channel: 0,
+        number: 12,
+    };
+    for (command, first, second) in [
+        (
+            "toggle_key_lock",
+            DeckAction::SetKeyLock { on: true },
+            DeckAction::SetKeyLock { on: false },
+        ),
+        (
+            "cycle_tempo_range",
+            DeckAction::SetTempoRange {
+                range: djcraft_protocol::TempoFaderRange::Medium,
+            },
+            DeckAction::SetTempoRange {
+                range: djcraft_protocol::TempoFaderRange::High,
+            },
+        ),
+    ] {
+        let mut bridge = Bridge::new(profile(vec![mapping(
+            "setup",
+            source,
+            &format!("do_action(\"deck_b\", \"{command}\")"),
+            None,
+        )]))
+        .unwrap();
+        let mut state = SessionState::default();
+        state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+        state.decks[1].key_lock = false;
+        for expected in [first, second] {
+            assert_eq!(
+                bridge.process("GRV6", Event { source, value: 127 }, &state),
+                vec![Action::Deck {
+                    deck: 1,
+                    action: expected.clone()
+                }]
+            );
+            match expected {
+                DeckAction::SetKeyLock { on } => state.decks[1].key_lock = on,
+                DeckAction::SetTempoRange { range } => state.decks[1].tempo_range = range,
+                _ => unreachable!(),
+            }
+            assert!(
+                bridge
+                    .process("GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            assert!(
+                bridge
+                    .process("GRV6", Event { source, value: 0 }, &state)
+                    .is_empty()
+            );
+        }
+    }
+}
+
+#[test]
 fn scripts_run_from_offline_note_and_cc_mappings() {
     let mut bridge = Bridge::new(profile(vec![
         mapping(

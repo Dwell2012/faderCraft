@@ -1345,6 +1345,27 @@ impl Shell {
         );
     }
 
+    fn run_skin_button(
+        &mut self,
+        deck: usize,
+        action: djcraft_protocol::script::ButtonAction,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use djcraft_protocol::script::{ControlSource, Program};
+        let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
+            return false;
+        };
+        match Program::do_action(deck, action)
+            .and_then(|program| program.run_with_state(ControlSource::Skin, 0.0, Some(&state)))
+        {
+            Ok(dispatch) => self.apply_control_dispatch(dispatch, cx),
+            Err(reason) => {
+                eprintln!("Skin button rejected: {reason}");
+                false
+            }
+        }
+    }
+
     /// Common destination for skin scripts and controller actions. Deck actions
     /// retain the host's load, cue and transport bookkeeping before engine apply.
     fn apply_control_dispatch(
@@ -1720,7 +1741,10 @@ impl Shell {
             .tooltip("Eject the loaded track from this deck.")
             .disabled(state.track.is_none())
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.send(index, DeckAction::Unload);
+                if !this.run_skin_button(index, djcraft_protocol::script::ButtonAction::Unload, cx)
+                {
+                    return;
+                }
                 this.deck_paths[index] = None;
                 this.pad_tracks[index] = None;
                 if this.last_loaded == Some(index) {
@@ -1758,18 +1782,11 @@ impl Shell {
             })
             .disabled(state.track.is_none())
             .on_click(cx.listener(move |this, _, _, cx| {
-                use djcraft_protocol::script::{ButtonAction, ControlSource, Program};
-                let Some(state) = this.engine.as_mut().map(|engine| engine.state()) else {
-                    return;
-                };
-                let Ok(dispatch) =
-                    Program::do_action(index, ButtonAction::TogglePlay).and_then(|program| {
-                        program.run_with_state(ControlSource::Skin, 0.0, Some(&state))
-                    })
-                else {
-                    return;
-                };
-                this.apply_control_dispatch(dispatch, cx);
+                this.run_skin_button(
+                    index,
+                    djcraft_protocol::script::ButtonAction::TogglePlay,
+                    cx,
+                );
             }));
         let sync_button = Button::new(("sync", index))
             .outline()

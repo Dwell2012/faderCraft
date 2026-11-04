@@ -5,6 +5,137 @@ use djcraft_controllers::{
 };
 use djcraft_protocol::{Action, SessionState};
 
+/// A controller can change a lamp locally on either edge of a button. Forget
+/// only those lamps so the next feedback pass repairs them once per batch.
+/// No MIDI output is sent while draining input packets.
+fn invalidate_feedback(
+    profile: &Profile,
+    port: &str,
+    source: djcraft_controllers::Source,
+    previous: &mut Vec<[u8; 3]>,
+) {
+    use djcraft_controllers::{Binding, Source};
+    let mut forget = |source| {
+        if let Source::Note { channel, number } = source {
+            previous.retain(|message| message[..2] != [0x90 | channel, number]);
+        }
+    };
+    forget(source);
+    for mapping in &profile.mappings {
+        if mapping.port != port {
+            continue;
+        }
+        match &mapping.binding {
+            Binding::Jog { config } if config.scratch_toggle == Some(source) => {
+                if let Some(led) = config.scratch_led {
+                    forget(led);
+                }
+            }
+            Binding::HostButton { led: Some(led), .. } if mapping.source == source => forget(*led),
+            _ => {}
+        }
+    }
+}
+
+fn feedback_messages<'a>(
+    desired: &'a [[u8; 3]],
+    previous: &'a [[u8; 3]],
+    force: bool,
+) -> impl Iterator<Item = &'a [u8; 3]> {
+    desired
+        .iter()
+        .filter(move |message| force || !previous.contains(message))
+}
+
+#[cfg(test)]
+mod feedback_batch_tests {
+    use super::*;
+    use djcraft_controllers::{Event, Source};
+
+    #[test]
+    fn rapid_hotcue_edges_repair_one_lamp_once_and_leave_no_feedback_backlog() {
+        let profile = Profile::from_json(include_str!(
+            "../../../profiles/numark-mixtrack-pro-ii.json"
+        ))
+        .unwrap();
+        let mut bridge = Bridge::new(profile.clone()).unwrap();
+        let port = "MixTrack Pro II";
+        let mut state = SessionState::default();
+        state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+        state.decks[0].hot_cues[0] = Some(djcraft_protocol::HotCue {
+            seconds: 1.,
+            loop_end: None,
+        });
+        let mut desired = bridge.feedback_monitor(port, state.monitor);
+        desired.extend(bridge.state_feedback(port, &state, 0, &[None; 4]));
+        assert!(
+            desired.len() > 16,
+            "a full refresh is substantially more than the pressed lamp"
+        );
+        let mut previous = desired.clone();
+        let source = Source::Note {
+            channel: 0,
+            number: 0x6d,
+        };
+        for _ in 0..32 {
+            for value in [127, 0] {
+                let actions = bridge.process(port, Event { source, value }, &state);
+                assert_eq!(actions.len(), usize::from(value != 0));
+                invalidate_feedback(&profile, port, source, &mut previous);
+            }
+        }
+        let sent: Vec<_> = feedback_messages(&desired, &previous, false)
+            .copied()
+            .collect();
+        assert_eq!(sent, vec![[0x90, 0x6d, 100]]);
+        previous = desired.clone();
+        assert_eq!(feedback_messages(&desired, &previous, false).count(), 0);
+        assert!(bridge.tick(&state).is_empty());
+        // Full initialization/reconnection remains available.
+        assert_eq!(
+            feedback_messages(&desired, &previous, true).count(),
+            desired.len()
+        );
+        // A CC cannot disturb the note feedback cache.
+        invalidate_feedback(
+            &profile,
+            port,
+            Source::Cc {
+                channel: 0,
+                number: 0x6d,
+            },
+            &mut previous,
+        );
+        assert_eq!(previous, desired);
+    }
+
+    #[test]
+    fn dirty_lamps_are_channel_scoped_and_refresh_real_changes_too() {
+        let profile = Profile::from_json(include_str!(
+            "../../../profiles/numark-mixtrack-pro-ii.json"
+        ))
+        .unwrap();
+        let mut previous = vec![[0x90, 0x6d, 100], [0x90, 0x6e, 100], [0x91, 0x6d, 100]];
+        // Different channels are independent, and unrelated LEDs remain cached.
+        invalidate_feedback(
+            &profile,
+            "MixTrack Pro II",
+            djcraft_controllers::Source::Note {
+                channel: 0,
+                number: 0x6d,
+            },
+            &mut previous,
+        );
+        let desired = [[0x90, 0x6d, 100], [0x90, 0x6e, 0], [0x91, 0x6d, 100]];
+        assert_eq!(
+            feedback_messages(&desired, &previous, false)
+                .copied()
+                .collect::<Vec<_>>(),
+            desired[..2]
+        );
+    }
+}
+
 /// Keep the latest measured velocity/position per deck in a drained MIDI batch.
 /// Transport and other actions are barriers, so releases and seeks keep order.
 #[derive(Default)]
@@ -416,11 +547,11 @@ impl Controllers {
         if !force && *previous == desired {
             return;
         }
-        for message in &desired {
-            if !force && previous.contains(message) {
-                continue;
-            }
-            if let Err(error) = output.send(message) {
+        let messages: Vec<_> = feedback_messages(&desired, previous, force)
+            .copied()
+            .collect();
+        for message in messages {
+            if let Err(error) = output.send(&message) {
                 eprintln!("Controller LED send: {error}");
                 self.outputs.remove(port);
                 return;
@@ -463,29 +594,12 @@ impl Controllers {
             eprintln!("MIDI note {port:?}: {event:?}");
             self.trace_notes -= 1;
         }
-        let force = self.bridge.profile().mappings.iter().any(|m| m.port == port && matches!(&m.binding, djcraft_controllers::Binding::Jog { config } if config.scratch_toggle == Some(event.source)));
         self.monitor = state.monitor;
         let actions = self.bridge.process_at(port, event, state, timed.at);
-        let force = force
-            || matches!(event.source, djcraft_controllers::Source::Note { .. })
-                && self.bridge.profile().mappings.iter().any(|m| {
-                    m.port == port
-                        && m.source == event.source
-                        && matches!(
-                            m.binding,
-                            djcraft_controllers::Binding::Led { .. }
-                                | djcraft_controllers::Binding::BrowserLed { .. }
-                        )
-                })
-            || self.bridge.profile().mappings.iter().any(|m| {
-                m.port == port
-                    && m.source == event.source
-                    && matches!(
-                        m.binding,
-                        djcraft_controllers::Binding::HostButton { led: Some(_), .. }
-                    )
-            });
-        self.sync_feedback(port, force);
+        if let Some((_, previous)) = self.outputs.get_mut(port) {
+            invalidate_feedback(self.bridge.profile(), port, event.source, previous);
+        }
+        // tick() sends feedback after the entire input batch and its actions.
         actions
     }
 

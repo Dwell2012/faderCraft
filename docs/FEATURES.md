@@ -1,10 +1,16 @@
 # djcraft feature list
 
+- [x] Controller LED feedback batches after input actions: rapid hot-cue edges
+      refresh the affected lamp once per drain instead of forcing the full LED
+      bank for every press/release. Regression coverage includes a 32-hit burst
+      reaching the final cue on the next audio callback without late retriggers.
+
 - [~] Rhythm Shift replaces a prepared deck drum stem with a beat-synced groove, triggers four rolls at bar boundaries, and returns to the groove at each roll's pack-defined point while the tail plays. The Perform side panel and fcScript actions expose it without hardware; the DDJ-GRV6 starter profile maps Swap 1, Roll 1–4, Release and gain. [Additional groove slots, Capture and the GRV6 Stem FX mode switch remain pending.]
 
-- [~] fcScript interaction conversion: mixer Classic EQ, trim, volume, CFX,
-      play controls and manual tempo gestures use compiled commands.
-      [Controller script bindings, other deck/mixer controls and a script editor remain pending.]
+- [~] fcScript interaction conversion: mixer controls, play, eject, key-lock,
+      tempo-range buttons, manual tempo gestures and Rhythm Shift use compiled
+      commands. Controller profiles support note and absolute-value script bindings.
+      [Other deck controls, relative encoder scripts, feedback expressions and a script editor remain pending.]
 
 - [x] Stem preparation progress overlays the top edge of each deck overview waveform: 3px, deck colour at 50% opacity, no added layout height. Uses existing per-deck progress and refresh; queued/loading jobs show a short marker, and completion/failure/timeout clears it.
 

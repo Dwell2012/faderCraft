@@ -1,5 +1,26 @@
 # Codex handover
 
+Hot-cue input backlog (4 November 2026): Controllers::process used to synchronously
+force the full LED bank on each mapped note edge before returning its action.
+Rapid pad presses/releases amplified output traffic and could delay later input.
+Processing now only invalidates the pressed lamp and any mapped HostButton/Jog
+lamp; tick refreshes feedback after all drained input actions, once per lamp.
+Unchanged lamps stay cached; reconnect still forces initialization. No audio
+thread changes or dropped/debounced cue presses. Regression tests cover a 32-hit
+burst with one repaired LED, channel isolation, and actual key-locked headless
+cue playback at 1.08 tempo reaching its final cue on the next callback and then
+advancing without queued retriggers. Mixtrack hardware listening retest pending.
+
+fcScript follow-up (3 November 2026): the former windows-controller-foundation
+branch was merged into main and removed remotely. Continue from main's scripting
+and DDJ-GRV6 foundation. Key-lock, both tempo-range buttons and eject now use
+the common skin-button dispatcher, also reused by Play. New do_action commands:
+key_lock_on/off, toggle_key_lock and cycle_tempo_range. Toggles/cycles use current
+session state; tempo range cycling preserves speed. Headless engine tests cover
+all decks, range wrap, role rejection and isolation; offline controller tests
+cover press-edge deduplication, release and fresh state on the next press.
+Sync, cue gestures, tempo-return ramp and remaining controls still need conversion.
+
 fcScript follow-up (2 November 2026): continued on codex/windows-controller-foundation,
 which holds the scripting foundation ahead of main. Two-deck pitch dragging,
 four-deck tempo-knob dragging and tempo scrolling now use Program::set_param

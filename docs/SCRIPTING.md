@@ -52,8 +52,11 @@ target, and bus parameters require `mixer`. Master, sampler and headphone
 gain retain the existing squared knob curve.
 
 `do_action(target, action)` is for discrete commands. The currently accepted
-actions are `play`, `pause`, `toggle_play`, and `unload`. `toggle_play` reads
-the latest session state at execution time. These actions occur once per
+transport actions are `play`, `pause`, `toggle_play`, and `unload`. Deck setup
+actions are `key_lock_on`, `key_lock_off`, `toggle_key_lock`, and
+`cycle_tempo_range`. The cycle advances Low → Medium → High → Wide → Low
+without changing the current tempo. `toggle_play`, `toggle_key_lock` and
+`cycle_tempo_range` read the latest session state at execution time. These actions occur once per
 invocation; a button binding must trigger on its press edge, not on every
 repeated MIDI packet. Momentary controls such as cue preview need an explicit
 press/release contract and are not yet supported by `do_action`.
@@ -65,8 +68,10 @@ The two-deck pitch fader, four-deck tempo knob and tempo scroll gestures use
 `set_param` with `tempo`. Each gesture supplies a bipolar value; fcScript reads
 the current deck range at invocation time. The fader retains its downward-fast
 direction, the knob retains its upward-fast direction, and scrolling retains
-its 0.1 percentage-point step. Sync, tempo-range selection and the gradual
-return-to-zero ramp still use their existing protocol paths.
+its 0.1 percentage-point step. Both layouts' tempo-range buttons use
+`cycle_tempo_range`; the key-lock and eject buttons use `toggle_key_lock` and
+`unload`. Sync and the gradual return-to-zero ramp still use their existing
+protocol paths.
 
 Controller profiles can use a `script` binding. The profile is validated and
 compiled when loaded, even without hardware connected. Note scripts run once
@@ -167,7 +172,8 @@ Do not rely on a direct callback into one skin. A view may update its local
 drag indicator immediately, then reconcile it with the next state snapshot.
 
 **Current boundary:** built-in mixer controls, tempo gestures, the deck play
-button and the Space shortcut use fcScript. Skin script dispatches and
+button, key-lock, tempo-range and eject buttons, and the Space shortcut use
+fcScript. Skin script dispatches and
 controller actions now enter one app action path, which retains load, cue and
 transport bookkeeping and applies actions under the host role. The origin is
 available there for diagnostics. Controller profiles accept text script

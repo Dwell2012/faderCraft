@@ -169,13 +169,11 @@ impl Shell {
                         })
                         .tooltip("Master tempo: preserve musical key when changing speed.")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            let on = this
-                                .engine
-                                .as_mut()
-                                .map(|e| !e.state().decks[deck].key_lock)
-                                .unwrap_or(true);
-                            this.send(deck, DeckAction::SetKeyLock { on });
-                            cx.notify();
+                            this.run_skin_button(
+                                deck,
+                                djcraft_protocol::script::ButtonAction::ToggleKeyLock,
+                                cx,
+                            );
                         })),
                 ),
             )
