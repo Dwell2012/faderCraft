@@ -124,8 +124,13 @@ renaming are separate operations that present changes for review.
 
 ## Licence and attribution
 
-MIT; see [LICENSE](LICENSE). faderCraft builds on the original
-[DJCraft project by danielchim](https://github.com/danielchim/djcraft).
+MIT; see [LICENSE](LICENSE). Ian Llewellyn holds copyright in faderCraft's
+additions and modifications. Daniel Chim's copyright notice remains for code
+retained from the original [DJCraft project](https://github.com/danielchim/djcraft),
+including portions of the audio engine, desktop interface, library, analysis
+and control protocol. The original Git history records that foundation and
+subsequent contributions.
+
 Dependency licences and sources are checked with `cargo deny check licenses sources`.
 See the ASIO and stem setup documents for the separate SDK and model requirements.
 
