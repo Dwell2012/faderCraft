@@ -33,7 +33,10 @@ jobs:
           sudo apt-get install -y libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libxcb1-dev libx11-xcb-dev libfontconfig1-dev libssl-dev \
             libvulkan-dev libclang-dev
+      # Linux builds and tests fit, but the cache action's post-job metadata
+      # fetch can exhaust the runner disk after they finish.
       - uses: Swatinem/rust-cache@v2
+        if: runner.os != 'Linux'
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --locked
 
