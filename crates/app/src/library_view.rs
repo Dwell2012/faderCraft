@@ -2933,7 +2933,7 @@ impl LibraryView {
         self.reload(cx);
     }
 
-    /// Asks for playlist files or a VirtualDJ folder and imports them.
+    /// Asks for playlist files or a folder containing playlists and imports them.
     fn import_playlists(&mut self, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -3354,7 +3354,7 @@ impl LibraryView {
                             .outline()
                             .icon(IconName::Download)
                             .label("Import playlists")
-                            .tooltip("From a rekordbox XML export, a VirtualDJ folder or M3U files")
+                            .tooltip("From a rekordbox XML export, a playlist folder or M3U files")
                             .on_click(cx.listener(|this, _, _, cx| this.import_playlists(cx))),
                     )
                     .child(
@@ -3432,7 +3432,7 @@ impl LibraryView {
                     .outline()
                     .icon(IconName::Download)
                     .label("Import playlists")
-                    .tooltip("From a rekordbox XML export, a VirtualDJ folder or M3U files")
+                    .tooltip("From a rekordbox XML export, a playlist folder or M3U files")
                     .on_click(cx.listener(|this, _, _, cx| this.import_playlists(cx))),
             )
             .child(self.export_button(cx))

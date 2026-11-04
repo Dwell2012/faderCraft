@@ -32,11 +32,12 @@ pub struct ImportSummary {
 /// Reads playlists from any supported place:
 ///
 /// - a rekordbox collection exported as XML,
-/// - a VirtualDJ folder (the one holding its `Playlists` and `MyLists`),
+/// - a folder containing `.vdjfolder`, `.m3u` or `.m3u8` files (including a
+///   VirtualDJ home folder holding `Playlists` and `MyLists`),
 /// - a single `.vdjfolder`, `.m3u` or `.m3u8` playlist file.
 pub fn read_playlists(path: &Path) -> Result<Vec<ImportedPlaylist>> {
     if path.is_dir() {
-        return virtualdj_folder(path);
+        return playlist_folder(path);
     }
     let extension = path
         .extension()
@@ -197,9 +198,9 @@ fn m3u(text: &str, folder: Option<&Path>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Every playlist under a VirtualDJ home folder. Its `History` folder holds
-/// one automatic list per day and is left out.
-fn virtualdj_folder(home: &Path) -> Result<Vec<ImportedPlaylist>> {
+/// Every supported playlist under a selected folder. A VirtualDJ home folder
+/// contributes Playlists and MyLists, but excludes its automatic History.
+fn playlist_folder(home: &Path) -> Result<Vec<ImportedPlaylist>> {
     fn walk(dir: &Path, prefix: &str, playlists: &mut Vec<ImportedPlaylist>) -> Result<()> {
         let mut entries: Vec<_> = std::fs::read_dir(dir)?
             .flatten()
@@ -243,8 +244,11 @@ fn virtualdj_folder(home: &Path) -> Result<Vec<ImportedPlaylist>> {
         }
     }
     if !found_any {
+        walk(home, "", &mut playlists)?;
+    }
+    if playlists.is_empty() {
         return Err(Error::Import(format!(
-            "{} has no Playlists or MyLists folder, so it does not look like a VirtualDJ folder",
+            "{} contains no .vdjfolder, .m3u or .m3u8 playlists",
             home.display()
         )));
     }

@@ -972,6 +972,20 @@ fn imports_a_virtualdj_folder() {
 }
 
 #[test]
+fn imports_a_selected_playlist_folder() {
+    let folder = TempDir::new("playlist-folder");
+    std::fs::write(folder.0.join("Set.m3u8"), "#EXTM3U\ntrack.mp3\n").unwrap();
+    std::fs::create_dir_all(folder.0.join("Events")).unwrap();
+    std::fs::write(folder.0.join("Events/Party.m3u"), "../track.mp3\n").unwrap();
+
+    let playlists = read_playlists(&folder.0).unwrap();
+    assert_eq!(playlists.len(), 2);
+    assert_eq!(playlists[0].name, "Events / Party");
+    assert_eq!(playlists[1].name, "Set");
+    assert_eq!(playlists[1].files, vec![folder.0.join("track.mp3")]);
+}
+
+#[test]
 fn editing_a_track_writes_its_tags() {
     let dir = TempDir::new("edit");
     write_tagged(
