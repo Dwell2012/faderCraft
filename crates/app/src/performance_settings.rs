@@ -14,6 +14,7 @@ pub struct PerformanceSettings {
     pub stem_effects: [[EffectState; 4]; DECKS],
     pub effect_beats: [f32; DECKS],
     pub cue_quantize: [bool; DECKS],
+    pub general_quantize: [bool; DECKS],
     pub cue_quantize_window: [f64; DECKS],
 }
 
@@ -26,6 +27,7 @@ impl Default for PerformanceSettings {
             stem_effects: std::array::from_fn(|_| djcraft_protocol::default_stem_effects()),
             effect_beats: [djcraft_protocol::default_effect_beats(); DECKS],
             cue_quantize: [true; DECKS],
+            general_quantize: [true; DECKS],
             cue_quantize_window: [0.05; DECKS],
         }
     }
@@ -59,6 +61,15 @@ impl PerformanceSettings {
 
     pub fn apply_effects(&self, engine: &mut djcraft_engine::Engine) {
         for deck in 0..DECKS {
+            let _ = engine.apply(
+                Role::Host,
+                Action::Deck {
+                    deck: deck as u8,
+                    action: DeckAction::SetQuantize {
+                        enabled: self.general_quantize[deck],
+                    },
+                },
+            );
             let mut colour_fx = self.colour_fx[deck];
             // Restore the combination, but require a fresh gesture to start a
             // standalone noise generator after launching the application.
@@ -120,6 +131,7 @@ impl PerformanceSettings {
                 self.colour_fx[deck] = state.colour_fx;
                 self.stem_effects[deck] = state.stem_effects;
                 self.effect_beats[deck] = state.effect_beats;
+                self.general_quantize[deck] = !state.quantize_disabled;
             }
         }
         if let Some(modes) = modes {
@@ -142,6 +154,7 @@ mod tests {
         let mut saved = PerformanceSettings::default();
         saved.scratch_modes = [Some(true), Some(false), None, Some(true)];
         saved.cue_quantize = [false, true, false, true];
+        saved.general_quantize = [false, true, false, true];
         saved.cue_quantize_window = [0.05, 0.1, 0.2, 0.3];
         saved.colour_fx[1] = djcraft_protocol::ColourFxState {
             selected: 7,
@@ -170,6 +183,14 @@ mod tests {
         assert_eq!(state.decks[2].effects, saved.effects[2]);
         assert_eq!(state.decks[2].stem_effects, saved.stem_effects[2]);
         assert_eq!(state.decks[2].effect_beats, 2.);
+        assert_eq!(
+            state
+                .decks
+                .iter()
+                .map(|deck| deck.quantize_disabled)
+                .collect::<Vec<_>>(),
+            vec![true, false, true, false]
+        );
         assert!(state.decks.iter().all(|deck| deck.track.is_none()));
         let mut captured = restored.clone();
         assert!(!captured.capture(Some(&state), Some([None; DECKS])));

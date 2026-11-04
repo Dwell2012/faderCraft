@@ -87,6 +87,7 @@ struct DeckControl {
     error: Option<String>,
     tempo: f64,
     key_lock: bool,
+    quantize_enabled: bool,
     key_shift: f32,
     volume: f32,
     trim_db: f32,
@@ -287,6 +288,7 @@ impl Engine {
                 error: None,
                 tempo: 1.0,
                 key_lock: false,
+                quantize_enabled: true,
                 tempo_range: Default::default(),
                 key_shift: 0.,
                 volume: 1.0,
@@ -383,6 +385,12 @@ impl Engine {
     /// The track loaded on a deck, for drawing its waveform.
     pub fn track(&self, deck: usize) -> Option<&Arc<Track>> {
         self.decks.get(deck)?.track.as_ref()
+    }
+
+    pub fn quantize_enabled(&self, deck: usize) -> bool {
+        self.decks
+            .get(deck)
+            .is_some_and(|control| control.quantize_enabled)
     }
 
     /// Explain why Rhythm Shift cannot yet start on this deck.
@@ -885,7 +893,7 @@ impl Engine {
                     pattern,
                     beat: beat_seconds * self.sample_rate as f64,
                     first: first_beat * self.sample_rate as f64,
-                    quantize,
+                    quantize: quantize && self.decks[deck].quantize_enabled,
                     over,
                 })
             }
@@ -1284,6 +1292,10 @@ impl Engine {
                 self.decks[deck].key_lock = on;
                 Ok(())
             }
+            DeckAction::SetQuantize { enabled } => {
+                self.decks[deck].quantize_enabled = enabled;
+                Ok(())
+            }
             DeckAction::SetVolume { level } => {
                 let level = unit_level(level)?;
                 self.send(Command::Volume { deck, level })?;
@@ -1548,6 +1560,7 @@ impl Engine {
                 .iter()
                 .zip(&self.shared.decks)
                 .map(|(control, shared)| DeckState {
+                    quantize_disabled: !control.quantize_enabled,
                     rhythm_shift: control.rhythm_shift,
                     rhythm_gain: control.rhythm_gain,
                     key_lock_protection_db: shared.protection_db(),

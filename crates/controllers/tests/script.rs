@@ -37,6 +37,11 @@ fn deck_setup_script_buttons_run_once_per_press_and_read_latest_state() {
             DeckAction::SetKeyLock { on: false },
         ),
         (
+            "toggle_quantize",
+            DeckAction::SetQuantize { enabled: false },
+            DeckAction::SetQuantize { enabled: true },
+        ),
+        (
             "cycle_tempo_range",
             DeckAction::SetTempoRange {
                 range: djcraft_protocol::TempoFaderRange::Medium,
@@ -66,6 +71,7 @@ fn deck_setup_script_buttons_run_once_per_press_and_read_latest_state() {
             );
             match expected {
                 DeckAction::SetKeyLock { on } => state.decks[1].key_lock = on,
+                DeckAction::SetQuantize { enabled } => state.decks[1].quantize_disabled = !enabled,
                 DeckAction::SetTempoRange { range } => state.decks[1].tempo_range = range,
                 _ => unreachable!(),
             }
@@ -295,7 +301,7 @@ fn fourteen_bit_tempo_waits_for_both_halves_and_preserves_center() {
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 85);
+    assert_eq!(profile.mappings.len(), 189);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -344,4 +350,116 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
         bridge.take_commands(),
         vec![HostCommand::Browse { steps: -1 }]
     );
+}
+
+#[test]
+fn grv6_quantize_buttons_toggle_each_deck_and_report_led_state() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+    for deck in 0..4u8 {
+        let source = Source::Note {
+            channel: deck,
+            number: 53,
+        };
+        assert_eq!(
+            bridge.process("DDJ-GRV6", Event { source, value: 127 }, &state),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::SetQuantize { enabled: false },
+            }]
+        );
+        bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+        assert!(
+            bridge
+                .state_feedback("DDJ-GRV6", &state, 0, &[None; 4])
+                .contains(&[0x90 | deck, 53, 100])
+        );
+        state.decks[deck as usize].quantize_disabled = true;
+        assert!(
+            bridge
+                .state_feedback("DDJ-GRV6", &state, 0, &[None; 4])
+                .contains(&[0x90 | deck, 53, 0])
+        );
+    }
+}
+
+#[test]
+fn grv6_hot_cue_pads_recall_delete_and_follow_saved_led_state() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+    for deck in 0..4u8 {
+        let slot = 7u8;
+        state.decks[deck as usize].hot_cues[slot as usize] = Some(djcraft_protocol::HotCue {
+            seconds: 1.,
+            loop_end: None,
+        });
+        let normal = Source::Note {
+            channel: 7 + deck * 2,
+            number: slot,
+        };
+        let shifted = Source::Note {
+            channel: 8 + deck * 2,
+            number: slot,
+        };
+        assert_eq!(
+            bridge.process(
+                "DDJ-GRV6",
+                Event {
+                    source: normal,
+                    value: 127
+                },
+                &state
+            ),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::TriggerHotCue {
+                    slot,
+                    play: true,
+                    loop_length: None,
+                },
+            }]
+        );
+        bridge.process(
+            "DDJ-GRV6",
+            Event {
+                source: normal,
+                value: 0,
+            },
+            &state,
+        );
+        let led = [0x90 | (7 + deck * 2), slot, 100];
+        assert!(
+            bridge
+                .state_feedback("DDJ-GRV6", &state, 0, &[None; 4])
+                .contains(&led)
+        );
+        let mut cleared = state.decks[deck as usize].hot_cues;
+        cleared[slot as usize] = None;
+        assert_eq!(
+            bridge.process(
+                "DDJ-GRV6",
+                Event {
+                    source: shifted,
+                    value: 127
+                },
+                &state
+            ),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::SetHotCues { cues: cleared },
+            }]
+        );
+        state.decks[deck as usize].hot_cues = cleared;
+        assert!(
+            bridge
+                .state_feedback("DDJ-GRV6", &state, 0, &[None; 4])
+                .contains(&[led[0], led[1], 0])
+        );
+    }
 }

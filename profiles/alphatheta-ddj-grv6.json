@@ -1163,6 +1163,1667 @@
         "type": "script",
         "program": "set_param(\"deck_d\", \"rhythm_gain\", $value)"
       }
+    },
+    {
+      "id": "deck_a-hot-cue-1",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-1-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-1-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-2",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-2-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-2-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-3",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-3-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-3-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-4",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-4-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-4-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-5",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-5-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-5-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 4
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-6",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-6-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-6-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 5
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-7",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-7-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-7-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 6
+        }
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-8",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 0,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-8-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 8,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 0,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_a-hot-cue-8-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 7,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 0,
+          "slot": 7
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-1",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-1-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-1-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-2",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-2-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-2-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-3",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-3-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-3-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-4",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-4-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-4-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-5",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-5-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-5-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 4
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-6",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-6-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-6-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 5
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-7",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-7-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-7-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 6
+        }
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-8",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 1,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-8-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 10,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 1,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_b-hot-cue-8-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 9,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 1,
+          "slot": 7
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-1",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-1-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-1-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-2",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-2-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-2-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-3",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-3-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-3-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-4",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-4-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-4-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-5",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-5-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-5-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 4
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-6",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-6-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-6-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 5
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-7",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-7-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-7-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 6
+        }
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-8",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 2,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-8-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 12,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 2,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_c-hot-cue-8-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 11,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 2,
+          "slot": 7
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-1",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-1-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 0
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-1-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-2",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-2-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 1
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-2-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 1
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-3",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-3-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 2
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-3-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 2
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-4",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-4-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 3
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-4-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-5",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-5-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 4
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-5-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 4
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 4
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-6",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-6-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 5
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-6-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 5
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 5
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-7",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-7-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 6
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-7-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 6
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 6
+        }
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-8",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue",
+        "deck": 3,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-8-delete",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 14,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "hot_cue_delete",
+        "deck": 3,
+        "slot": 7
+      }
+    },
+    {
+      "id": "deck_d-hot-cue-8-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 13,
+        "number": 7
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "hot_cue",
+          "deck": 3,
+          "slot": 7
+        }
+      }
+    }
+,
+    {
+      "id": "deck_a-quantize",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_a\", \"toggle_quantize\")"
+      }
+    },
+{
+      "id": "deck_a-quantize-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "quantize",
+          "deck": 0
+        }
+      }
+    },
+{
+      "id": "deck_b-quantize",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_b\", \"toggle_quantize\")"
+      }
+    },
+{
+      "id": "deck_b-quantize-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "quantize",
+          "deck": 1
+        }
+      }
+    },
+{
+      "id": "deck_c-quantize",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_c\", \"toggle_quantize\")"
+      }
+    },
+{
+      "id": "deck_c-quantize-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "quantize",
+          "deck": 2
+        }
+      }
+    },
+{
+      "id": "deck_d-quantize",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "script",
+        "program": "do_action(\"deck_d\", \"toggle_quantize\")"
+      }
+    },
+{
+      "id": "deck_d-quantize-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 53
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "quantize",
+          "deck": 3
+        }
+      }
     }
   ]
 }

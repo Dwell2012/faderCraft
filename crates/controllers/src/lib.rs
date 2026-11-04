@@ -299,6 +299,11 @@ pub enum Binding {
         deck: u8,
         slot: u8,
     },
+    /// Delete one saved cue directly, for controllers with shifted pad notes.
+    HotCueDelete {
+        deck: u8,
+        slot: u8,
+    },
     Jog {
         config: JogConfig,
     },
@@ -356,6 +361,7 @@ pub enum LedFeedback {
     Cue { deck: u8 },
     PitchCenter { deck: u8 },
     Loop { deck: u8 },
+    Quantize { deck: u8 },
     HotCue { deck: u8, slot: u8 },
     Sample { deck: u8, slot: u8 },
     Effect { deck: u8, slot: u8 },
@@ -521,7 +527,7 @@ impl Profile {
                     .validate(m.source)
                     .map_err(|e| format!("{}: {e}", m.id))?;
             }
-            if let Binding::HotCue { slot, .. } = m.binding
+            if let Binding::HotCue { slot, .. } | Binding::HotCueDelete { slot, .. } = m.binding
                 && (usize::from(slot) >= djcraft_protocol::HOT_CUES
                     || !matches!(m.source, Source::Note { .. }))
             {
@@ -727,6 +733,7 @@ impl Bridge {
                     | LedFeedback::Cue { deck }
                     | LedFeedback::PitchCenter { deck }
                     | LedFeedback::Loop { deck } => (deck, 0),
+                    LedFeedback::Quantize { deck } => (deck, 0),
                     LedFeedback::HotCue { deck, slot }
                     | LedFeedback::Sample { deck, slot }
                     | LedFeedback::Effect { deck, slot } => (deck, usize::from(slot)),
@@ -757,6 +764,7 @@ impl Bridge {
                         }
                         LedFeedback::PitchCenter { .. } => (s.tempo - 1.).abs() < 0.001,
                         LedFeedback::Loop { .. } => s.loop_region.is_some(),
+                        LedFeedback::Quantize { .. } => !s.quantize_disabled,
                         LedFeedback::HotCue { .. } => {
                             let populated = s.hot_cues.get(slot).is_some_and(Option::is_some);
                             if self.delete_modes.contains(&(port.to_owned(), deck)) {
@@ -1025,9 +1033,9 @@ impl Bridge {
             memory.down = down;
             if rising {
                 let mode = match &mapping.binding {
-                    Binding::HotCue { deck, .. } | Binding::HotCueDeleteMode { deck } => {
-                        Some((*deck, PadMode::HotCues))
-                    }
+                    Binding::HotCue { deck, .. }
+                    | Binding::HotCueDelete { deck, .. }
+                    | Binding::HotCueDeleteMode { deck } => Some((*deck, PadMode::HotCues)),
                     Binding::HostButton {
                         press: HostCommand::LoopPad { deck, .. },
                         ..
@@ -1245,6 +1253,17 @@ impl Bridge {
                         Some(Action::Deck {
                             deck: *deck,
                             action,
+                        })
+                    })
+                }
+                Binding::HotCueDelete { deck, slot } if rising => {
+                    state.decks.get(usize::from(*deck)).and_then(|local| {
+                        local.hot_cues[usize::from(*slot)]?;
+                        let mut cues = local.hot_cues;
+                        cues[usize::from(*slot)] = None;
+                        Some(Action::Deck {
+                            deck: *deck,
+                            action: DeckAction::SetHotCues { cues },
                         })
                     })
                 }

@@ -54,7 +54,10 @@ gain retain the existing squared knob curve.
 `do_action(target, action)` is for discrete commands. The currently accepted
 transport actions are `play`, `pause`, `toggle_play`, and `unload`. Deck setup
 actions are `key_lock_on`, `key_lock_off`, `toggle_key_lock`, and
-`cycle_tempo_range`. The cycle advances Low → Medium → High → Wide → Low
+`cycle_tempo_range`. Per-deck quantize uses `quantize_on`, `quantize_off`,
+and `toggle_quantize`. This is a master gate: turning it off bypasses feature
+quantize without changing Hot Cue or loop quantize preferences. Turning it on
+restores those preferences. The cycle advances Low → Medium → High → Wide → Low
 without changing the current tempo. `toggle_play`, `toggle_key_lock` and
 `cycle_tempo_range` read the latest session state at execution time. These actions occur once per
 invocation; a button binding must trigger on its press edge, not on every

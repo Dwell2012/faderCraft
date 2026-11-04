@@ -452,6 +452,9 @@ pub enum DeckAction {
     SetKeyLock {
         on: bool,
     },
+    SetQuantize {
+        enabled: bool,
+    },
     /// Transpose independently of tempo, from -12 to +12 semitones.
     SetKeyShift {
         semitones: f32,
@@ -919,6 +922,9 @@ impl TempoFaderRange {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DeckState {
+    /// False means the deck-wide quantize gate is on (including older saved states).
+    #[serde(default)]
+    pub quantize_disabled: bool,
     #[serde(default)]
     pub rhythm_shift: bool,
     #[serde(default = "default_rhythm_gain")]

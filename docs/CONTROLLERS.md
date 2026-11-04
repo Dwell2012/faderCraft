@@ -19,8 +19,18 @@ The bundled AlphaTheta DDJ-GRV6 starter is an explicit Settings > Controllers
 choice. It maps play, cue, sync, key lock, headphone cue, tempo, trim, EQ and
 volume for four decks, plus browser scroll, four deck-load buttons, crossfader,
 master and headphone controls. Its `DDJ-GRV6` MIDI port name is also used by
-the public Mixxx preset, though OS-specific names still need checking. Jog
-wheels, pads, feedback, advanced features and audio routing are not yet mapped.
+the public Mixxx preset, though OS-specific names still need checking. The
+Hot Cue pads and their saved-cue LEDs are mapped; the shifted pad messages
+delete individual cues. The four Quantize buttons toggle each deck's general
+quantize gate, and their LEDs report its state. The profile has 189 entries. Jog wheels, other pad
+modes, advanced features and audio routing still need mapping and hardware tests.
+
+The GRV6 Hot Cue page uses note 0–7 on MIDI channels 8/10/12/14 for decks
+A/B/C/D (zero-based channels 7/9/11/13 in the profile). Shifted pads arrive
+on channels 9/11/13/15 and delete the corresponding cue. Feedback uses the
+unshifted note address: a populated cue lights its pad, and deleting it clears
+the light. This is based on the supplied AlphaTheta MIDI message table and
+offline packet tests; LED behaviour has not yet been checked on the device.
 
 Hardware ownership is **not** a prerequisite for authoring a profile. For each
 device, derive MIDI addresses and value formats from the manufacturer's MIDI

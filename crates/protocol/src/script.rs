@@ -94,6 +94,9 @@ pub enum ButtonAction {
     KeyLockOn,
     KeyLockOff,
     ToggleKeyLock,
+    QuantizeOn,
+    QuantizeOff,
+    ToggleQuantize,
     CycleTempoRange,
     ToggleRhythmShift,
     RhythmShiftOn,
@@ -202,6 +205,9 @@ impl Program {
                 "key_lock_on" => ButtonAction::KeyLockOn,
                 "key_lock_off" => ButtonAction::KeyLockOff,
                 "toggle_key_lock" => ButtonAction::ToggleKeyLock,
+                "quantize_on" => ButtonAction::QuantizeOn,
+                "quantize_off" => ButtonAction::QuantizeOff,
+                "toggle_quantize" => ButtonAction::ToggleQuantize,
                 "cycle_tempo_range" => ButtonAction::CycleTempoRange,
                 "toggle_rhythm_shift" => ButtonAction::ToggleRhythmShift,
                 "rhythm_shift_on" => ButtonAction::RhythmShiftOn,
@@ -488,6 +494,18 @@ impl Program {
                     ButtonAction::Unload => DeckAction::Unload,
                     ButtonAction::KeyLockOn => DeckAction::SetKeyLock { on: true },
                     ButtonAction::KeyLockOff => DeckAction::SetKeyLock { on: false },
+                    ButtonAction::QuantizeOn => DeckAction::SetQuantize { enabled: true },
+                    ButtonAction::QuantizeOff => DeckAction::SetQuantize { enabled: false },
+                    ButtonAction::ToggleQuantize => {
+                        let deck = state
+                            .ok_or("toggle_quantize requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        DeckAction::SetQuantize {
+                            enabled: deck.quantize_disabled,
+                        }
+                    }
                     ButtonAction::ToggleKeyLock => {
                         let deck = state
                             .ok_or("toggle_key_lock requires session state")?
@@ -561,7 +579,7 @@ mod tests {
 
     #[test]
     fn deck_setup_buttons_require_state_only_for_relative_changes() {
-        for command in ["toggle_key_lock", "cycle_tempo_range"] {
+        for command in ["toggle_key_lock", "toggle_quantize", "cycle_tempo_range"] {
             let program =
                 Program::compile(&format!("do_action(\"deck_d\", \"{command}\")")).unwrap();
             assert!(program.run(ControlSource::Skin, 0.).is_err());
@@ -583,6 +601,17 @@ mod tests {
                         deck: 3,
                         action: DeckAction::SetKeyLock { on }
                     },
+                }
+            );
+        }
+        for (command, enabled) in [("quantize_on", true), ("quantize_off", false)] {
+            let program =
+                Program::compile(&format!("do_action(\"deck_d\", \"{command}\")")).unwrap();
+            assert_eq!(
+                program.run(ControlSource::Custom, 0.).unwrap().action,
+                Action::Deck {
+                    deck: 3,
+                    action: DeckAction::SetQuantize { enabled },
                 }
             );
         }
