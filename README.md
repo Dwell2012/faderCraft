@@ -15,32 +15,37 @@ for implemented features, limitations, and the broader roadmap.
 
 - **Performance:** switch between two and four decks, with layered waveforms,
   beat grids, tempo control, key lock, scratching, channel EQ, crossfader and
-  headphone cueing. Windows output includes WASAPI exclusive and installed ASIO
-  drivers; see [WASAPI](docs/WASAPI.md) and [ASIO setup](docs/ASIO.md).
+  headphone cueing. Both layouts offer a tempo-range menu and per-deck quantize
+  control; the four-deck layout has its own compact mixer and deck controls.
+  Windows output includes WASAPI exclusive and installed ASIO drivers; see
+  [WASAPI](docs/WASAPI.md) and [ASIO setup](docs/ASIO.md).
 - **Performance tools:** hot cues, loops, effects, key-shift pads and a polyphonic
-  sampler with named banks and bundled CC0 drum/FX sounds. See [pads](docs/PADS.md), [loops](docs/LOOPS.md) and
-  [effects](docs/EFFECTS.md).
+  sampler with named banks and bundled CC0 drum/FX sounds. See
+  [pads](docs/PADS.md), [loops](docs/LOOPS.md) and [effects](docs/EFFECTS.md).
+  Rhythm Shift can replace a prepared drum stem with a beat-synced groove and
+  trigger rolls; see [feature status](docs/FEATURES.md).
 - **Automix:** playlist playback, loudness matching and intro-aware EQ
   transitions, with saved preparation overrides. See [Automix](docs/AUTOMIX.md)
   and [track preparation](docs/PREPARATION.md). Automatic musical analysis remains
   an estimate and needs checking against the tracks you play.
 - **Stems:** local separation into vocals, instruments, bass and drums, with
   cached results, stem controls and waveform overlays. Fast and Detailed models
-  and GPU-preferred or CPU preparation are available. The optional Python runtime
-  and model downloads are described in [stem setup](docs/STEMS.md).
+  can be downloaded in Audio settings. Native ONNX Runtime performs separation
+  without Python or PyTorch; see [stem setup](docs/STEMS.md).
 - **Library:** searchable, sortable tracks; background scanning and folder
   watching; duplicate detection, missing-file relinking, artwork, metadata and
   played history. Supported audio formats include MP3, FLAC, WAV, AIFF, M4A,
   OGG and Opus.
-- **Playlists:** folders, nested sublists, smart playlists, and imports from
-  rekordbox XML, VirtualDJ folders and M3U files.
+- **Playlists and crates:** ordered playlists allow a track more than once;
+  crates contain each track once and can have nested sub-crates. Smart playlists
+  and imports from rekordbox XML, VirtualDJ folders and M3U files are available.
 - **Metadata:** online lookup through MusicBrainz, iTunes, Discogs and AcoustID,
   plus reviewed tag editing, file renaming and undo. Online lookups contact the
   selected provider; stem separation processes audio locally.
-- **Controllers:** a MIDI mapping bridge and a bundled Numark Mixtrack Pro II
-  starter profile. See [controller setup and limitations](docs/CONTROLLERS.md).
-  This is not blanket compatibility with every Mixtrack model; Pioneer XDJ-RX3
-  integration remains a development target.
+- **Controllers:** a MIDI mapping bridge with bundled Numark Mixtrack Pro II
+  and AlphaTheta DDJ-GRV6 starter profiles. The GRV6 profile includes four-deck
+  Hot Cue pads and quantize buttons, but still needs hardware verification and
+  more controls mapped. See [controller setup and limitations](docs/CONTROLLERS.md).
 
 Radio broadcasting, remote back-to-back sessions and the plugin system remain
 roadmap features. Hardware support and analysis accuracy are still being refined.
@@ -66,14 +71,16 @@ Once those prerequisites are installed:
 cargo run --locked
 # Or load tracks onto the first two decks:
 cargo run --locked -- one.mp3 two.mp3
+# Skip stem model preloading for a quick UI check:
+cargo run --locked -- -quick
 ```
 
 The development shell sets `DJCRAFT_DATA_DIR` to an isolated development library.
 For the Numark starter profile, use `./tools/run-mixtrack.ps1` as described in
 [controller setup](docs/CONTROLLERS.md).
 
-The first fcScript control command and its current limits are documented in
-[fcScript](docs/SCRIPTING.md).
+The fcScript parameter and action commands and their current limits are
+documented in [fcScript](docs/SCRIPTING.md).
 
 The CI workflow builds on Windows, Linux and macOS. Linux development packages
 are listed in [.github/workflows/ci.yml](.github/workflows/ci.yml); this does not
