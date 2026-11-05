@@ -1,5 +1,8 @@
 # Codex handover
 
+Analysis progress/priority (4 November 2026): a shared queue promotes loaded library tracks, including in-flight work. A reserved priority worker prevents all background workers parking without a worker available for the deck. Background workers pause at decode/DSP stage boundaries and retain intermediate work; results are saved serially before priority is cleared. Both views show the analysis status strip with Check pending. Compact playlist import now emits Changed so the full Library starts analysis. Existing files and completed analysis are preserved. Restart is needed to use the change.
+
+
 Hot-cue input backlog (4 November 2026): Controllers::process used to synchronously
 force the full LED bank on each mapped note edge before returning its action.
 Rapid pad presses/releases amplified output traffic and could delay later input.

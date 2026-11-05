@@ -40,11 +40,12 @@ fn main() {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
         let cue = std::env::args().nth(5).and_then(|v| v.parse().ok());
+        let booth = std::env::args().nth(6).and_then(|v| v.parse().ok());
         match djcraft_engine::Engine::with_routing(
             true,
             Some(&device),
             buffer,
-            djcraft_engine::OutputRouting { master, cue },
+            djcraft_engine::OutputRouting { master, cue, booth },
         ) {
             Ok(_engine) => {
                 std::thread::sleep(std::time::Duration::from_millis(250));

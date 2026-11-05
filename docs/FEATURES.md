@@ -1,5 +1,8 @@
 # djcraft feature list
 
+- [x] Library analysis progress remains visible in Library and Perform. Deck loads promote pending tracks and pause other workers between DSP stages, then resume. Playlist imports notify the analysis owner; Check pending retries an idle/error pass.
+
+
 - [x] Controller LED feedback batches after input actions: rapid hot-cue edges
       refresh the affected lamp once per drain instead of forcing the full LED
       bank for every press/release. Regression coverage includes a 32-hit burst
@@ -363,7 +366,7 @@ Feature set modelled on Mixed In Key 10.
       (hardware listening verification remains pending).
 - [~] Mirrored channel meters and separate L/R master peak meters with clip indicators (output still
       hard-clips; a transparent master limiter is not implemented)
-- [~] Audio device, buffer and separate master/headphone stereo output pairs
+- [~] Audio device, buffer and separate master/headphone/booth stereo output pairs
       (restart required; exclusive WASAPI remains stereo; no separate-device cue).
 
 ### Core effects
