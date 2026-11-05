@@ -26,6 +26,8 @@ pub enum HostCommand {
     Cue { deck: u8, pressed: bool },
     SelectDeck { deck: u8 },
     ToggleHeadphoneCue { deck: u8 },
+    ToggleSlip { deck: u8 },
+    ToggleVinyl { deck: u8 },
     Stutter { deck: u8 },
     AutoLoop { deck: u8, beats: u8 },
     LoopPad { deck: u8, pad: u8, alternate: bool },
@@ -40,6 +42,8 @@ impl HostCommand {
             | Self::Cue { deck, .. }
             | Self::SelectDeck { deck }
             | Self::ToggleHeadphoneCue { deck }
+            | Self::ToggleSlip { deck }
+            | Self::ToggleVinyl { deck }
             | Self::Stutter { deck }
             | Self::AutoLoop { deck, .. }
             | Self::LoopPad { deck, .. }
@@ -674,6 +678,9 @@ impl Bridge {
         let mut modes = [None; djcraft_protocol::DECKS];
         for mapping in &self.profile.mappings {
             if let Binding::Jog { config } = &mapping.binding {
+                if !config.mode_controlled && config.scratch_toggle.is_none() {
+                    continue;
+                }
                 modes[usize::from(config.deck)] = Some(
                     self.jogs
                         .get(&mapping.id)
@@ -682,6 +689,24 @@ impl Bridge {
             }
         }
         modes
+    }
+
+    pub fn set_vinyl_mode(&mut self, deck: u8, enabled: bool) -> Vec<Action> {
+        let mut actions = Vec::new();
+        for mapping in &mut self.profile.mappings {
+            let Binding::Jog { config } = &mut mapping.binding else {
+                continue;
+            };
+            if config.deck != deck || (!config.mode_controlled && config.scratch_toggle.is_none()) {
+                continue;
+            }
+            config.scratch_enabled = enabled;
+            if let Some(jog) = self.jogs.get_mut(&mapping.id) {
+                actions.extend(jog.cancel(deck));
+                jog.set_enabled(enabled);
+            }
+        }
+        actions
     }
 
     /// Arm one absolute reading per mapping after a verified hardware dump
@@ -1239,35 +1264,49 @@ impl Bridge {
                 }
                 Binding::HotCue { deck, slot } if rising => {
                     state.decks.get(usize::from(*deck)).and_then(|local| {
-                        let cue = *local.hot_cues.get(usize::from(*slot))?;
                         let action = if self.delete_modes.contains(&(port.to_owned(), *deck)) {
                             let mut cues = local.hot_cues;
                             cues[usize::from(*slot)] = None;
                             DeckAction::SetHotCues { cues }
-                        } else if cue.is_some() {
-                            DeckAction::TriggerHotCue {
-                                slot: *slot,
-                                play: true,
-                                loop_length: None,
-                            }
                         } else {
-                            let track = local.track.as_ref()?;
-                            let seconds = local
-                                .loop_region
-                                .map_or(local.position_seconds.max(0.), |r| r[0]);
-                            if !seconds.is_finite() || seconds >= track.loaded_seconds {
+                            let program = Program::do_action(
+                                usize::from(*deck),
+                                djcraft_protocol::script::ButtonAction::HotCue(*slot),
+                            )
+                            .ok()?;
+                            let dispatch = program
+                                .run_with_state(
+                                    djcraft_protocol::script::ControlSource::Controller,
+                                    0.,
+                                    Some(state),
+                                )
+                                .ok()?;
+                            let Action::Deck { action, .. } = dispatch.action else {
                                 return None;
-                            }
-                            let mut cues = local.hot_cues;
-                            cues[usize::from(*slot)] = Some(djcraft_protocol::HotCue {
-                                seconds,
-                                loop_end: local.loop_region.map(|r| r[1]),
-                            });
-                            DeckAction::SetHotCues { cues }
+                            };
+                            action
                         };
                         Some(Action::Deck {
                             deck: *deck,
                             action,
+                        })
+                    })
+                }
+                Binding::HotCue { deck, .. } if falling => {
+                    state.decks.get(usize::from(*deck)).and_then(|local| {
+                        local.slip_enabled.then(|| {
+                            Program::do_action(
+                                usize::from(*deck),
+                                djcraft_protocol::script::ButtonAction::ReleaseHotCue,
+                            )
+                            .expect("mapped deck is valid")
+                            .run_with_state(
+                                djcraft_protocol::script::ControlSource::Controller,
+                                0.,
+                                Some(state),
+                            )
+                            .expect("hot cue release is valid")
+                            .action
                         })
                     })
                 }

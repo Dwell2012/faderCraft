@@ -57,8 +57,11 @@ pub enum Param {
     Trim,
     Tempo,
     ColourFx,
+    Eq4,
     MasterGain,
+    BoothGain,
     Crossfader,
+    CrossfaderSharpness,
     SamplerGain,
     HeadphoneGain,
     HeadphoneMix,
@@ -76,11 +79,15 @@ impl Param {
             Self::Volume
             | Self::RhythmGain
             | Self::MasterGain
+            | Self::BoothGain
             | Self::Crossfader
+            | Self::CrossfaderSharpness
             | Self::SamplerGain
             | Self::HeadphoneGain
             | Self::HeadphoneMix => ParamDomain::Unipolar,
-            Self::Eq(_) | Self::Trim | Self::Tempo | Self::ColourFx => ParamDomain::Bipolar,
+            Self::Eq(_) | Self::Eq4 | Self::Trim | Self::Tempo | Self::ColourFx => {
+                ParamDomain::Bipolar
+            }
         }
     }
 }
@@ -97,11 +104,39 @@ pub enum ButtonAction {
     QuantizeOn,
     QuantizeOff,
     ToggleQuantize,
+    ToggleSlip,
+    HotCue(u8),
+    ReleaseHotCue,
+    ToggleColourFxSelection(u8),
+    ToggleCrossfaderLeft,
+    ToggleCrossfaderRight,
+    ToggleHeadphoneCue,
+    SetEqMode(u8),
+    CrossfaderSmooth,
+    CrossfaderEqualPower,
+    CrossfaderCut,
+    ToggleCrossfaderPower,
+    ToggleCrossfaderReverse,
+    ToggleCrossfaderDisabled,
     CycleTempoRange,
     ToggleRhythmShift,
     RhythmShiftOn,
     RhythmShiftOff,
     RhythmRoll(u8),
+}
+
+impl ButtonAction {
+    fn is_mixer(self) -> bool {
+        matches!(
+            self,
+            Self::CrossfaderSmooth
+                | Self::CrossfaderEqualPower
+                | Self::CrossfaderCut
+                | Self::ToggleCrossfaderPower
+                | Self::ToggleCrossfaderReverse
+                | Self::ToggleCrossfaderDisabled
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,7 +148,10 @@ pub enum Value {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Program {
     /// Original 0–1 EQ position syntax, retained for existing bindings.
-    LegacyEq { target: Target, band: EqBand },
+    LegacyEq {
+        target: Target,
+        band: EqBand,
+    },
     SetParam {
         target: Target,
         param: Param,
@@ -122,6 +160,12 @@ pub enum Program {
     DoAction {
         target: Target,
         action: ButtonAction,
+    },
+    SetCurve {
+        curve: crate::CrossfaderCurve,
+    },
+    SetRouting {
+        routing: crate::CrossfaderRouting,
     },
 }
 
@@ -173,8 +217,11 @@ impl Program {
                 "trim" => Param::Trim,
                 "tempo" => Param::Tempo,
                 "cfx" => Param::ColourFx,
+                "eq_4" => Param::Eq4,
                 "master_gain" => Param::MasterGain,
+                "booth_gain" => Param::BoothGain,
                 "crossfader" => Param::Crossfader,
+                "crossfader_sharpness" => Param::CrossfaderSharpness,
                 "sampler_gain" => Param::SamplerGain,
                 "headphone_gain" => Param::HeadphoneGain,
                 "headphone_mix" => Param::HeadphoneMix,
@@ -208,6 +255,28 @@ impl Program {
                 "quantize_on" => ButtonAction::QuantizeOn,
                 "quantize_off" => ButtonAction::QuantizeOff,
                 "toggle_quantize" => ButtonAction::ToggleQuantize,
+                "toggle_slip" => ButtonAction::ToggleSlip,
+                "release_hot_cue" => ButtonAction::ReleaseHotCue,
+                "toggle_crossfader_left" => ButtonAction::ToggleCrossfaderLeft,
+                "toggle_crossfader_right" => ButtonAction::ToggleCrossfaderRight,
+                "toggle_headphone_cue" => ButtonAction::ToggleHeadphoneCue,
+                "eq_classic" => ButtonAction::SetEqMode(0),
+                "eq_ezremix" => ButtonAction::SetEqMode(1),
+                "eq_modern" => ButtonAction::SetEqMode(2),
+                "eq_stems" => ButtonAction::SetEqMode(3),
+                "crossfader_smooth" => ButtonAction::CrossfaderSmooth,
+                "crossfader_equal_power" => ButtonAction::CrossfaderEqualPower,
+                "crossfader_cut" => ButtonAction::CrossfaderCut,
+                "toggle_crossfader_power" => ButtonAction::ToggleCrossfaderPower,
+                "toggle_crossfader_reverse" => ButtonAction::ToggleCrossfaderReverse,
+                "toggle_crossfader_disabled" => ButtonAction::ToggleCrossfaderDisabled,
+                "toggle_cfx_1" => ButtonAction::ToggleColourFxSelection(0),
+                "toggle_cfx_2" => ButtonAction::ToggleColourFxSelection(1),
+                "toggle_cfx_3" => ButtonAction::ToggleColourFxSelection(2),
+                "toggle_cfx_4" => ButtonAction::ToggleColourFxSelection(3),
+                "toggle_cfx_5" => ButtonAction::ToggleColourFxSelection(4),
+                "toggle_cfx_6" => ButtonAction::ToggleColourFxSelection(5),
+                "toggle_cfx_7" => ButtonAction::ToggleColourFxSelection(6),
                 "cycle_tempo_range" => ButtonAction::CycleTempoRange,
                 "toggle_rhythm_shift" => ButtonAction::ToggleRhythmShift,
                 "rhythm_shift_on" => ButtonAction::RhythmShiftOn,
@@ -216,9 +285,25 @@ impl Program {
                 "rhythm_roll_2" => ButtonAction::RhythmRoll(1),
                 "rhythm_roll_3" => ButtonAction::RhythmRoll(2),
                 "rhythm_roll_4" => ButtonAction::RhythmRoll(3),
+                name if name.starts_with("hot_cue_") => {
+                    let slot: u8 = name[8..].parse().map_err(|_| "invalid hot cue slot")?;
+                    if !(1..=16).contains(&slot) {
+                        return Err("invalid hot cue slot");
+                    }
+                    ButtonAction::HotCue(slot - 1)
+                }
                 _ => return Err("unknown action"),
             };
-            if target == Target::Mixer {
+            let mixer_action = matches!(
+                action,
+                ButtonAction::CrossfaderSmooth
+                    | ButtonAction::CrossfaderEqualPower
+                    | ButtonAction::CrossfaderCut
+                    | ButtonAction::ToggleCrossfaderPower
+                    | ButtonAction::ToggleCrossfaderReverse
+                    | ButtonAction::ToggleCrossfaderDisabled
+            );
+            if (target == Target::Mixer) != mixer_action {
                 return Err("deck action requires a deck target");
             }
             return Ok(Self::DoAction { target, action });
@@ -250,6 +335,14 @@ impl Program {
             param,
             value: Value::Input,
         })
+    }
+
+    pub fn set_curve(curve: crate::CrossfaderCurve) -> Self {
+        Self::SetCurve { curve }
+    }
+
+    pub fn set_routing(routing: crate::CrossfaderRouting) -> Self {
+        Self::SetRouting { routing }
     }
 
     pub fn set_mixer_param(param: Param) -> Result<Self, &'static str> {
@@ -295,7 +388,10 @@ impl Program {
     pub fn input_domain(self) -> ParamDomain {
         match self {
             Self::SetParam { param, .. } => param.domain(),
-            Self::LegacyEq { .. } | Self::DoAction { .. } => ParamDomain::Unipolar,
+            Self::LegacyEq { .. }
+            | Self::DoAction { .. }
+            | Self::SetCurve { .. }
+            | Self::SetRouting { .. } => ParamDomain::Unipolar,
         }
     }
 
@@ -345,6 +441,7 @@ impl Program {
             Self::LegacyEq { target, .. }
             | Self::SetParam { target, .. }
             | Self::DoAction { target, .. } => target,
+            Self::SetCurve { .. } | Self::SetRouting { .. } => Target::Mixer,
         }
     }
 
@@ -358,6 +455,7 @@ impl Program {
                 value,
             },
             Self::DoAction { action, .. } => Self::DoAction { target, action },
+            Self::SetCurve { .. } | Self::SetRouting { .. } => self,
         }
     }
 
@@ -371,13 +469,32 @@ impl Program {
         input: f32,
         state: Option<&SessionState>,
     ) -> Result<Dispatch, &'static str> {
+        if let Self::SetCurve { curve } = self {
+            return Ok(Dispatch {
+                source,
+                action: Action::Mixer {
+                    action: MixerAction::SetCrossfaderCurve { curve },
+                },
+            });
+        }
+        if let Self::SetRouting { routing } = self {
+            return Ok(Dispatch {
+                source,
+                action: Action::Mixer {
+                    action: MixerAction::SetCrossfaderRouting { routing },
+                },
+            });
+        }
         let target = self.target();
         match self {
             Self::SetParam { param, .. } if (target == Target::Mixer) != param.is_mixer() => {
                 return Err("parameter target does not match its scope");
             }
-            Self::LegacyEq { .. } | Self::DoAction { .. } if target == Target::Mixer => {
+            Self::LegacyEq { .. } if target == Target::Mixer => {
                 return Err("deck action requires a deck target");
+            }
+            Self::DoAction { action, .. } if (target == Target::Mixer) != action.is_mixer() => {
+                return Err("action target does not match its scope");
             }
             _ => {}
         }
@@ -388,6 +505,80 @@ impl Program {
                 return Err("relative target requires invocation context");
             }
         };
+        if let Self::DoAction { action, .. } = self
+            && action.is_mixer()
+        {
+            let curve = match action {
+                ButtonAction::CrossfaderSmooth => crate::CrossfaderCurve::Smooth,
+                ButtonAction::CrossfaderEqualPower => crate::CrossfaderCurve::EqualPower,
+                ButtonAction::CrossfaderCut => crate::CrossfaderCurve::Cut,
+                _ => {
+                    let current = state
+                        .ok_or("crossfader curve requires session state")?
+                        .crossfader_curve;
+                    let (sharpness, mut power, mut reverse, mut disabled) = current.parameters();
+                    match action {
+                        ButtonAction::ToggleCrossfaderPower => power = !power,
+                        ButtonAction::ToggleCrossfaderReverse => reverse = !reverse,
+                        ButtonAction::ToggleCrossfaderDisabled => disabled = !disabled,
+                        _ => unreachable!(),
+                    }
+                    crate::CrossfaderCurve::Adjustable {
+                        sharpness,
+                        power,
+                        reverse,
+                        disabled,
+                    }
+                }
+            };
+            return Ok(Dispatch {
+                source,
+                action: Action::Mixer {
+                    action: MixerAction::SetCrossfaderCurve { curve },
+                },
+            });
+        }
+        if let Self::DoAction {
+            action: ButtonAction::ToggleCrossfaderLeft | ButtonAction::ToggleCrossfaderRight,
+            ..
+        } = self
+        {
+            let state = state.ok_or("crossfader routing requires session state")?;
+            let mut routing = state.crossfader_routing;
+            let bit = 1u8 << deck;
+            if matches!(
+                self,
+                Self::DoAction {
+                    action: ButtonAction::ToggleCrossfaderLeft,
+                    ..
+                }
+            ) {
+                routing.left ^= bit;
+            } else {
+                routing.right ^= bit;
+            }
+            return Ok(Dispatch {
+                source,
+                action: Action::Mixer {
+                    action: MixerAction::SetCrossfaderRouting { routing },
+                },
+            });
+        }
+        if let Self::DoAction {
+            action: ButtonAction::ToggleHeadphoneCue,
+            ..
+        } = self
+        {
+            let state = state.ok_or("headphone cue requires session state")?;
+            let mut monitor = state.monitor;
+            monitor.cue_decks = Some(monitor.cue_mask() ^ (1 << deck));
+            return Ok(Dispatch {
+                source,
+                action: Action::Mixer {
+                    action: MixerAction::SetMonitor { monitor },
+                },
+            });
+        }
         let action = match self {
             Self::LegacyEq { band, .. } => {
                 if !input.is_finite() || !(0.0..=1.0).contains(&input) {
@@ -418,9 +609,26 @@ impl Program {
                         Param::MasterGain => MixerAction::SetMasterGain {
                             level: normalized * normalized,
                         },
+                        Param::BoothGain => MixerAction::SetBoothGain {
+                            level: normalized * normalized,
+                        },
                         Param::Crossfader => MixerAction::SetCrossfader {
                             position: normalized,
                         },
+                        Param::CrossfaderSharpness => {
+                            let current = state
+                                .ok_or("crossfader sharpness requires session state")?
+                                .crossfader_curve;
+                            let (_, power, reverse, disabled) = current.parameters();
+                            MixerAction::SetCrossfaderCurve {
+                                curve: crate::CrossfaderCurve::Adjustable {
+                                    sharpness: (normalized * 100.).round() as u8,
+                                    power,
+                                    reverse,
+                                    disabled,
+                                },
+                            }
+                        }
                         Param::SamplerGain => MixerAction::SetSamplerGain {
                             level: normalized * normalized,
                         },
@@ -445,6 +653,14 @@ impl Program {
                 let action = match param {
                     Param::Eq(band) => DeckAction::SetEq {
                         band: band.engine_index(),
+                        gain: if normalized <= 0.0 {
+                            normalized + 1.0
+                        } else {
+                            10f32.powf(normalized * 6.0 / 20.0).min(2.0)
+                        },
+                    },
+                    Param::Eq4 => DeckAction::SetEq {
+                        band: 3,
                         gain: if normalized <= 0.0 {
                             normalized + 1.0
                         } else {
@@ -496,6 +712,77 @@ impl Program {
                     ButtonAction::KeyLockOff => DeckAction::SetKeyLock { on: false },
                     ButtonAction::QuantizeOn => DeckAction::SetQuantize { enabled: true },
                     ButtonAction::QuantizeOff => DeckAction::SetQuantize { enabled: false },
+                    ButtonAction::ToggleSlip => {
+                        let deck = state
+                            .ok_or("toggle_slip requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        DeckAction::SetSlip {
+                            enabled: !deck.slip_enabled,
+                        }
+                    }
+                    ButtonAction::ReleaseHotCue => DeckAction::SlipReturn,
+                    ButtonAction::ToggleColourFxSelection(index) => {
+                        let deck_state = state
+                            .ok_or("CFX selection requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        let mut fx = deck_state.colour_fx;
+                        fx.selected ^= 1 << index;
+                        DeckAction::SetColourFx { state: fx }
+                    }
+                    ButtonAction::ToggleCrossfaderLeft | ButtonAction::ToggleCrossfaderRight => {
+                        unreachable!("handled above")
+                    }
+                    ButtonAction::ToggleHeadphoneCue => unreachable!("handled above"),
+                    ButtonAction::CrossfaderSmooth
+                    | ButtonAction::CrossfaderEqualPower
+                    | ButtonAction::CrossfaderCut
+                    | ButtonAction::ToggleCrossfaderPower
+                    | ButtonAction::ToggleCrossfaderReverse
+                    | ButtonAction::ToggleCrossfaderDisabled => unreachable!("handled above"),
+                    ButtonAction::SetEqMode(index) => DeckAction::SetEqMode {
+                        mode: match index {
+                            0 => crate::EqMode::Classic,
+                            1 => crate::EqMode::EzRemix,
+                            2 => crate::EqMode::Modern,
+                            3 => crate::EqMode::Stems,
+                            _ => return Err("invalid EQ mode"),
+                        },
+                    },
+                    ButtonAction::HotCue(slot) => {
+                        let deck_state = state
+                            .ok_or("hot_cue requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        if deck_state.hot_cues[slot as usize].is_some() {
+                            DeckAction::TriggerHotCue {
+                                slot,
+                                play: true,
+                                loop_length: None,
+                            }
+                        } else {
+                            let track = deck_state
+                                .track
+                                .as_ref()
+                                .ok_or("hot_cue requires a track")?;
+                            let seconds = deck_state
+                                .loop_region
+                                .map_or(deck_state.position_seconds.max(0.), |region| region[0]);
+                            if !seconds.is_finite() || seconds >= track.loaded_seconds {
+                                return Err("hot cue position is outside loaded audio");
+                            }
+                            let mut cues = deck_state.hot_cues;
+                            cues[slot as usize] = Some(crate::HotCue {
+                                seconds,
+                                loop_end: deck_state.loop_region.map(|region| region[1]),
+                            });
+                            DeckAction::SetHotCues { cues }
+                        }
+                    }
                     ButtonAction::ToggleQuantize => {
                         let deck = state
                             .ok_or("toggle_quantize requires session state")?
@@ -552,6 +839,7 @@ impl Program {
                 };
                 action
             }
+            Self::SetCurve { .. } | Self::SetRouting { .. } => unreachable!("handled above"),
         };
         Ok(Dispatch {
             source,
@@ -565,7 +853,9 @@ impl Param {
         matches!(
             self,
             Self::MasterGain
+                | Self::BoothGain
                 | Self::Crossfader
+                | Self::CrossfaderSharpness
                 | Self::SamplerGain
                 | Self::HeadphoneGain
                 | Self::HeadphoneMix
@@ -576,6 +866,150 @@ impl Param {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crossfader_curve_presets_and_sharpness_are_scriptable() {
+        let mut state = SessionState::default();
+        let preset = Program::compile("do_action(\"mixer\", \"crossfader_cut\")").unwrap();
+        assert_eq!(
+            preset.run(ControlSource::Controller, 0.).unwrap().action,
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve {
+                    curve: crate::CrossfaderCurve::Cut
+                }
+            }
+        );
+        state.crossfader_curve = crate::CrossfaderCurve::EqualPower;
+        let sharpness =
+            Program::compile("set_param(\"mixer\", \"crossfader_sharpness\", 0.7)").unwrap();
+        assert_eq!(
+            sharpness
+                .run_with_state(ControlSource::Controller, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve {
+                    curve: crate::CrossfaderCurve::Adjustable {
+                        sharpness: 70,
+                        power: true,
+                        reverse: false,
+                        disabled: false
+                    }
+                }
+            }
+        );
+        let reverse =
+            Program::compile("do_action(\"mixer\", \"toggle_crossfader_reverse\")").unwrap();
+        assert_eq!(
+            reverse
+                .run_with_state(ControlSource::Controller, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve {
+                    curve: crate::CrossfaderCurve::Adjustable {
+                        sharpness: 22,
+                        power: true,
+                        reverse: true,
+                        disabled: false
+                    }
+                }
+            }
+        );
+        assert_eq!(
+            Program::set_curve(crate::CrossfaderCurve::Smooth)
+                .run(ControlSource::Skin, 0.)
+                .unwrap()
+                .action,
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve {
+                    curve: crate::CrossfaderCurve::Smooth
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn mixer_extensions_resolve_from_shared_session_state() {
+        let mut state = SessionState::default();
+        state.decks = vec![crate::DeckState::default(); DECKS];
+        state.decks[0].eq_mode = crate::EqMode::EzRemix;
+        state.decks[0].stem_gains = [1., 1., 1., 1.];
+        let stems = Program::compile("set_param(\"deck_a\", \"eq_mid\", -0.5)").unwrap();
+        assert_eq!(
+            stems
+                .run_with_state(ControlSource::Skin, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetEq { band: 1, gain: 0.5 }
+            }
+        );
+        assert_eq!(
+            Program::compile("set_param(\"deck_a\", \"eq_4\", -1)")
+                .unwrap()
+                .run(ControlSource::Skin, 0.)
+                .unwrap()
+                .action,
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetEq { band: 3, gain: 0. }
+            }
+        );
+        let cfx = Program::compile("do_action(\"deck_a\", \"toggle_cfx_2\")").unwrap();
+        let Action::Deck {
+            action: DeckAction::SetColourFx { state: fx },
+            ..
+        } = cfx
+            .run_with_state(ControlSource::Controller, 0., Some(&state))
+            .unwrap()
+            .action
+        else {
+            panic!("expected CFX selection")
+        };
+        assert_eq!(fx.selected, state.decks[0].colour_fx.selected ^ 0b10);
+        let routing =
+            Program::compile("do_action(\"deck_a\", \"toggle_crossfader_right\")").unwrap();
+        assert_eq!(
+            routing
+                .run_with_state(ControlSource::Skin, 0., Some(&state))
+                .unwrap()
+                .action,
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderRouting {
+                    routing: crate::CrossfaderRouting {
+                        left: state.crossfader_routing.left,
+                        right: state.crossfader_routing.right ^ 1,
+                    }
+                }
+            }
+        );
+        let cue = Program::compile("do_action(\"deck_a\", \"toggle_headphone_cue\")").unwrap();
+        let Action::Mixer {
+            action: MixerAction::SetMonitor { monitor },
+        } = cue
+            .run_with_state(ControlSource::Controller, 0., Some(&state))
+            .unwrap()
+            .action
+        else {
+            panic!("expected monitor action")
+        };
+        assert_eq!(monitor.cue_mask(), state.monitor.cue_mask() ^ 1);
+        assert_eq!(
+            Program::compile("do_action(\"deck_a\", \"eq_stems\")")
+                .unwrap()
+                .run(ControlSource::Skin, 0.)
+                .unwrap()
+                .action,
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetEqMode {
+                    mode: crate::EqMode::Stems
+                }
+            }
+        );
+    }
 
     #[test]
     fn deck_setup_buttons_require_state_only_for_relative_changes() {
@@ -813,6 +1247,7 @@ mod tests {
         let state = SessionState::default();
         for (name, expected) in [
             ("master_gain", MixerAction::SetMasterGain { level: 0.25 }),
+            ("booth_gain", MixerAction::SetBoothGain { level: 0.25 }),
             ("crossfader", MixerAction::SetCrossfader { position: 0.5 }),
             ("sampler_gain", MixerAction::SetSamplerGain { level: 0.25 }),
         ] {

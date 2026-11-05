@@ -13,17 +13,26 @@ const CONVERT_FRAMES: usize = 1024;
 pub struct OutputRouting {
     pub master: u16,
     pub cue: Option<u16>,
+    pub booth: Option<u16>,
 }
 impl OutputRouting {
     fn required_channels(self) -> Result<u16, EngineError> {
         let invalid = || {
-            EngineError::Device("Choose distinct stereo pairs for master and headphones.".into())
+            EngineError::Device(
+                "Choose distinct stereo pairs for master, headphones and booth.".into(),
+            )
         };
-        if self.master % 2 != 0 || self.cue.is_some_and(|c| c % 2 != 0 || c == self.master) {
+        if self.master % 2 != 0
+            || self.cue.is_some_and(|c| c % 2 != 0 || c == self.master)
+            || self
+                .booth
+                .is_some_and(|b| b % 2 != 0 || b == self.master || self.cue == Some(b))
+        {
             return Err(invalid());
         }
         self.master
             .max(self.cue.unwrap_or(0))
+            .max(self.booth.unwrap_or(0))
             .checked_add(2)
             .ok_or_else(invalid)
     }
@@ -38,7 +47,8 @@ mod routing_tests {
         assert_eq!(
             OutputRouting {
                 master: 0,
-                cue: Some(2)
+                cue: Some(2),
+                booth: None,
             }
             .required_channels()
             .unwrap(),
@@ -47,7 +57,18 @@ mod routing_tests {
         assert_eq!(
             OutputRouting {
                 master: 4,
-                cue: Some(0)
+                cue: Some(0),
+                booth: None,
+            }
+            .required_channels()
+            .unwrap(),
+            6
+        );
+        assert_eq!(
+            OutputRouting {
+                master: 0,
+                cue: Some(2),
+                booth: Some(4),
             }
             .required_channels()
             .unwrap(),
@@ -57,18 +78,27 @@ mod routing_tests {
             OutputRouting {
                 master: 0,
                 cue: Some(0),
+                booth: None,
             },
             OutputRouting {
                 master: 1,
                 cue: None,
+                booth: None,
             },
             OutputRouting {
                 master: 0,
                 cue: Some(3),
+                booth: None,
             },
             OutputRouting {
                 master: u16::MAX - 1,
                 cue: None,
+                booth: None,
+            },
+            OutputRouting {
+                master: 0,
+                cue: Some(2),
+                booth: Some(2),
             },
         ] {
             assert!(routing.required_channels().is_err());
@@ -132,7 +162,10 @@ pub(crate) fn device(
         )?;
     }
     if config.channels() < required
-        && !(config.channels() == 1 && routing.master == 0 && routing.cue.is_none())
+        && !(config.channels() == 1
+            && routing.master == 0
+            && routing.cue.is_none()
+            && routing.booth.is_none())
     {
         let rate = config.sample_rate();
         config = device.supported_output_configs().map_err(|e| EngineError::Device(e.to_string()))?
@@ -240,6 +273,7 @@ where
     let channels = config.channels as usize;
     let mut stereo = vec![0f32; CONVERT_FRAMES * CHANNELS];
     let mut cue = vec![0f32; CONVERT_FRAMES * CHANNELS];
+    let mut booth = vec![0f32; CONVERT_FRAMES * CHANNELS];
     device
         .build_output_stream(
             config,
@@ -248,11 +282,17 @@ where
                     let frames = chunk.len() / channels;
                     let stereo = &mut stereo[..frames * CHANNELS];
                     let cue = &mut cue[..frames * CHANNELS];
-                    mixer.render_with_monitor(stereo, Some(cue));
-                    for ((out, input), cue) in chunk
+                    let booth = &mut booth[..frames * CHANNELS];
+                    mixer.render_with_outputs(
+                        stereo,
+                        Some(cue),
+                        routing.booth.map(|_| &mut booth[..]),
+                    );
+                    for (((out, input), cue), booth) in chunk
                         .chunks_mut(channels)
                         .zip(stereo.chunks(CHANNELS))
                         .zip(cue.chunks(CHANNELS))
+                        .zip(booth.chunks(CHANNELS))
                     {
                         out.fill(T::EQUILIBRIUM);
                         if channels == 1 {
@@ -264,6 +304,10 @@ where
                             if let Some(pair) = routing.cue {
                                 out[pair as usize] = T::from_sample(cue[0]);
                                 out[pair as usize + 1] = T::from_sample(cue[1]);
+                            }
+                            if let Some(pair) = routing.booth {
+                                out[pair as usize] = T::from_sample(booth[0]);
+                                out[pair as usize + 1] = T::from_sample(booth[1]);
                             }
                         }
                     }

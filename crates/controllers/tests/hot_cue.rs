@@ -26,6 +26,83 @@ fn apply(engine: &mut Engine, actions: Vec<Action>) {
 }
 
 #[test]
+fn mixtrack_hot_cue_is_momentary_in_slip_mode() {
+    let (mut engine, mut mixer) = Engine::headless(48_000);
+    engine
+        .load_track(
+            0,
+            Arc::new(Track::from_samples(
+                "slip cue",
+                48_000,
+                vec![0.2; 48_000 * 8],
+            )),
+        )
+        .unwrap();
+    let mut block = [0.; 960];
+    mixer.render(&mut block);
+    let mut cues = [None; djcraft_protocol::HOT_CUES];
+    cues[0] = Some(djcraft_protocol::HotCue {
+        seconds: 1.,
+        loop_end: None,
+    });
+    apply(
+        &mut engine,
+        vec![
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetHotCues { cues },
+            },
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::Seek { seconds: 2. },
+            },
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::Play,
+            },
+            Action::Deck {
+                deck: 0,
+                action: DeckAction::SetSlip { enabled: true },
+            },
+        ],
+    );
+    mixer.render(&mut block);
+    let mut bridge = bridge();
+    let press_actions = press(&mut bridge, &mut engine, 0x6d, 127);
+    assert_eq!(
+        press_actions,
+        vec![Action::Deck {
+            deck: 0,
+            action: DeckAction::TriggerHotCue {
+                slot: 0,
+                play: true,
+                loop_length: None
+            }
+        }]
+    );
+    apply(&mut engine, press_actions);
+    for _ in 0..20 {
+        mixer.render(&mut block);
+    }
+    assert!((engine.state().decks[0].position_seconds - 1.2).abs() < 0.02);
+    let release = press(&mut bridge, &mut engine, 0x6d, 0);
+    assert_eq!(
+        release,
+        vec![Action::Deck {
+            deck: 0,
+            action: DeckAction::SlipReturn
+        }]
+    );
+    apply(&mut engine, release);
+    mixer.render(&mut block);
+    assert!(
+        engine.state().decks[0].position_seconds > 2.2,
+        "{}",
+        engine.state().decks[0].position_seconds
+    );
+}
+
+#[test]
 fn rapid_hotcue_burst_reaches_last_cue_on_next_callback_without_late_retriggers() {
     let (mut engine, mut mixer) = Engine::headless(48_000);
     engine

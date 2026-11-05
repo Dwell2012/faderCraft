@@ -6,6 +6,13 @@ on:
   pull_request:
 
 jobs:
+  controller-mapping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/audit_controller_profile.py
+      - run: python3 -m unittest discover -s tools -p 'test_*.py'
+
   build:
     strategy:
       fail-fast: false

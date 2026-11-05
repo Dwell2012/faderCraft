@@ -23,6 +23,43 @@ fn monitor(engine: &mut Engine, value: MonitorState) -> Result<(), Rejection> {
 }
 
 #[test]
+fn booth_taps_the_mix_before_master_gain_and_has_independent_level() {
+    let (mut engine, mut mixer) = Engine::headless(48000);
+    engine
+        .load_track(
+            0,
+            Arc::new(Track::from_samples("booth", 48000, vec![0.2; 48000])),
+        )
+        .unwrap();
+    deck(&mut engine, 0, DeckAction::Play);
+    engine
+        .apply(
+            Role::Host,
+            Action::Mixer {
+                action: MixerAction::SetMasterGain { level: 0.0 },
+            },
+        )
+        .unwrap();
+    let mut master = [0.; 2048];
+    let mut booth = [0.; 2048];
+    mixer.render_with_outputs(&mut master, None, Some(&mut booth));
+    mixer.render_with_outputs(&mut master, None, Some(&mut booth));
+    assert!(master[1024..].iter().all(|sample| sample.abs() < 1e-6));
+    assert!(booth[1024..].iter().any(|sample| sample.abs() > 0.01));
+    engine
+        .apply(
+            Role::Host,
+            Action::Mixer {
+                action: MixerAction::SetBoothGain { level: 0.0 },
+            },
+        )
+        .unwrap();
+    mixer.render_with_outputs(&mut master, None, Some(&mut booth));
+    mixer.render_with_outputs(&mut master, None, Some(&mut booth));
+    assert!(booth[1024..].iter().all(|sample| sample.abs() < 1e-6));
+}
+
+#[test]
 fn independent_cue_toggles_sum_only_selected_decks_and_allow_all_off() {
     let (mut engine, mut mixer) = Engine::headless(48000);
     let levels = [0.05, 0.1, 0.15, 0.2];

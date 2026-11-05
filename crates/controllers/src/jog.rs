@@ -23,6 +23,8 @@ pub struct JogConfig {
     pub bend_seconds_per_tick: f64,
     pub scratch_enabled: bool,
     #[serde(default)]
+    pub mode_controlled: bool,
+    #[serde(default)]
     pub inverted: bool,
 }
 
@@ -78,6 +80,9 @@ pub(crate) struct Jog {
 impl Jog {
     pub(crate) fn enabled(&self) -> bool {
         self.enabled
+    }
+    pub(crate) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
     pub(crate) fn new(config: &JogConfig) -> Self {
         Self {
@@ -179,7 +184,7 @@ impl Jog {
         } else {
             // Preserve tiny touch/move/release bursts completed before any
             // scratch audio callback, which have no audible motion to retain.
-            self.finish(deck, true)
+            self.finish(deck, !local.slip_enabled)
         }
     }
 

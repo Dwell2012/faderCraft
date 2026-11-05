@@ -203,6 +203,7 @@ fn main() -> Result<(), String> {
                     seconds_per_tick: 0.003,
                     bend_seconds_per_tick: 0.00025,
                     scratch_enabled: false,
+                    mode_controlled: true,
                     inverted: false,
                 },
             },

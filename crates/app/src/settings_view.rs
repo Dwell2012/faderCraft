@@ -121,26 +121,45 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
-    pub fn new(
-        settings: Settings,
-        audio: SharedString,
-        controller_present: bool,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let crossfader_slider = cx.new(|_| {
+    fn curve_slider(sharpness: u8, cx: &mut Context<Self>) -> Entity<SliderState> {
+        let slider = cx.new(|_| {
             SliderState::new()
                 .min(0.)
                 .max(100.)
                 .step(1.)
-                .default_value(settings.crossfader_curve.parameters().0 as f32)
+                .default_value(sharpness as f32)
         });
-        cx.subscribe(&crossfader_slider, |this, _, event: &SliderEvent, cx| {
+        cx.subscribe(&slider, |this, _, event: &SliderEvent, cx| {
             if let SliderEvent::Change(value) = event {
                 let sharpness = value.start().round() as u8;
                 this.change_crossfader(|amount, _, _, _| *amount = sharpness, cx);
             }
         })
         .detach();
+        slider
+    }
+
+    pub fn sync_crossfader(
+        &mut self,
+        curve: djcraft_protocol::CrossfaderCurve,
+        routing: djcraft_protocol::CrossfaderRouting,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings.crossfader_curve.parameters().0 != curve.parameters().0 {
+            self.crossfader_slider = Self::curve_slider(curve.parameters().0, cx);
+        }
+        self.settings.crossfader_curve = curve;
+        self.settings.crossfader_routing = routing;
+        cx.notify();
+    }
+
+    pub fn new(
+        settings: Settings,
+        audio: SharedString,
+        controller_present: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let crossfader_slider = Self::curve_slider(settings.crossfader_curve.parameters().0, cx);
         Self {
             crossfader_slider,
             settings,
@@ -639,6 +658,9 @@ impl SettingsView {
                 let cue = self.dropdown("cue-pair", self.settings.audio_cue_pair.unwrap_or(u16::MAX), &[u16::MAX, 0, 2, 4, 6],
                     |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
                     |s, n| s.audio_cue_pair = if n == u16::MAX { None } else { Some(n) }, cx);
+                let booth = self.dropdown("booth-pair", self.settings.audio_booth_pair.unwrap_or(u16::MAX), &[u16::MAX, 0, 2, 4, 6],
+                    |n| match n { 0 => "1 / 2", 2 => "3 / 4", 4 => "5 / 6", 6 => "7 / 8", _ => "Disabled" },
+                    |s, n| s.audio_booth_pair = if n == u16::MAX { None } else { Some(n) }, cx);
                 let model = self.dropdown("stem-model", self.settings.stem_model, &StemModel::ALL,
                     StemModel::label, |s, model| s.stem_model = model, cx);
                 let fast_download = self.model_download_button(StemModel::Fast, 0, cx);
@@ -658,6 +680,7 @@ impl SettingsView {
                     self.row("Buffer size", "Smaller buffers reduce latency. Choose Driver default if the driver rejects a fixed size.", buffer, cx),
                     self.row("Master output pair", "Stereo software channels on the selected device. Changes require restart.", master, cx),
                     self.row("Headphone cue pair", "Monitors decks enabled with their headphone buttons, independently of active deck and channel faders. Use a distinct pair on the same multichannel device; ASIO recommended. Exclusive WASAPI is stereo only.", cue, cx),
+                    self.row("Booth output pair", "Pre-master stereo mix with its own level. Choose a distinct pair on the same multichannel device; changes require restart.", booth, cx),
                 ], cx), self.section("Stem preparation", stem_rows, cx)]
             }
             Page::Library => {

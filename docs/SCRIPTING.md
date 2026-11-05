@@ -28,13 +28,16 @@ must be quoted with double quotes.
 
 | Parameter | Domain | Minimum | Neutral | Maximum | State needed? |
 | --- | --- | --- | --- | --- | --- |
-| `eq_low`, `eq_mid`, `eq_high` | −1…1 | Cut at −1 | Unity at 0 | Approximately +6 dB at +1 | No; Classic EQ only |
+| `eq_low`, `eq_mid`, `eq_high` | −1…1 | Cut at −1 | Unity at 0 | Approximately +6 dB at +1 | No; engine targets EQ or stems by mode |
+| `eq_4` | −1…1 | Cut at −1 | Unity at 0 | Approximately +6 dB at +1 | No; fourth control in Stems mode |
 | `volume` | 0…1 | Silent at 0 | — | Unity at 1 | No |
 | `trim` | −1…1 | −12 dB at −1 | 0 dB at 0 | +12 dB at +1 | No; manual trim disables auto-trim |
 | `tempo` | −1…1 | Slow end at −1 | Normal speed at 0 | Fast end at +1 | Yes, for selected range |
 | `cfx` | −1…1 | Full left at −1 | Neutral at 0 | Full right at +1 | Yes, to preserve selected effect |
 | `master_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | No |
+| `booth_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | No |
 | `crossfader` (`mixer`) | 0…1 | Left at 0 | Centre at 0.5 | Right at 1 | No |
+| `crossfader_sharpness` (`mixer`) | 0…1 | Slow at 0 | — | Fast at 1 | Yes, to retain curve type, reverse and disable |
 | `sampler_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | No |
 | `headphone_gain` (`mixer`) | 0…1 | Silent at 0 | — | Unity at 1 | Yes, to retain headphone mix |
 | `headphone_mix` (`mixer`) | 0…1 | Cue at 0 | — | Master at 1 | Yes, to retain headphone gain |
@@ -55,14 +58,28 @@ gain retain the existing squared knob curve.
 transport actions are `play`, `pause`, `toggle_play`, and `unload`. Deck setup
 actions are `key_lock_on`, `key_lock_off`, `toggle_key_lock`, and
 `cycle_tempo_range`. Per-deck quantize uses `quantize_on`, `quantize_off`,
-and `toggle_quantize`. This is a master gate: turning it off bypasses feature
+and `toggle_quantize`. Mixer choices use `eq_classic`, `eq_ezremix`,
+`eq_modern`, `eq_stems`, `toggle_cfx_1` through `toggle_cfx_7`,
+`toggle_crossfader_left`, `toggle_crossfader_right`, and
+`toggle_headphone_cue` (the last three target a deck but update mixer state).
+Controller curve buttons can use `do_action("mixer", "crossfader_smooth")`,
+`crossfader_equal_power`, or `crossfader_cut`. Other curve controls use
+`toggle_crossfader_power`, `toggle_crossfader_reverse`, and
+`toggle_crossfader_disabled`. A curve knob can use
+`set_param("mixer", "crossfader_sharpness", $value)`. The Settings UI sends
+its complete adjustable curve through fcScript so the stored flags remain exact.
+`toggle_slip` changes true Slip mode. `hot_cue_1` through
+`hot_cue_16` set an empty cue or play an existing one; `release_hot_cue` returns
+to the advancing hidden playhead when Slip is enabled. UI pads and MIDI Hot Cue
+bindings both execute these fcScript actions before dispatching to the engine.
+Quantize is a master gate: turning it off bypasses feature
 quantize without changing Hot Cue or loop quantize preferences. Turning it on
 restores those preferences. The cycle advances Low → Medium → High → Wide → Low
 without changing the current tempo. `toggle_play`, `toggle_key_lock` and
 `cycle_tempo_range` read the latest session state at execution time. These actions occur once per
 invocation; a button binding must trigger on its press edge, not on every
-repeated MIDI packet. Momentary controls such as cue preview need an explicit
-press/release contract and are not yet supported by `do_action`.
+repeated MIDI packet. Momentary Hot Cues use `hot_cue_N` on press and
+`release_hot_cue` on release.
 
 The deck-focused Space shortcut uses
 `do_action("active", "toggle_play")`. It retains its existing toggle behaviour.
@@ -125,11 +142,10 @@ response users already get from the built-in EQ knobs.
 is a **0…1 knob position** with 0.5 neutral; the generic `set_param` uses
 −1…1 for EQ with 0 neutral. Both produce the same `DeckAction::SetEq`
 and then goes through normal
-engine validation and audio-thread command delivery. The engine accepts this
-action only while that deck uses **Classic EQ**. The Modern, EZ Remix and
-Stems modes use stem gains instead; `set_eq` does not silently change those
-controls. The two-deck and four-deck Classic EQ controls already use this
-same command path.
+engine validation and audio-thread command delivery. In Classic mode the
+engine adjusts traditional EQ; in EZ Remix, Modern and Stems modes the same
+action adjusts the corresponding displayed stem group. `eq_4` addresses the
+fourth group in Stems mode. Both mixer layouts use this command path.
 
 ## Errors and current API
 

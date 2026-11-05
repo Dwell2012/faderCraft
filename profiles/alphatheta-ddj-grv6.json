@@ -115,6 +115,16 @@
       "modifiers": [], "binding": { "type": "pad_mode", "deck": 0, "mode": "sampler" }
     },
     {
+      "id": "deck_a-slip", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 64 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_slip", "deck": 0 } }
+    },
+    {
+      "id": "deck_a-vinyl", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 23 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_vinyl", "deck": 0 } }
+    },
+    {
       "id": "deck_a-tempo",
       "port": "DDJ-GRV6",
       "source": {
@@ -315,6 +325,16 @@
       "id": "deck_b-sampler-mode", "port": "DDJ-GRV6",
       "source": { "kind": "note", "channel": 1, "number": 34 },
       "modifiers": [], "binding": { "type": "pad_mode", "deck": 1, "mode": "sampler" }
+    },
+    {
+      "id": "deck_b-slip", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 64 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_slip", "deck": 1 } }
+    },
+    {
+      "id": "deck_b-vinyl", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 23 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_vinyl", "deck": 1 } }
     },
     {
       "id": "deck_b-tempo",
@@ -519,6 +539,16 @@
       "modifiers": [], "binding": { "type": "pad_mode", "deck": 2, "mode": "sampler" }
     },
     {
+      "id": "deck_c-slip", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 64 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_slip", "deck": 2 } }
+    },
+    {
+      "id": "deck_c-vinyl", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 23 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_vinyl", "deck": 2 } }
+    },
+    {
       "id": "deck_c-tempo",
       "port": "DDJ-GRV6",
       "source": {
@@ -721,6 +751,16 @@
       "modifiers": [], "binding": { "type": "pad_mode", "deck": 3, "mode": "sampler" }
     },
     {
+      "id": "deck_d-slip", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 64 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_slip", "deck": 3 } }
+    },
+    {
+      "id": "deck_d-vinyl", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 23 },
+      "modifiers": [], "binding": { "type": "host_button", "press": { "command": "toggle_vinyl", "deck": 3 } }
+    },
+    {
       "id": "deck_d-tempo",
       "port": "DDJ-GRV6",
       "source": {
@@ -831,8 +871,8 @@
       "source": {
         "kind": "cc14",
         "channel": 6,
-        "msb": 9,
-        "lsb": 41
+        "msb": 8,
+        "lsb": 40
       },
       "modifiers": [],
       "binding": {
@@ -841,13 +881,20 @@
       }
     },
     {
+      "id": "mixer-booth",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 6, "msb": 9, "lsb": 41 },
+      "modifiers": [],
+      "binding": { "type": "script", "program": "set_param(\"mixer\", \"booth_gain\", $value)" }
+    },
+    {
       "id": "mixer-headphone-gain",
       "port": "DDJ-GRV6",
       "source": {
         "kind": "cc14",
         "channel": 6,
-        "msb": 12,
-        "lsb": 44
+        "msb": 13,
+        "lsb": 45
       },
       "modifiers": [],
       "binding": {
@@ -861,8 +908,8 @@
       "source": {
         "kind": "cc14",
         "channel": 6,
-        "msb": 13,
-        "lsb": 45
+        "msb": 12,
+        "lsb": 44
       },
       "modifiers": [],
       "binding": {

@@ -241,6 +241,8 @@ impl ConnectionConsent {
 pub struct Controllers {
     consent: ConnectionConsent,
     bridge: Bridge,
+    auto_profiles: Vec<Profile>,
+    auto_active: usize,
     inputs: Vec<(String, Input)>,
     releases: Vec<Action>,
     next_scan: std::time::Instant,
@@ -275,7 +277,62 @@ fn route_fx1_to_colour(profile: &mut Profile) {
     }
 }
 
+fn profile_for_settings(
+    selection: &str,
+    settings: &crate::settings::Settings,
+    scratch_modes: &[Option<bool>; djcraft_protocol::DECKS],
+) -> Result<Profile, String> {
+    let mut profile = read_mapping(selection)?;
+    if is_mixtrack_profile(&profile) && settings.controller_options_for(&profile).fx1_colour {
+        route_fx1_to_colour(&mut profile);
+    }
+    for mapping in &mut profile.mappings {
+        if let djcraft_controllers::Binding::Jog { config } = &mut mapping.binding
+            && (config.mode_controlled || config.scratch_toggle.is_some())
+            && let Some(enabled) = scratch_modes
+                .get(usize::from(config.deck))
+                .copied()
+                .flatten()
+        {
+            config.scratch_enabled = enabled;
+        }
+        if mapping.id.starts_with("headphone-cue-")
+            && let djcraft_controllers::Binding::HostButton { press, .. } = &mut mapping.binding
+            && let djcraft_controllers::HostCommand::SelectDeck { deck } = *press
+        {
+            *press = djcraft_controllers::HostCommand::ToggleHeadphoneCue { deck };
+        }
+    }
+    Ok(profile)
+}
+
+fn automatic_profile_index(profiles: &[Profile], current: usize, available: &[String]) -> usize {
+    let matches = |profile: &Profile| {
+        profile.mappings.iter().any(|mapping| {
+            available
+                .iter()
+                .filter(|port| **port == mapping.port)
+                .count()
+                == 1
+        })
+    };
+    if matches(&profiles[current]) {
+        return current;
+    }
+    let mut candidates = profiles
+        .iter()
+        .enumerate()
+        .filter(|(_, profile)| matches(profile));
+    match (candidates.next(), candidates.next()) {
+        (Some((index, _)), None) => index,
+        _ => current,
+    }
+}
+
 impl Controllers {
+    pub fn set_vinyl_mode(&mut self, deck: u8, enabled: bool) -> Vec<Action> {
+        self.bridge.set_vinyl_mode(deck, enabled)
+    }
     pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
         self.bridge.set_tempo_bpms(bpms);
     }
@@ -286,32 +343,23 @@ impl Controllers {
         if settings.controller_mapping == "@disabled" {
             return Ok(None);
         }
-        let mut profile = read_mapping(&settings.controller_mapping)?;
-        if is_mixtrack_profile(&profile) && settings.controller_options_for(&profile).fx1_colour {
-            route_fx1_to_colour(&mut profile);
-        }
-        // Upgrade only the named legacy headphone buttons; custom activation mappings stay intact.
-        for mapping in &mut profile.mappings {
-            if let djcraft_controllers::Binding::Jog { config } = &mut mapping.binding {
-                if let Some(enabled) = scratch_modes
-                    .get(usize::from(config.deck))
-                    .copied()
-                    .flatten()
-                {
-                    config.scratch_enabled = enabled;
-                }
-            }
-            if mapping.id.starts_with("headphone-cue-")
-                && let djcraft_controllers::Binding::HostButton { press, .. } = &mut mapping.binding
-                && let djcraft_controllers::HostCommand::SelectDeck { deck } = *press
-            {
-                *press = djcraft_controllers::HostCommand::ToggleHeadphoneCue { deck };
-            }
-        }
+        let profile = profile_for_settings(&settings.controller_mapping, settings, scratch_modes)?;
+        let auto_profiles = if settings.controller_mapping.is_empty()
+            && std::env::var_os("DJCRAFT_CONTROLLER_MAP").is_none()
+        {
+            vec![
+                profile.clone(),
+                profile_for_settings("@grv6", settings, scratch_modes)?,
+            ]
+        } else {
+            Vec::new()
+        };
         let bridge = Bridge::new(profile)?;
         let mut controllers = Self {
             consent: Default::default(),
             bridge,
+            auto_profiles,
+            auto_active: 0,
             inputs: Vec::new(),
             releases: Vec::new(),
             next_scan: std::time::Instant::now(),
@@ -416,6 +464,36 @@ impl Controllers {
         let Ok(available) = input_ports() else {
             return;
         };
+        if !self.auto_profiles.is_empty() {
+            let selected =
+                automatic_profile_index(&self.auto_profiles, self.auto_active, &available);
+            if selected != self.auto_active {
+                for (output, leds) in self.outputs.values_mut() {
+                    for message in leds {
+                        let mut off = *message;
+                        off[2] = 0;
+                        let _ = output.send(&off);
+                    }
+                }
+                self.outputs.clear();
+                self.state_leds.clear();
+                let releases = self.release_all();
+                self.releases.extend(releases);
+                self.inputs.clear();
+                match Bridge::new(self.auto_profiles[selected].clone()) {
+                    Ok(bridge) => {
+                        self.bridge = bridge;
+                        self.auto_active = selected;
+                        self.failed.clear();
+                        eprintln!(
+                            "Controller mapping selected: {}",
+                            self.bridge.profile().name
+                        );
+                    }
+                    Err(error) => eprintln!("Controller mapping: {error}"),
+                }
+            }
+        }
         self.consent.update(&available);
         // Names must be unambiguous; never guess between identical controllers.
         self.inputs.retain(|(name, _)| {
@@ -657,6 +735,33 @@ impl Drop for Controllers {
 mod consent_tests {
     use super::*;
     #[test]
+    fn automatic_mapping_follows_a_single_known_controller() {
+        let profiles = vec![
+            read_mapping("@bundled").unwrap(),
+            read_mapping("@grv6").unwrap(),
+        ];
+        assert_eq!(
+            automatic_profile_index(&profiles, 0, &["DDJ-GRV6".into()]),
+            1
+        );
+        assert_eq!(
+            automatic_profile_index(&profiles, 1, &["MixTrack Pro II".into()]),
+            0
+        );
+        assert_eq!(
+            automatic_profile_index(&profiles, 0, &["unknown".into()]),
+            0
+        );
+        assert_eq!(
+            automatic_profile_index(&profiles, 0, &["DDJ-GRV6".into(), "DDJ-GRV6".into()]),
+            0
+        );
+        assert_eq!(
+            automatic_profile_index(&profiles, 0, &["MixTrack Pro II".into(), "DDJ-GRV6".into()]),
+            0
+        );
+    }
+    #[test]
     fn grv6_rhythm_shift_notes_are_valid_without_hardware() {
         let profile = read_mapping("@grv6").unwrap();
         for channel in 0..4 {
@@ -857,10 +962,7 @@ pub fn controller_settings_key(profile: &Profile) -> String {
 
 pub fn mapping_choices() -> Vec<(String, String)> {
     let mut choices = vec![
-        (
-            String::new(),
-            "Automatic (installed/default mapping)".into(),
-        ),
+        (String::new(), "Automatic (detected controller)".into()),
         ("@bundled".into(), "Numark MixTrack Pro II (bundled)".into()),
         ("@grv6".into(), "AlphaTheta DDJ-GRV6 (starter)".into()),
         ("@disabled".into(), "Disabled".into()),

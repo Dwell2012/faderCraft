@@ -28,6 +28,10 @@ pub const MAX_SCRATCH_SPEED: f64 = 4.0;
 const BLOCK: usize = 512;
 /// Time constant for speed changes on the varispeed path, to avoid clicks.
 const SPEED_SMOOTHING_SECONDS: f64 = 0.004;
+const SLIP_SCRATCH: u8 = 1;
+const SLIP_LOOP: u8 = 2;
+const SLIP_CUE: u8 = 4;
+const SLIP_PAUSE: u8 = 8;
 
 pub(crate) enum Command {
     RhythmPack {
@@ -142,6 +146,13 @@ pub(crate) enum Command {
         deck: usize,
         enabled: bool,
     },
+    Slip {
+        deck: usize,
+        enabled: bool,
+    },
+    SlipReturn {
+        deck: usize,
+    },
     Loop {
         deck: usize,
         region: Option<[f64; 2]>,
@@ -232,6 +243,9 @@ pub(crate) enum Command {
         routing: CrossfaderRouting,
     },
     MasterGain {
+        level: f32,
+    },
+    BoothGain {
         level: f32,
     },
 }
@@ -363,6 +377,9 @@ struct Deck {
     loop_armed: bool,
     loop_roll: bool,
     roll_position: Option<f64>,
+    slip_enabled: bool,
+    slip_position: Option<f64>,
+    slip_flags: u8,
     loop_region: Option<[f64; 2]>,
     track: Option<Arc<Track>>,
     /// Read position in frames.
@@ -412,6 +429,28 @@ struct Deck {
 }
 
 impl Deck {
+    fn start_slip(&mut self, reason: u8) {
+        if !self.slip_enabled || (!self.playing && self.slip_position.is_none()) {
+            return;
+        }
+        if self.slip_position.is_none() {
+            self.slip_position = Some(self.audible_position());
+        }
+        self.slip_flags |= reason;
+    }
+
+    fn end_slip(&mut self, reason: u8) {
+        self.slip_flags &= !reason;
+        if self.slip_flags == 0 {
+            if let Some(position) = self.slip_position.take() {
+                self.position = position;
+                self.prepared_at = None;
+                self.stretching = false;
+                self.nudge_frames = 0.;
+            }
+        }
+    }
+
     fn render_rhythm(
         &mut self,
         out: &mut [f32],
@@ -476,6 +515,9 @@ impl Deck {
             loop_roll: false,
             loop_armed: false,
             roll_position: None,
+            slip_enabled: false,
+            slip_position: None,
+            slip_flags: 0,
             position: 0.0,
             playing: false,
             tempo: 1.0,
@@ -627,6 +669,10 @@ impl Deck {
                 return self.render(&mut out[silent * CHANNELS..]);
             }
             return false;
+        }
+        if let (Some(hidden), Some(track)) = (&mut self.slip_position, &self.track) {
+            *hidden = (*hidden + (out.len() / CHANNELS) as f64 * self.tempo)
+                .min(track.decoded_frames() as f64);
         }
         let use_stretch = (self.key_lock || self.key_shift != 0.)
             && self.scratch.is_none()
@@ -1240,6 +1286,8 @@ pub struct Mixer {
     decks: [Deck; DECKS],
     master_gain: f32,
     current_master: f32,
+    booth_gain: f32,
+    current_booth: f32,
     crossfader: f32,
     curve: CrossfaderCurve,
     routing: CrossfaderRouting,
@@ -1278,6 +1326,8 @@ impl Mixer {
             }),
             master_gain: 1.0,
             current_master: 1.,
+            booth_gain: 1.0,
+            current_booth: 1.0,
             crossfader: 0.5,
             curve: CrossfaderCurve::default(),
             routing: CrossfaderRouting::default(),
@@ -1563,6 +1613,12 @@ impl Mixer {
                 keep_loop,
             } => {
                 let deck = &mut self.decks[deck];
+                if keep_loop {
+                    deck.start_slip(SLIP_CUE);
+                    if end.is_some() {
+                        deck.start_slip(SLIP_LOOP);
+                    }
+                }
                 deck.position = frame;
                 deck.prepared_at = None;
                 if frame < 0. {
@@ -1614,6 +1670,7 @@ impl Mixer {
                 roll,
             } => {
                 let deck = &mut self.decks[deck];
+                deck.start_slip(SLIP_LOOP);
                 let resume = deck
                     .roll_position
                     .unwrap_or_else(|| deck.audible_position());
@@ -1667,6 +1724,9 @@ impl Mixer {
             }
             Command::Loop { deck, region } => {
                 let deck = &mut self.decks[deck];
+                if region.is_some() {
+                    deck.start_slip(SLIP_LOOP);
+                }
                 deck.loop_armed = false;
                 if region.is_some() && deck.loop_roll && deck.roll_position.is_none() {
                     deck.roll_position = Some(deck.audible_position());
@@ -1686,6 +1746,9 @@ impl Mixer {
                 }
                 deck.loop_region = region;
                 deck.position = loop_position(deck.position, region);
+                if region.is_none() {
+                    deck.end_slip(SLIP_LOOP);
+                }
             }
             Command::EqMode { deck, mode, eq } => {
                 self.decks[deck].eq.gains = if mode == EqMode::Classic { eq } else { [1.; 3] };
@@ -1704,6 +1767,9 @@ impl Mixer {
                 deck.loop_armed = false;
                 deck.loop_region = None;
                 deck.roll_position = None;
+                deck.slip_enabled = false;
+                deck.slip_position = None;
+                deck.slip_flags = 0;
                 deck.nudge_frames = 0.;
                 deck.position = 0.0;
                 deck.eq.reset();
@@ -1735,6 +1801,9 @@ impl Mixer {
                 deck.loop_armed = false;
                 deck.loop_region = None;
                 deck.roll_position = None;
+                deck.slip_enabled = false;
+                deck.slip_position = None;
+                deck.slip_flags = 0;
                 deck.nudge_frames = 0.;
                 deck.position = 0.;
                 deck.eq.reset();
@@ -1757,6 +1826,7 @@ impl Mixer {
             }
             Command::Play { deck } => {
                 let deck = &mut self.decks[deck];
+                deck.end_slip(SLIP_PAUSE);
                 if let Some(track) = &deck.track {
                     if track.is_complete() && deck.position >= track.frames() as f64 {
                         deck.position = 0.0;
@@ -1771,6 +1841,7 @@ impl Mixer {
                 }
             }
             Command::Pause { deck } => {
+                self.decks[deck].start_slip(SLIP_PAUSE);
                 let position = self.decks[deck].audible_position();
                 self.decks[deck].position = position;
                 self.decks[deck].stretching = false;
@@ -1895,14 +1966,38 @@ impl Mixer {
                 deck.key_lock = on;
             }
             Command::Volume { deck, level } => self.decks[deck].volume = level,
+            Command::Slip { deck, enabled } => {
+                let deck = &mut self.decks[deck];
+                deck.slip_enabled = enabled;
+                if !enabled {
+                    deck.slip_flags = 0;
+                    deck.slip_position = None;
+                }
+            }
+            Command::SlipReturn { deck } => {
+                let deck = &mut self.decks[deck];
+                if deck.slip_flags & SLIP_CUE != 0 {
+                    deck.loop_region = None;
+                    deck.loop_armed = false;
+                    deck.end_slip(SLIP_CUE | SLIP_LOOP);
+                }
+            }
             Command::Scratch { deck, speed } => {
-                self.decks[deck].nudge_frames = 0.;
-                self.decks[deck].scratch = speed;
-                self.decks[deck].scratch_position = None;
-                self.decks[deck].scratch_velocity = None;
+                let deck = &mut self.decks[deck];
+                if speed.is_some() {
+                    deck.start_slip(SLIP_SCRATCH);
+                }
+                deck.nudge_frames = 0.;
+                deck.scratch = speed;
+                deck.scratch_position = None;
+                deck.scratch_velocity = None;
+                if speed.is_none() {
+                    deck.end_slip(SLIP_SCRATCH);
+                }
             }
             Command::HoldJog { deck } => {
                 let deck = &mut self.decks[deck];
+                deck.start_slip(SLIP_SCRATCH);
                 deck.position = deck.audible_position();
                 deck.stretching = false;
                 deck.scratch = Some(0.);
@@ -1917,6 +2012,7 @@ impl Mixer {
                 velocity,
             } => {
                 let deck = &mut self.decks[deck];
+                deck.start_slip(SLIP_SCRATCH);
                 deck.scratch_velocity = velocity;
                 if let Some(track) = &deck.track {
                     if deck.scratch_position.is_none() {
@@ -1986,6 +2082,7 @@ impl Mixer {
             Command::CrossfaderCurve { curve } => self.curve = curve,
             Command::CrossfaderRouting { routing } => self.routing = routing,
             Command::MasterGain { level } => self.master_gain = level,
+            Command::BoothGain { level } => self.booth_gain = level,
             Command::SamplerGain { level } => self.sampler_gain = level,
             Command::Monitor { monitor } => self.monitor = monitor,
         }
@@ -1998,8 +2095,21 @@ impl Mixer {
 
     /// Both buses share one transport/effects pass; cue is pre-fader and pre-crossfader.
     pub fn render_with_monitor(&mut self, out: &mut [f32], mut headphones: Option<&mut [f32]>) {
+        self.render_with_outputs(out, headphones.as_deref_mut(), None);
+    }
+
+    /// Booth taps the mixed bus before master gain and has an independent level.
+    pub fn render_with_outputs(
+        &mut self,
+        out: &mut [f32],
+        mut headphones: Option<&mut [f32]>,
+        mut booth: Option<&mut [f32]>,
+    ) {
         if let Some(cue) = &headphones {
             assert_eq!(cue.len(), out.len());
+        }
+        if let Some(booth) = &booth {
+            assert_eq!(booth.len(), out.len());
         }
         while self.garbage.slots() > 0 {
             let Ok(command) = self.commands.pop() else {
@@ -2190,6 +2300,20 @@ impl Mixer {
                 }
             }
             self.current_sampler_gain = self.sampler_gain;
+            if let Some(booth_out) = booth.as_deref_mut() {
+                let start = block_index * BLOCK * CHANNELS;
+                let step = (self.booth_gain - self.current_booth) / frames as f32;
+                for (output, input) in booth_out[start..start + block.len()]
+                    .chunks_exact_mut(CHANNELS)
+                    .zip(block.chunks_exact(CHANNELS))
+                {
+                    self.current_booth += step;
+                    for c in 0..CHANNELS {
+                        output[c] = (input[c] * self.current_booth).clamp(-1., 1.);
+                    }
+                }
+            }
+            self.current_booth = self.booth_gain;
             let master_step = (self.master_gain - self.current_master) / frames as f32;
             for frame in block.chunks_exact_mut(CHANNELS) {
                 self.current_master += master_step;

@@ -55,6 +55,14 @@ pub enum EqMode {
     Stems,
 }
 impl EqMode {
+    /// Stem source order is vocals, instruments, bass, drums.
+    pub fn stem_groups(self) -> [u8; 4] {
+        match self {
+            Self::Classic | Self::Stems => [0, 1, 2, 3],
+            Self::EzRemix => [0, 1, 1, 2],
+            Self::Modern => [1, 1, 2, 0],
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Self::Classic => "Classic EQ",
@@ -455,6 +463,12 @@ pub enum DeckAction {
     SetQuantize {
         enabled: bool,
     },
+    /// Keep an inaudible playhead advancing through scratches and loops.
+    SetSlip {
+        enabled: bool,
+    },
+    /// End a momentary Slip Hot Cue and return to background playback.
+    SlipReturn,
     /// Transpose independently of tempo, from -12 to +12 semitones.
     SetKeyShift {
         semitones: f32,
@@ -537,6 +551,9 @@ pub enum MixerAction {
         seconds: f64,
     },
     SetMasterGain {
+        level: f32,
+    },
+    SetBoothGain {
         level: f32,
     },
     SetCrossfader {
@@ -839,6 +856,8 @@ pub struct SessionState {
     pub automix: AutomixState,
     pub decks: Vec<DeckState>,
     pub master_gain: f32,
+    #[serde(default = "unity_gain")]
+    pub booth_gain: f32,
     pub crossfader: f32,
     pub crossfader_curve: CrossfaderCurve,
     #[serde(default)]
@@ -925,6 +944,8 @@ pub struct DeckState {
     /// False means the deck-wide quantize gate is on (including older saved states).
     #[serde(default)]
     pub quantize_disabled: bool,
+    #[serde(default)]
+    pub slip_enabled: bool,
     #[serde(default)]
     pub rhythm_shift: bool,
     #[serde(default = "default_rhythm_gain")]

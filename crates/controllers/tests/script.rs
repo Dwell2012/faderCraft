@@ -25,6 +25,56 @@ fn mapping(id: &str, source: Source, program: &str, release: Option<&str>) -> Ma
 }
 
 #[test]
+fn legacy_three_button_curve_controller_maps_to_script_presets() {
+    let mappings = [
+        "crossfader_smooth",
+        "crossfader_equal_power",
+        "crossfader_cut",
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, preset)| {
+        mapping(
+            &format!("curve-{index}"),
+            Source::Note {
+                channel: 0,
+                number: 40 + index as u8,
+            },
+            &format!("do_action(\"mixer\", \"{preset}\")"),
+            None,
+        )
+    })
+    .collect();
+    let mut bridge = Bridge::new(profile(mappings)).unwrap();
+    let state = SessionState::default();
+    for (index, curve) in [
+        djcraft_protocol::CrossfaderCurve::Smooth,
+        djcraft_protocol::CrossfaderCurve::EqualPower,
+        djcraft_protocol::CrossfaderCurve::Cut,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            bridge.process(
+                "GRV6",
+                Event {
+                    source: Source::Note {
+                        channel: 0,
+                        number: 40 + index as u8
+                    },
+                    value: 127
+                },
+                &state
+            ),
+            vec![Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve { curve }
+            }]
+        );
+    }
+}
+
+#[test]
 fn deck_setup_script_buttons_run_once_per_press_and_read_latest_state() {
     let source = Source::Note {
         channel: 0,
@@ -301,7 +351,7 @@ fn fourteen_bit_tempo_waits_for_both_halves_and_preserves_center() {
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 209);
+    assert_eq!(profile.mappings.len(), 218);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -370,6 +420,66 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     assert_eq!(
         bridge.take_commands(),
         vec![HostCommand::Browse { steps: -1 }]
+    );
+}
+
+#[test]
+fn grv6_documented_mixer_knobs_dispatch_to_their_own_controls() {
+    let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
+        .expect("GRV6 profile should validate without hardware");
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    let mut turn_knob = |msb, lsb| {
+        assert!(
+            bridge
+                .process(
+                    "DDJ-GRV6",
+                    Event {
+                        source: Source::Cc {
+                            channel: 6,
+                            number: msb,
+                        },
+                        value: 127,
+                    },
+                    &state,
+                )
+                .is_empty()
+        );
+        bridge.process(
+            "DDJ-GRV6",
+            Event {
+                source: Source::Cc {
+                    channel: 6,
+                    number: lsb,
+                },
+                value: 127,
+            },
+            &state,
+        )
+    };
+    assert_eq!(
+        turn_knob(8, 40),
+        vec![Action::Mixer {
+            action: MixerAction::SetMasterGain { level: 1.0 }
+        }]
+    );
+    let headphone_level = turn_knob(13, 45);
+    assert!(matches!(
+        headphone_level.as_slice(),
+        [Action::Mixer { action: MixerAction::SetMonitor { monitor } }]
+            if monitor.gain == 1.0 && monitor.mix == state.monitor.mix
+    ));
+    let headphone_mix = turn_knob(12, 44);
+    assert!(matches!(
+        headphone_mix.as_slice(),
+        [Action::Mixer { action: MixerAction::SetMonitor { monitor } }]
+            if monitor.mix == 1.0 && monitor.gain == state.monitor.gain
+    ));
+    assert_eq!(
+        turn_knob(9, 41),
+        vec![Action::Mixer {
+            action: MixerAction::SetBoothGain { level: 1.0 }
+        }]
     );
 }
 
@@ -516,6 +626,82 @@ fn grv6_hot_cue_pads_recall_delete_and_follow_saved_led_state() {
             bridge
                 .state_feedback("DDJ-GRV6", &state, 0, &[None; 4])
                 .contains(&[led[0], led[1], 0])
+        );
+    }
+}
+
+#[test]
+fn grv6_slip_hot_cue_returns_on_release() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+    for deck in 0..4u8 {
+        let slip = Source::Note {
+            channel: deck,
+            number: 64,
+        };
+        bridge.process(
+            "DDJ-GRV6",
+            Event {
+                source: slip,
+                value: 127,
+            },
+            &state,
+        );
+        assert_eq!(
+            bridge.take_commands(),
+            vec![HostCommand::ToggleSlip { deck }]
+        );
+        bridge.process(
+            "DDJ-GRV6",
+            Event {
+                source: slip,
+                value: 0,
+            },
+            &state,
+        );
+        state.decks[deck as usize].slip_enabled = true;
+        state.decks[deck as usize].hot_cues[0] = Some(djcraft_protocol::HotCue {
+            seconds: 1.,
+            loop_end: None,
+        });
+        let pad = Source::Note {
+            channel: 7 + deck * 2,
+            number: 0,
+        };
+        assert_eq!(
+            bridge.process(
+                "DDJ-GRV6",
+                Event {
+                    source: pad,
+                    value: 127
+                },
+                &state
+            ),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::TriggerHotCue {
+                    slot: 0,
+                    play: true,
+                    loop_length: None
+                }
+            }]
+        );
+        assert_eq!(
+            bridge.process(
+                "DDJ-GRV6",
+                Event {
+                    source: pad,
+                    value: 0
+                },
+                &state
+            ),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::SlipReturn
+            }]
         );
     }
 }

@@ -274,17 +274,7 @@ impl Shell {
                             .label(if delta < 0. { "−" } else { "+" })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let value = (this.mixer_values[20] + delta).clamp(0., 1.);
-                                if let Some(engine) = &mut this.engine {
-                                    let _ = engine.apply(
-                                        Role::Host,
-                                        Action::Mixer {
-                                            action: MixerAction::SetSamplerGain {
-                                                level: value * value,
-                                            },
-                                        },
-                                    );
-                                }
-                                cx.notify();
+                                this.set_mixer_control(20, value, cx);
                             }))
                     })),
             )

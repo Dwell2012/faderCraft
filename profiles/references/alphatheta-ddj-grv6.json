@@ -1,0 +1,25 @@
+{
+  "source": "AlphaTheta DDJ-GRV6 MIDI Message List E1, pages 2-4; MIDI channels below are zero-based",
+  "profile": "profiles/alphatheta-ddj-grv6.json",
+  "deck_note": {
+    "play": 11, "cue": 12, "sync": 88, "key-lock": 26,
+    "headphone-cue": 84, "select": 114,
+    "hot-cue-mode": 27, "stems-mode": 30, "beat-jump-mode": 32, "sampler-mode": 34,
+    "slip": 64, "vinyl": 23, "quantize": 53,
+    "rhythm-swap-1": 44, "rhythm-roll-1": 48, "rhythm-roll-2": 49,
+    "rhythm-roll-3": 50, "rhythm-roll-4": 51,
+    "rhythm-release-forward": 36, "rhythm-release-backward": 38
+  },
+  "deck_cc14": {
+    "tempo": [0, 32], "trim": [4, 36],
+    "eq-high": [7, 39], "eq-mid": [11, 43], "eq-low": [15, 47],
+    "volume": [19, 51], "rhythm-gain": [18, 50]
+  },
+  "mixer_cc14": {
+    "mixer-crossfader": [31, 63], "mixer-master": [8, 40], "mixer-booth": [9, 41],
+    "mixer-headphone-gain": [13, 45], "mixer-headphone-mix": [12, 44]
+  },
+  "browser_cc": {"browser-scroll": 64},
+  "load_notes": [70, 71, 72, 73],
+  "hot_cue_slots": 8
+}

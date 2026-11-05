@@ -9,7 +9,7 @@ deck/mixer operations still pass through `Engine::apply` under the host's Role.
 
 When no matching controller is detected, the mapping selector displays Disabled. The saved mapping is retained for later detection; an absent device does not permanently disable discovery. Explicitly selecting Disabled still disables controller input.
 
-Settings > Controllers selects the mapping: Automatic (installed/default), bundled MixTrack, Disabled, or a valid JSON profile in the machine-data controllers folder. Load mapping opens a file picker for another faderCraft JSON profile and validates it before switching. The chosen path is remembered; keep external files at that path. Files are not overwritten. Selecting a different mapping releases held controls, closes the previous ports and enables matching currently connected devices; later reconnections still ask first. Controller hardware is matched by exact MIDI port name from the profile, not guessed or automatically remapped.
+Settings > Controllers selects the mapping: Automatic (detected controller), bundled MixTrack, DDJ-GRV6, Disabled, or a valid JSON profile in the machine-data controllers folder. Automatic selects the bundled GRV6 or the installed/default MixTrack mapping when exactly one known MIDI device is present, including after hot-plugging; an explicit choice takes priority. Load mapping opens a file picker for another faderCraft JSON profile and validates it before switching. The chosen path is remembered; keep external files at that path. Files are not overwritten. Selecting a different mapping releases held controls and closes the previous ports. Controller hardware is matched by exact MIDI port name from the profile; an unknown or duplicate port is not guessed.
 
 Controller options are stored per profile. The FX 1 controls choice appears only for a Numark MixTrack Pro II mapping; its bundled and installed versions share that preference. Other controllers do not inherit it. Older global FX 1 settings are migrated to the MixTrack option when settings are loaded.
 
@@ -18,13 +18,13 @@ Controller options are stored per profile. The FX 1 controls choice appears only
 The bundled AlphaTheta DDJ-GRV6 starter is an explicit Settings > Controllers
 choice. It maps play, cue, sync, key lock, headphone cue, tempo, trim, EQ and
 volume for four decks, plus deck selection, browser scroll, four deck-load buttons, crossfader,
-master and headphone controls. Its `DDJ-GRV6` MIDI port name is also used by
+master, booth and headphone controls. Its `DDJ-GRV6` MIDI port name is also used by
 the public Mixxx preset, though OS-specific names still need checking. The
 Hot Cue pads and their saved-cue LEDs are mapped; the shifted pad messages
 delete individual cues. The four Quantize buttons toggle each deck's general
 quantize gate, and their LEDs report its state. Dedicated Hot Cue, Stems,
 Beat Jump and Sampler mode buttons switch the visible pad page for each deck.
-The profile has 209 entries. Jog wheels, pad actions beyond Hot Cues,
+The profile has 218 entries. Jog wheels, pad actions beyond Hot Cues,
 advanced features and audio routing still need mapping and hardware tests.
 
 The GRV6 Hot Cue page uses note 0–7 on MIDI channels 8/10/12/14 for decks
@@ -46,9 +46,26 @@ For GRV6, sources are AlphaTheta's *DDJ-GRV6 MIDI Message List E1*, the
 [Mixxx GRV6 mapping](https://github.com/joergbeyer/mixxx/blob/main/res/controllers/Pioneer-DDJ-GRV6.midi.xml),
 and the [VirtualDJ GRV6 manual](https://virtualdj.com/manuals/hardware/alphatheta/ddjgrv6/setup.html).
 
+The transcribed GRV6 MIDI addresses live in
+`profiles/references/alphatheta-ddj-grv6.json`, separately from the active
+profile. Run `python tools/audit_controller_profile.py` after editing the map.
+It checks all 218 mapped addresses against the reference, checks for missing
+or undocumented entries, and rejects ambiguous input addresses (while allowing
+a button and its LED to share a MIDI address). CI runs the same audit plus
+negative tests that deliberately swap a mixer address and collide two buttons.
+The audit exposed and fixed three real errors: Master Level had been bound to
+Booth Level, and Headphones Level and Mix were reversed. Passing this audit
+means the addresses match the document; it does not verify USB port naming,
+firmware behaviour, LED colour handling, or audio routing without hardware.
+Booth Level now uses the documented CC 9/41 pair on MIDI channel 7 and calls
+`set_param("mixer", "booth_gain", $value)`. Booth taps the stereo mix before the
+Master volume, has its own level knob in the Output tab, and requires a distinct
+stereo output pair selected in Audio settings. It stays independent when Master
+is turned down.
+
 Normal launches now offer **Use controller / Not now** when a uniquely named MIDI input matches the active mapping. Ports and LED output open only after acceptance. Detection polls once per second; disconnecting releases held controls and clears the decision, so reconnecting asks again. Not now suppresses repeat prompts until disconnect or restart. Identically named devices are not guessed between.
 
-The default mapping is the bundled Numark MixTrack Pro II profile, with an existing machine-data `controllers/numark-mixtrack-pro-ii.json` taking precedence to preserve custom edits. `DJCRAFT_CONTROLLER_MAP` overrides this with an explicit profile. Unknown controllers are not assigned guessed mappings; a general profile chooser/catalogue and support for other hardware remain future work. Profile files are read on startup, but their MIDI ports are not opened until approved.
+Automatic starts with the bundled Numark MixTrack Pro II profile, with an existing machine-data `controllers/numark-mixtrack-pro-ii.json` taking precedence to preserve custom edits, then switches to the bundled GRV6 profile if that is the one known controller detected. `DJCRAFT_CONTROLLER_MAP` overrides Automatic with an explicit profile. Unknown controllers are not assigned guessed mappings; a general profile chooser/catalogue and support for other hardware remain future work. Profile files are read on startup, but MIDI ports open only when a known, unambiguous controller is detected.
 
 ## Try the Numark starter
 
@@ -149,8 +166,10 @@ Bindings:
   rendered audio even if the host stalls. Sync and ordinary Nudge are not timed out.
 - `hot_cue`: a note with `deck` and `slot` (zero-based). First press sets an
   empty cue at the current playhead (or captures the active loop), without
-  starting playback. Subsequent presses recall and play it. Releases are
-  ignored; an empty deck or an endpoint outside loaded audio does not set a cue.
+  starting playback. Subsequent presses recall and play it. In Slip mode,
+  releasing a held cue returns to the advancing hidden playhead. The binding
+  executes fcScript's `hot_cue_N` and `release_hot_cue` actions; an empty deck
+  or an endpoint outside loaded audio does not set a cue.
   Desktop actions persist through the same cue store as mouse edits, respecting
   cue editing lock and the UI's near-beat snap setting. Other API clients must
   persist `SetHotCues` actions through their own metadata store.

@@ -66,7 +66,17 @@ impl Shell {
                                         || this.deck_eq_modes.iter().any(|m| *m != mode)
                                     {
                                         for deck in 0..DECKS {
-                                            this.send(deck, DeckAction::SetEqMode { mode });
+                                            let index = match mode {
+                                                EqMode::Classic => 0,
+                                                EqMode::EzRemix => 1,
+                                                EqMode::Modern => 2,
+                                                EqMode::Stems => 3,
+                                            };
+                                            if let Ok(dispatch) = djcraft_protocol::script::Program::do_action(
+                                                deck, djcraft_protocol::script::ButtonAction::SetEqMode(index))
+                                                .and_then(|program| program.run(djcraft_protocol::script::ControlSource::Skin, 0.)) {
+                                                this.apply_control_dispatch(dispatch, cx);
+                                            }
                                         }
                                         this.eq_mode = mode;
                                         for deck in 0..DECKS {

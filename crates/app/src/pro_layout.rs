@@ -45,6 +45,63 @@ pub(super) fn current_key_label(
 }
 
 impl Shell {
+    pub(super) fn deck_mode_buttons(
+        &self,
+        deck: usize,
+        state: &DeckState,
+        vertical: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let colour = Hsla::from(deck_colour(deck));
+        let vinyl = self.performance_settings.scratch_modes[deck].unwrap_or(true);
+        let mode_button = |name: &'static str, active: bool| {
+            Button::new((name, deck))
+                .outline()
+                .rounded(ButtonRounded::None)
+                .w(px(if vertical { 30. } else { 28. }))
+                .h(px(13.))
+                .min_w_0()
+                .p_0()
+                .selected(active)
+                .border_color(if active { colour } else { cx.theme().border })
+                .bg(if active {
+                    colour
+                } else {
+                    cx.theme().background
+                })
+                .text_color(if active {
+                    Hsla::from(rgb(0x070b12))
+                } else {
+                    cx.theme().muted_foreground
+                })
+                .child(
+                    div()
+                        .text_size(px(9.))
+                        .line_height(px(9.))
+                        .font_weight(FontWeight::NORMAL)
+                        .child(name),
+                )
+        };
+        div()
+            .flex()
+            .when(vertical, |buttons| buttons.flex_col())
+            .w(px(if vertical { 30. } else { 60. }))
+            .h(px(if vertical { 30. } else { 13. }))
+            .gap(px(4.))
+            .child(
+                mode_button("VINYL", vinyl)
+                    .tooltip("Vinyl jog mode: platter touch scratches; off bends pitch. Independent of Slip.")
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_vinyl(deck, cx))),
+            )
+            .child(
+                mode_button("SLIP", state.slip_enabled)
+                    .tooltip("Slip: background playback continues through scratches, held Hot Cues, loops and pauses.")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_slip(deck, djcraft_protocol::script::ControlSource::Skin);
+                        cx.notify();
+                    })),
+            )
+    }
     pub(super) fn key_hover_text(&self, deck: usize, state: &DeckState) -> String {
         let base = current_key_label(self.deck_keys[deck], state);
         let Some(mode) = self.deck_modes[deck].as_ref() else {
@@ -597,6 +654,7 @@ impl Shell {
         let position = state.position_seconds;
         let loaded = state.track.is_some();
         let muted = cx.theme().muted_foreground;
+        let platter_area = self.platter_areas[index].clone();
         let platter = div()
             .id(("platter", index))
             .relative()
@@ -617,13 +675,14 @@ impl Shell {
             )
             .child(
                 canvas(
-                    |_, _, _| (),
+                    move |bounds, _, _| platter_area.set(bounds),
                     move |bounds, _, window, _| {
                         let centre =
                             bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
                         let radius = bounds.size.width.as_f32() / 2. - 7.;
                         if loaded {
-                            let angle = (position * 0.5555556 * std::f64::consts::TAU) as f32;
+                            let angle =
+                                (position / PLATTER_SECONDS_PER_REV * std::f64::consts::TAU) as f32;
                             let mut pointer = PathBuilder::stroke(px(2.5));
                             let at = |distance: f32| {
                                 centre
@@ -667,7 +726,7 @@ impl Shell {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                    this.begin_waveform_drag(index, event.position.x.as_f32(), false, cx);
+                    this.begin_platter_drag(index, event.position, cx);
                     cx.stop_propagation();
                 }),
             );
@@ -763,7 +822,8 @@ impl Shell {
                         .flex_col()
                         .gap(px(4.))
                         .child(quantize_button)
-                        .children(sync_control),
+                        .children(sync_control)
+                        .child(self.deck_mode_buttons(index, state, true, cx)),
                 )
                 .children(controls)
                 .child(self.pitch_control(index, state, identity, cx));

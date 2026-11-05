@@ -111,6 +111,85 @@ fn engine_with(samples: Vec<f32>) -> (Engine, Mixer) {
 }
 
 #[test]
+fn eq_actions_target_stem_groups_in_nonclassic_modes() {
+    use djcraft_protocol::EqMode;
+    let (mut engine, mut mixer) = engine_with(vec![0.2; RATE as usize * 8]);
+    for (mode, band, expected) in [
+        (EqMode::EzRemix, 1, [1., 0.5, 0.5, 1.]),
+        (EqMode::Modern, 1, [0.5, 0.5, 1., 1.]),
+        (EqMode::Stems, 3, [1., 1., 1., 0.5]),
+    ] {
+        engine
+            .apply(Role::Host, deck(DeckAction::SetEqMode { mode }))
+            .unwrap();
+        mixer.render(&mut [0.; CALLBACK * 2]);
+        engine
+            .apply(Role::Host, deck(DeckAction::SetEq { band, gain: 0.5 }))
+            .unwrap();
+        assert_eq!(engine.state().decks[0].stem_gains, expected);
+        assert_eq!(engine.state().decks[0].eq, [1.; 3]);
+    }
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::SetEqMode {
+                mode: EqMode::Classic,
+            }),
+        )
+        .unwrap();
+    assert!(
+        engine
+            .apply(Role::Host, deck(DeckAction::SetEq { band: 3, gain: 0.5 }))
+            .is_err()
+    );
+}
+
+#[test]
+fn slip_hot_cue_is_momentary_and_returns_to_advancing_playhead() {
+    use djcraft_protocol::{HOT_CUES, HotCue};
+    let (mut engine, mut mixer) = engine_with(ramp(10.));
+    let mut cues = [None; HOT_CUES];
+    cues[0] = Some(HotCue {
+        seconds: 1.,
+        loop_end: None,
+    });
+    engine
+        .apply(Role::Host, deck(DeckAction::SetHotCues { cues }))
+        .unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 4. }))
+        .unwrap();
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    engine
+        .apply(Role::Host, deck(DeckAction::SetSlip { enabled: true }))
+        .unwrap();
+    render(&mut mixer, 0.2);
+    engine
+        .apply(
+            Role::Host,
+            deck(DeckAction::TriggerHotCue {
+                slot: 0,
+                play: true,
+                loop_length: None,
+            }),
+        )
+        .unwrap();
+    let cue_audio = render(&mut mixer, 0.3);
+    assert!(
+        cue_audio.last().copied().unwrap() < 0.2,
+        "held cue must play from its cue point"
+    );
+    engine
+        .apply(Role::Host, deck(DeckAction::SlipReturn))
+        .unwrap();
+    let returned = render(&mut mixer, 0.02);
+    assert!(
+        returned.last().copied().unwrap() > 0.44,
+        "release must return to the advancing playhead"
+    );
+}
+
+#[test]
 fn stems_preserve_unity_and_remove_only_the_requested_source() {
     use djcraft_protocol::EqMode;
     let count = RATE as usize * 4;
@@ -206,11 +285,10 @@ fn stems_reject_missing_invalid_or_misaligned_sources() {
             )
             .is_err()
     );
-    assert!(
-        engine
-            .apply(Role::Host, deck(DeckAction::SetEq { band: 0, gain: 0. }))
-            .is_err()
-    );
+    engine
+        .apply(Role::Host, deck(DeckAction::SetEq { band: 0, gain: 0. }))
+        .unwrap();
+    assert_eq!(engine.state().decks[0].stem_gains, [1., 1., 0., 1.]);
     engine
         .apply(
             Role::Host,

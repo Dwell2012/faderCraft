@@ -93,6 +93,44 @@ struct WaveformDrag {
     vinyl: bool,
 }
 
+/// A nominal 33⅓ rpm record: one full turn advances 1.8 source seconds.
+const PLATTER_SECONDS_PER_REV: f64 = 1.8;
+
+#[derive(Clone, Copy)]
+struct PlatterDrag {
+    deck: usize,
+    last_angle: Option<f64>,
+    position: f64,
+    limit: f64,
+    vinyl: bool,
+    slip: bool,
+}
+
+impl PlatterDrag {
+    fn angle(point: Point<Pixels>, centre: Point<Pixels>) -> Option<f64> {
+        let x = (point.x - centre.x).as_f32() as f64;
+        let y = (point.y - centre.y).as_f32() as f64;
+        (x * x + y * y >= 64.).then(|| y.atan2(x))
+    }
+
+    fn turn(&mut self, point: Point<Pixels>, centre: Point<Pixels>) -> f64 {
+        let angle = Self::angle(point, centre);
+        let delta = match (self.last_angle, angle) {
+            (Some(previous), Some(current)) => {
+                (current - previous + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
+                    - std::f64::consts::PI
+            }
+            _ => 0.,
+        };
+        self.last_angle = angle;
+        let seconds = delta * PLATTER_SECONDS_PER_REV / std::f64::consts::TAU;
+        if self.vinyl {
+            self.position = (self.position + seconds).clamp(0., self.limit);
+        }
+        seconds
+    }
+}
+
 impl WaveformDrag {
     fn at(&self, x: f32) -> f64 {
         (self.origin_seconds + (x - self.origin_x) as f64 * self.seconds_per_pixel)
@@ -189,6 +227,7 @@ pub struct Shell {
     automix_notice: String,
     tab: Tab,
     library: Entity<LibraryView>,
+    analysis_progress: Arc<crate::analysis::Progress>,
     /// The track browser under the decks.
     browser: Entity<LibraryView>,
     settings: Settings,
@@ -215,6 +254,8 @@ pub struct Shell {
     overview_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     waveform_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
     drag: Option<WaveformDrag>,
+    platter_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
+    platter_drag: Option<PlatterDrag>,
     display_positions: [DisplayPosition; DECKS],
     last_frame: Instant,
     overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; DECKS],
@@ -352,6 +393,7 @@ impl Shell {
         self.end_wheel_scrub();
         self.release_pads(cx);
         self.end_waveform_drag(cx);
+        self.end_platter_drag(cx);
         self.pitch_drag = None;
         self.pitch_knob_start = None;
         self.mixer_drag = None;
@@ -483,6 +525,7 @@ impl Shell {
             pads.quantize_window = performance_settings.cue_quantize_window[deck];
             pads
         });
+        let analysis_progress = library.read(cx).analysis_progress();
         let mut shell = Self {
             stems_starting: !quick,
             automix: Default::default(),
@@ -496,6 +539,7 @@ impl Shell {
                 StartTab::Radio => Tab::Radio,
             },
             library,
+            analysis_progress,
             browser,
             settings: settings.clone(),
             settings_view: None,
@@ -533,6 +577,8 @@ impl Shell {
             overview_areas: (0..DECKS).map(|_| Rc::default()).collect(),
             waveform_areas: (0..DECKS).map(|_| Rc::default()).collect(),
             drag: None,
+            platter_areas: (0..DECKS).map(|_| Rc::default()).collect(),
+            platter_drag: None,
             display_positions: [DisplayPosition::default(); DECKS],
             last_frame: Instant::now(),
             play_history: Default::default(),
@@ -705,6 +751,9 @@ impl Shell {
     /// the browser which track to suggest what comes next for: the one
     /// loaded last.
     fn refresh_grids(&mut self, cx: &mut Context<Self>) {
+        for path in self.deck_paths.iter().flatten() {
+            self.analysis_progress.prioritize(path);
+        }
         let library = self.library.read(cx);
         self.deck_metadata = self
             .deck_paths
@@ -827,12 +876,16 @@ impl Shell {
                             }
                         }
                     }
-                    if let Some(engine) = &mut this.engine {
+                    if this.engine.is_some() {
                         if this.settings.crossfader_curve != settings.crossfader_curve {
-                            let _ = engine.apply(Role::Host, Action::Mixer { action: MixerAction::SetCrossfaderCurve { curve: settings.crossfader_curve } });
+                            let dispatch = djcraft_protocol::script::Program::set_curve(settings.crossfader_curve)
+                                .run(djcraft_protocol::script::ControlSource::Skin, 0.).unwrap();
+                            this.apply_control_dispatch(dispatch, cx);
                         }
                         if this.settings.crossfader_routing != settings.crossfader_routing {
-                            let _ = engine.apply(Role::Host, Action::Mixer { action: MixerAction::SetCrossfaderRouting { routing: settings.crossfader_routing } });
+                            let dispatch = djcraft_protocol::script::Program::set_routing(settings.crossfader_routing)
+                                .run(djcraft_protocol::script::ControlSource::Skin, 0.).unwrap();
+                            this.apply_control_dispatch(dispatch, cx);
                         }
                     }
                     if this.settings.stem_model != settings.stem_model {
@@ -940,7 +993,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         cx.stop_propagation();
-        if self.drag.is_some() {
+        if self.drag.is_some() || self.platter_drag.is_some() {
             return;
         }
         if self
@@ -1053,6 +1106,7 @@ impl Shell {
 
     fn begin_waveform_drag(&mut self, deck: usize, x: f32, overview: bool, cx: &mut Context<Self>) {
         self.end_wheel_scrub();
+        self.end_platter_drag(cx);
         let Some(state) = self
             .engine
             .as_mut()
@@ -1140,6 +1194,84 @@ impl Shell {
             }
             cx.notify();
         }
+    }
+
+    fn begin_platter_drag(&mut self, deck: usize, cursor: Point<Pixels>, cx: &mut Context<Self>) {
+        self.end_waveform_drag(cx);
+        self.end_platter_drag(cx);
+        self.end_wheel_scrub();
+        let Some(state) = self
+            .engine
+            .as_mut()
+            .and_then(|engine| engine.state().decks.get(deck).cloned())
+        else {
+            return;
+        };
+        let Some(track) = &state.track else { return };
+        let bounds = self.platter_areas[deck].get();
+        let centre = bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
+        let vinyl = self.performance_settings.scratch_modes[deck].unwrap_or(true);
+        self.platter_drag = Some(PlatterDrag {
+            deck,
+            last_angle: PlatterDrag::angle(cursor, centre),
+            position: state.position_seconds,
+            limit: track.loaded_seconds.min(track.duration_seconds).max(0.),
+            vinyl,
+            slip: state.slip_enabled,
+        });
+        if vinyl {
+            self.send(deck, DeckAction::HoldJog);
+        }
+        cx.notify();
+    }
+
+    fn move_platter_drag(&mut self, cursor: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(mut drag) = self.platter_drag else {
+            return;
+        };
+        let bounds = self.platter_areas[drag.deck].get();
+        let centre = bounds.origin + point(bounds.size.width / 2., bounds.size.height / 2.);
+        let seconds = drag.turn(cursor, centre);
+        self.platter_drag = Some(drag);
+        if seconds.abs() < 1e-7 {
+            return;
+        }
+        if drag.vinyl {
+            self.send(
+                drag.deck,
+                DeckAction::ScratchTo {
+                    seconds: drag.position,
+                },
+            );
+        } else {
+            self.send(
+                drag.deck,
+                DeckAction::PitchBend {
+                    seconds: seconds.clamp(-0.5, 0.5),
+                },
+            );
+        }
+        cx.notify();
+    }
+
+    fn end_platter_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(drag) = self.platter_drag.take() else {
+            return;
+        };
+        if drag.vinyl {
+            self.send(drag.deck, DeckAction::Scratch { speed: None });
+            if !drag.slip {
+                self.send(
+                    drag.deck,
+                    DeckAction::Seek {
+                        seconds: drag.position,
+                    },
+                );
+            }
+        } else {
+            self.send(drag.deck, DeckAction::EndNudge);
+        }
+        cx.notify();
     }
 
     /// Sends a deck action to the engine as the session host.
@@ -1242,6 +1374,9 @@ impl Shell {
         );
         match engine.apply(Role::Host, action) {
             Ok(()) if loading => {
+                if let Some(path) = self.deck_paths.get(deck).and_then(|p| p.as_deref()) {
+                    self.analysis_progress.prioritize(path);
+                }
                 self.cue_anchor[deck] = cue_anchor;
                 self.active_deck = deck;
                 self.focus_loaded_deck = true;
@@ -1375,6 +1510,18 @@ impl Shell {
     ) -> bool {
         let source = dispatch.source;
         let action = dispatch.action;
+        let curve = match &action {
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderCurve { curve },
+            } => Some(*curve),
+            _ => None,
+        };
+        let routing = match &action {
+            Action::Mixer {
+                action: MixerAction::SetCrossfaderRouting { routing },
+            } => Some(*routing),
+            _ => None,
+        };
         let applied = match action {
             Action::Deck { deck, action } if usize::from(deck) < self.deck_paths.len() => {
                 if deck >= 2 && !self.settings.four_decks {
@@ -1403,6 +1550,31 @@ impl Shell {
                 }
             }
         };
+        if applied
+            && source != djcraft_protocol::script::ControlSource::Skin
+            && (curve.is_some() || routing.is_some())
+        {
+            if let Some(curve) = curve {
+                self.settings.crossfader_curve = curve;
+            }
+            if let Some(routing) = routing {
+                self.settings.crossfader_routing = routing;
+                self.crossfader_routing = routing;
+            }
+            if let Some(view) = &self.settings_view {
+                view.update(cx, |view, cx| {
+                    view.sync_crossfader(
+                        self.settings.crossfader_curve,
+                        self.settings.crossfader_routing,
+                        cx,
+                    )
+                });
+            }
+            if let Err(error) = self.settings.save(&crate::storage::machine_dir()) {
+                eprintln!("Could not save controller crossfader settings: {error}");
+            }
+            cx.set_global(self.settings.clone());
+        }
         cx.notify();
         applied
     }
@@ -1475,7 +1647,13 @@ impl Shell {
                     self.end_cue_preview(cx);
                 }
             }
-            HostCommand::ToggleHeadphoneCue { .. } => self.toggle_headphone_cue(deck),
+            HostCommand::ToggleHeadphoneCue { .. } => {
+                self.toggle_headphone_cue(deck, djcraft_protocol::script::ControlSource::Controller)
+            }
+            HostCommand::ToggleSlip { .. } => {
+                self.toggle_slip(deck, djcraft_protocol::script::ControlSource::Controller)
+            }
+            HostCommand::ToggleVinyl { .. } => self.toggle_vinyl(deck, cx),
             HostCommand::SelectDeck { .. } => {
                 self.active_deck = deck;
             }
@@ -1496,16 +1674,44 @@ impl Shell {
         cx.notify();
     }
 
-    fn toggle_headphone_cue(&mut self, deck: usize) {
+    fn toggle_slip(&mut self, deck: usize, source: djcraft_protocol::script::ControlSource) {
         if let Some(engine) = &mut self.engine {
-            let mut monitor = engine.state().monitor;
-            monitor.cue_decks = Some(monitor.cue_mask() ^ (1 << deck));
-            let _ = engine.apply(
-                Role::Host,
-                Action::Mixer {
-                    action: MixerAction::SetMonitor { monitor },
-                },
-            );
+            use djcraft_protocol::script::{ButtonAction, Program};
+            let state = engine.state();
+            if let Ok(dispatch) = Program::do_action(deck, ButtonAction::ToggleSlip)
+                .and_then(|program| program.run_with_state(source, 0., Some(&state)))
+            {
+                let _ = engine.apply(Role::Host, dispatch.action);
+            }
+        }
+    }
+
+    fn toggle_vinyl(&mut self, deck: usize, cx: &mut Context<Self>) {
+        let enabled = !self.performance_settings.scratch_modes[deck].unwrap_or(true);
+        self.performance_settings.scratch_modes[deck] = Some(enabled);
+        self.performance_dirty = Some(Instant::now());
+        if let Some(controllers) = &mut self.controllers {
+            let actions = controllers.set_vinyl_mode(deck as u8, enabled);
+            for action in actions {
+                self.controller_action(action, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn toggle_headphone_cue(
+        &mut self,
+        deck: usize,
+        source: djcraft_protocol::script::ControlSource,
+    ) {
+        if let Some(engine) = &mut self.engine {
+            use djcraft_protocol::script::{ButtonAction, Program};
+            let state = engine.state();
+            if let Ok(dispatch) = Program::do_action(deck, ButtonAction::ToggleHeadphoneCue)
+                .and_then(|program| program.run_with_state(source, 0., Some(&state)))
+            {
+                let _ = engine.apply(Role::Host, dispatch.action);
+            }
         }
     }
 
@@ -1676,6 +1882,8 @@ impl Shell {
     }
 
     fn deck(&self, index: usize, state: &DeckState, cx: &mut Context<Self>) -> Stateful<Div> {
+        let mode_buttons =
+            (!self.settings.four_decks).then(|| self.deck_mode_buttons(index, state, false, cx));
         let theme = cx.theme();
         let title: SharedString = match (&state.track, &state.error) {
             _ if state.loading => "Loading…".into(),
@@ -1881,7 +2089,7 @@ impl Shell {
             .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
             .tooltip("Toggle this deck in headphones. Independent of deck activation; multiple decks can be cued.")
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_headphone_cue(index);
+                this.toggle_headphone_cue(index, djcraft_protocol::script::ControlSource::Skin);
                 cx.notify();
             }));
         let quantize_button = Button::new(("platter-quantize", index))
@@ -1968,24 +2176,7 @@ impl Shell {
                         .h(px(30.))
                         .gap(px(4.))
                         .child(quantize_button)
-                        .child(
-                            Button::new(("slip-vinyl-placeholder", index))
-                                .outline()
-                                .rounded(ButtonRounded::None)
-                                .w(px(60.))
-                                .h(px(13.))
-                                .min_w_0()
-                                .p_0()
-                                .child(
-                                    div()
-                                        .text_size(px(9.))
-                                        .line_height(px(9.))
-                                        .font_weight(FontWeight::NORMAL)
-                                        .child("VINYL"),
-                                )
-                                .disabled(true)
-                                .tooltip("Vinyl mode is not implemented yet."),
-                        ),
+                        .children(mode_buttons),
                 )
                 .child(
                     div()
@@ -2460,6 +2651,7 @@ impl Render for Shell {
                     }
                 }
                 self.mixer_values[10] = state.master_gain.sqrt();
+                self.mixer_values[46] = state.booth_gain.sqrt();
                 self.mixer_values[11] = state.crossfader;
                 self.mixer_values[20] = state.sampler_gain.sqrt();
                 self.mixer_values[21] = state.monitor.gain.sqrt();
@@ -2566,8 +2758,12 @@ impl Render for Shell {
             {
                 self.display_positions[index] = DisplayPosition::default();
             }
-            deck.position_seconds = if let Some(drag) = self.drag.filter(|drag| drag.deck == index)
+            deck.position_seconds = if let Some(drag) = self
+                .platter_drag
+                .filter(|drag| drag.deck == index && drag.vinyl)
             {
+                drag.position
+            } else if let Some(drag) = self.drag.filter(|drag| drag.deck == index) {
                 drag.position
             } else {
                 self.display_positions[index].update(
@@ -2679,6 +2875,7 @@ impl Render for Shell {
                 if event.pressed_button == Some(MouseButton::Left) {
                     this.move_preparation_drag(event.position.x.as_f32(), cx);
                     this.move_waveform_drag(event.position.x.as_f32(), cx);
+                    this.move_platter_drag(event.position, cx);
                     this.move_pitch(event.position.y.as_f32(), cx);
                     this.move_mixer_control(event.position, cx);
                     this.move_effect_control(event.position.y.as_f32(), cx);
@@ -2694,6 +2891,7 @@ impl Render for Shell {
                     this.release_pads(cx);
                     this.end_preparation_drag(cx);
                     this.end_waveform_drag(cx);
+                    this.end_platter_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
                     this.library_side_drag = None;
@@ -2716,6 +2914,7 @@ impl Render for Shell {
                     this.release_pads(cx);
                     this.end_preparation_drag(cx);
                     this.end_waveform_drag(cx);
+                    this.end_platter_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
                     this.library_side_drag = None;
@@ -2730,12 +2929,42 @@ impl Render for Shell {
                     this.release_pads(cx);
                     this.end_preparation_drag(cx);
                     this.end_waveform_drag(cx);
+                    this.end_platter_drag(cx);
                     this.mixer_drag = None;
                     this.effect_drag = None;
                     this.library_side_drag = None;
                 }),
             )
             .child(self.top_bar(cx))
+            .child(
+                div()
+                    .h(px(22.))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(11.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(self.library.read(cx).analysis_status()),
+                    )
+                    .child(
+                        Button::new("resume-library-analysis")
+                            .small()
+                            .ghost()
+                            .label("Check pending")
+                            .tooltip("Check for unanalysed tracks and resume background analysis")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.library
+                                    .update(cx, |view, cx| view.refresh_and_analyse(cx));
+                            })),
+                    ),
+            )
             .child(self.content(&decks, cx))
             .when_some(self.settings_view.clone(), |this, view| {
                 this.child(deferred(view))
@@ -2863,6 +3092,36 @@ mod tests {
         assert_eq!(drag.at(500.), 50.);
         assert_eq!(drag.at(0.), 0.);
         assert_eq!(drag.at(1000.), 100.);
+    }
+    #[test]
+    fn platter_drag_follows_circular_record_motion_at_33_and_a_third_rpm() {
+        use super::PlatterDrag;
+        use gpui_kit::{point, px};
+        let centre = point(px(100.), px(100.));
+        let top = point(px(100.), px(60.));
+        let right = point(px(140.), px(100.));
+        let bottom = point(px(100.), px(140.));
+        let left = point(px(60.), px(100.));
+        let mut drag = PlatterDrag {
+            deck: 0,
+            last_angle: PlatterDrag::angle(top, centre),
+            position: 10.,
+            limit: 60.,
+            vinyl: true,
+            slip: false,
+        };
+        for cursor in [right, bottom, left, top] {
+            assert!((drag.turn(cursor, centre) - 0.45).abs() < 1e-6);
+        }
+        assert!((drag.position - 11.8).abs() < 1e-6);
+        for cursor in [left, bottom, right, top] {
+            assert!((drag.turn(cursor, centre) + 0.45).abs() < 1e-6);
+        }
+        assert!((drag.position - 10.).abs() < 1e-6);
+        drag.position = 0.01;
+        drag.turn(left, centre);
+        assert_eq!(drag.position, 0.);
+        assert_eq!(drag.turn(centre, centre), 0.);
     }
     #[test]
     fn history_counts_listening_not_previews_and_resets_for_track_changes() {

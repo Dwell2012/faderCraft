@@ -88,6 +88,7 @@ struct DeckControl {
     tempo: f64,
     key_lock: bool,
     quantize_enabled: bool,
+    slip_enabled: bool,
     key_shift: f32,
     volume: f32,
     trim_db: f32,
@@ -131,6 +132,7 @@ pub struct Engine {
     shared: Arc<Shared>,
     decks: [DeckControl; DECKS],
     master_gain: f32,
+    booth_gain: f32,
     sampler_gain: f32,
     monitor: djcraft_protocol::MonitorState,
     crossfader: f32,
@@ -289,6 +291,7 @@ impl Engine {
                 tempo: 1.0,
                 key_lock: false,
                 quantize_enabled: true,
+                slip_enabled: false,
                 tempo_range: Default::default(),
                 key_shift: 0.,
                 volume: 1.0,
@@ -306,6 +309,7 @@ impl Engine {
                 stem_gains: [1.; 4],
             }),
             master_gain: 1.0,
+            booth_gain: 1.0,
             sampler_gain: 1.,
             monitor: Default::default(),
             crossfader: 0.5,
@@ -590,6 +594,14 @@ impl Engine {
                 let level = unit_level(level)?;
                 self.send(Command::MasterGain { level })?;
                 self.master_gain = level;
+                Ok(())
+            }
+            Action::Mixer {
+                action: MixerAction::SetBoothGain { level },
+            } => {
+                let level = unit_level(level)?;
+                self.send(Command::BoothGain { level })?;
+                self.booth_gain = level;
                 Ok(())
             }
             Action::Mixer {
@@ -1147,6 +1159,7 @@ impl Engine {
                 self.send(Command::Unload { deck })?;
                 let control = &mut self.decks[deck];
                 control.rhythm_shift = false;
+                control.slip_enabled = false;
                 control.track = None;
                 control.path = None;
                 control.requested_path = None;
@@ -1168,6 +1181,7 @@ impl Engine {
                 self.send(Command::RhythmGrid { deck, grid: None })?;
                 self.decks[deck].grid = None;
                 self.decks[deck].rhythm_shift = false;
+                self.decks[deck].slip_enabled = false;
                 self.decks[deck].requested_path = Some(path.clone());
                 let load_id = self.next_load_id;
                 self.next_load_id += 1;
@@ -1296,6 +1310,12 @@ impl Engine {
                 self.decks[deck].quantize_enabled = enabled;
                 Ok(())
             }
+            DeckAction::SetSlip { enabled } => {
+                self.send(Command::Slip { deck, enabled })?;
+                self.decks[deck].slip_enabled = enabled;
+                Ok(())
+            }
+            DeckAction::SlipReturn => self.send(Command::SlipReturn { deck }),
             DeckAction::SetVolume { level } => {
                 let level = unit_level(level)?;
                 self.send(Command::Volume { deck, level })?;
@@ -1377,18 +1397,40 @@ impl Engine {
                 Ok(())
             }
             DeckAction::SetEq { band, gain } => {
-                if self.decks[deck].eq_mode != EqMode::Classic {
+                let mode = self.decks[deck].eq_mode;
+                if band >= if mode == EqMode::Classic { 3 } else { 4 }
+                    || !gain.is_finite()
+                    || !(0.0..=2.0).contains(&gain)
+                {
                     return Err(Rejection::InvalidValue);
                 }
-                if band >= 3 || !(0.0..=2.0).contains(&gain) {
-                    return Err(Rejection::InvalidValue);
+                if mode == EqMode::Classic {
+                    self.send(Command::Eq {
+                        deck,
+                        band: band as usize,
+                        gain,
+                    })?;
+                    self.decks[deck].eq[band as usize] = gain;
+                } else {
+                    // High/Mid/Low knobs address the first three displayed stem
+                    // groups; Stems mode adds a fourth control at band 3.
+                    let control = match band {
+                        2 => 0,
+                        1 => 1,
+                        0 => 2,
+                        3 => 3,
+                        _ => unreachable!(),
+                    };
+                    let groups = mode.stem_groups();
+                    let mut gains = self.decks[deck].stem_gains;
+                    for (source, group) in groups.into_iter().enumerate() {
+                        if group == control {
+                            gains[source] = gain;
+                        }
+                    }
+                    self.send(Command::StemGains { deck, gains })?;
+                    self.decks[deck].stem_gains = gains;
                 }
-                self.send(Command::Eq {
-                    deck,
-                    band: band as usize,
-                    gain,
-                })?;
-                self.decks[deck].eq[band as usize] = gain;
                 Ok(())
             }
             DeckAction::ScratchTo { seconds } => {
@@ -1561,6 +1603,7 @@ impl Engine {
                 .zip(&self.shared.decks)
                 .map(|(control, shared)| DeckState {
                     quantize_disabled: !control.quantize_enabled,
+                    slip_enabled: control.slip_enabled,
                     rhythm_shift: control.rhythm_shift,
                     rhythm_gain: control.rhythm_gain,
                     key_lock_protection_db: shared.protection_db(),
@@ -1615,6 +1658,7 @@ impl Engine {
                 })
                 .collect(),
             master_gain: self.master_gain,
+            booth_gain: self.booth_gain,
             sampler_gain: self.sampler_gain,
             monitor: self.monitor,
             crossfader: self.crossfader,

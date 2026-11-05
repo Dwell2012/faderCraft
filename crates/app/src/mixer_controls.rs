@@ -38,8 +38,102 @@ pub(super) fn smooth_knob_svg(value: f32, neutral: f32, highlight: bool) -> Stri
     )
 }
 
+/// Geometry, value domain and update callback for a mixer knob. Output knobs
+/// deliberately retain their full size in either deck layout.
+#[derive(Clone, Copy)]
+struct KnobSpec {
+    diameter: f32,
+    min: f32,
+    max: f32,
+    neutral: f32,
+    on_change: fn(&mut Shell, usize, f32, &mut Context<Shell>),
+}
+
+impl KnobSpec {
+    fn new(
+        diameter: f32,
+        min: f32,
+        max: f32,
+        neutral: f32,
+        on_change: fn(&mut Shell, usize, f32, &mut Context<Shell>),
+    ) -> Self {
+        debug_assert!(diameter > 0. && min < max && (min..=max).contains(&neutral));
+        Self {
+            diameter,
+            min,
+            max,
+            neutral,
+            on_change,
+        }
+    }
+
+    fn for_control(index: usize, four_decks: bool) -> Self {
+        let output = matches!(index, 10 | 20 | 21 | 22 | 45 | 46);
+        let neutral = match index {
+            10 | 20 | 46 => 1.,
+            21 | 45 => std::f32::consts::FRAC_1_SQRT_2,
+            22 => 0.,
+            _ if control_deck(index).is_some_and(|deck| index == channel_index(deck) + 4) => 1.,
+            _ => 0.5,
+        };
+        Self::new(
+            if four_decks && !output { 22. } else { 46. },
+            0.,
+            1.,
+            neutral,
+            Shell::set_mixer_control,
+        )
+    }
+
+    fn clamp(self, value: f32) -> f32 {
+        value.clamp(self.min, self.max)
+    }
+
+    fn visual(self, value: f32, accent: Rgba, drawing: impl IntoElement) -> AnyElement {
+        let normal = ((value - self.min) / (self.max - self.min)).clamp(0., 1.);
+        let neutral = ((self.neutral - self.min) / (self.max - self.min)).clamp(0., 1.);
+        let base = smooth_knob_svg(normal, neutral, false);
+        let highlight = smooth_knob_svg(normal, neutral, true);
+        div()
+            .relative()
+            .w_full()
+            .h(px(self.diameter))
+            .child(drawing)
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(self.diameter))
+                            .h(px(self.diameter))
+                            .child(
+                                gpui_kit::component::Icon::default()
+                                    .data(base.as_bytes())
+                                    .text_color(rgb(0x727a83))
+                                    .size_full(),
+                            )
+                            .child(
+                                div().absolute().top_0().left_0().size_full().child(
+                                    gpui_kit::component::Icon::default()
+                                        .data(highlight.as_bytes())
+                                        .text_color(accent)
+                                        .size_full(),
+                                ),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
 // Preserve A/B and bus control IDs; C/D append their own independent controls.
-pub(super) const CONTROL_COUNT: usize = 46;
+pub(super) const CONTROL_COUNT: usize = 47;
 pub(super) fn channel_index(deck: usize) -> usize {
     if deck < 2 {
         deck * 5
@@ -92,6 +186,7 @@ pub(super) fn initial_values() -> [f32; CONTROL_COUNT] {
         values[channel_index(deck) + 4] = 1.;
     }
     values[10] = 1.;
+    values[46] = 1.;
     values[20] = 1.;
     values[21] = std::f32::consts::FRAC_1_SQRT_2;
     values[45] = std::f32::consts::FRAC_1_SQRT_2;
@@ -146,6 +241,9 @@ fn value_label(index: usize, value: f32) -> String {
                 format!("{db:+.1}")
             }
         };
+    }
+    if index == 46 {
+        return value_label(20, value);
     }
     if index >= 41 {
         return if (value - 0.5).abs() < 0.0001 {
@@ -244,16 +342,14 @@ impl Shell {
                             .checked(selected & (1 << index) != 0)
                             .on_click(cx.listener(
                                 move |_, checked: &bool, _, cx| {
-                                    let checked = *checked;
+                                    let _checked = *checked;
                                     let _ = weak.update(cx, |shell, cx| {
-                                        if let Some(engine) = &mut shell.engine {
-                                            let mut state = engine.state().decks[deck].colour_fx;
-                                            if checked {
-                                                state.selected |= 1 << index;
-                                            } else {
-                                                state.selected &= !(1 << index);
+                                        if let Some(state) = shell.engine.as_mut().map(|engine| engine.state()) {
+                                            if let Ok(dispatch) = Program::do_action(deck,
+                                                djcraft_protocol::script::ButtonAction::ToggleColourFxSelection(index as u8))
+                                                .and_then(|program| program.run_with_state(ControlSource::Skin, 0., Some(&state))) {
+                                                shell.apply_control_dispatch(dispatch, cx);
                                             }
-                                            shell.send(deck, DeckAction::SetColourFx { state });
                                         }
                                         cx.notify();
                                     });
@@ -453,6 +549,20 @@ impl Shell {
                             .gap(px(4.))
                             .p(px(4.))
                             .bg(cx.theme().secondary.opacity(0.5))
+                            .child(div().text_size(px(10.)).child("BOOTH"))
+                            .child(self.mixer_control(46, "VOL", cx)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .items_center()
+                            .gap(px(4.))
+                            .p(px(4.))
+                            .bg(cx.theme().secondary.opacity(0.5))
                             .child(div().text_size(px(10.)).child("HEADPHONES"))
                             .child(self.mixer_control(21, "VOL", cx))
                             .child(div().flex_1())
@@ -558,24 +668,16 @@ impl Shell {
                                 })
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
-                                        let mut routing = this.crossfader_routing;
-                                        if right {
-                                            routing.right ^= 1 << deck;
+                                        let Some(state) = this.engine.as_mut().map(|engine| engine.state()) else { return };
+                                        let button = if right {
+                                            djcraft_protocol::script::ButtonAction::ToggleCrossfaderRight
                                         } else {
-                                            routing.left ^= 1 << deck;
-                                        }
-                                        if let Some(engine) = &mut this.engine
-                                            && engine
-                                                .apply(
-                                                    Role::Host,
-                                                    Action::Mixer {
-                                                        action: MixerAction::SetCrossfaderRouting {
-                                                            routing,
-                                                        },
-                                                    },
-                                                )
-                                                .is_ok()
-                                        {
+                                            djcraft_protocol::script::ButtonAction::ToggleCrossfaderLeft
+                                        };
+                                        let Ok(dispatch) = Program::do_action(deck, button)
+                                            .and_then(|program| program.run_with_state(ControlSource::Skin, 0., Some(&state))) else { return };
+                                        let Action::Mixer { action: MixerAction::SetCrossfaderRouting { routing } } = dispatch.action else { unreachable!() };
+                                        if this.apply_control_dispatch(dispatch, cx) {
                                             this.crossfader_routing = routing;
                                             this.settings.crossfader_routing = routing;
                                             if let Err(error) =
@@ -598,7 +700,7 @@ impl Shell {
         )
     }
 
-    fn set_mixer_control(&mut self, index: usize, value: f32, cx: &mut Context<Self>) {
+    pub(super) fn set_mixer_control(&mut self, index: usize, value: f32, cx: &mut Context<Self>) {
         let value = value.clamp(0., 1.);
         if index == 45 {
             if (self.mixer_values[index] - value).abs() > 0.0001 {
@@ -608,11 +710,12 @@ impl Shell {
             cx.notify();
             return;
         }
-        let action = if (20..=22).contains(&index) {
+        let action = if (20..=22).contains(&index) || index == 46 {
             let param = match index {
                 20 => Param::SamplerGain,
                 21 => Param::HeadphoneGain,
                 22 => Param::HeadphoneMix,
+                46 => Param::BoothGain,
                 _ => unreachable!(),
             };
             let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
@@ -635,22 +738,18 @@ impl Shell {
                 .action
         } else if is_stem(index) {
             let deck = control_deck(index).expect("stem control");
-            let current = self
-                .engine
-                .as_mut()
-                .map(|engine| engine.state().decks[deck].stem_gains)
-                .unwrap_or([1.; 4]);
-            Action::Deck {
-                deck: deck as u8,
-                action: DeckAction::SetStemGains {
-                    gains: changed_stem_group(
-                        self.deck_eq_modes[deck],
-                        index - stem_index(deck),
-                        value,
-                        current,
-                    ),
-                },
-            }
+            let param = match index - stem_index(deck) {
+                0 => Param::Eq(EqBand::High),
+                1 => Param::Eq(EqBand::Mid),
+                2 => Param::Eq(EqBand::Low),
+                3 => Param::Eq4,
+                _ => unreachable!(),
+            };
+            Program::set_param(deck, param)
+                .unwrap()
+                .run(ControlSource::Skin, value * 2. - 1.)
+                .unwrap()
+                .action
         } else {
             control_action(index, value)
         };
@@ -675,8 +774,10 @@ impl Shell {
         let area = self.mixer_areas[index].get();
         let four_deck_volume = self.settings.four_decks
             && control_deck(index).is_some_and(|deck| index == channel_index(deck) + 4);
-        let value = if is_knob(index) || index == 10 || four_deck_volume {
-            start_value + (start_y - position.y.as_f32()) / 140.
+        let knob = is_knob(index) || index == 10 || four_deck_volume;
+        let value = if knob {
+            let spec = KnobSpec::for_control(index, self.settings.four_decks);
+            spec.clamp(start_value + (start_y - position.y.as_f32()) / 140. * (spec.max - spec.min))
         } else if index == 11 {
             (position.x - area.origin.x - px(8.)).as_f32()
                 / (area.size.width.as_f32() - 16.).max(1.)
@@ -684,7 +785,13 @@ impl Shell {
             1. - (position.y - area.origin.y - px(8.)).as_f32()
                 / (area.size.height.as_f32() - 16.).max(1.)
         };
-        self.set_mixer_control(index, value, cx);
+        if knob {
+            (KnobSpec::for_control(index, self.settings.four_decks).on_change)(
+                self, index, value, cx,
+            );
+        } else {
+            self.set_mixer_control(index, value, cx);
+        }
     }
     fn mixer_control(
         &self,
@@ -697,6 +804,7 @@ impl Shell {
         let four_deck_volume = self.settings.four_decks
             && control_deck(index).is_some_and(|deck| index == channel_index(deck) + 4);
         let knob = is_knob(index) || index == 10 || four_deck_volume;
+        let knob_spec = knob.then(|| KnobSpec::for_control(index, self.settings.four_decks));
         let enabled = !is_stem(index)
             || self
                 .engine
@@ -769,57 +877,14 @@ impl Shell {
             },
         )
         .w_full()
-        .when(knob, |this| this.h(px(if four_decks { 22. } else { 46. })))
+        .when_some(knob_spec, |this, spec| this.h(px(spec.diameter)))
         .when(horizontal, |this| this.h(px(22.)))
         .when(!knob && !horizontal, |this| {
             this.flex_1()
                 .min_h(px(if self.settings.four_decks { 48. } else { 80. }))
         });
-        let drawing = if knob {
-            let neutral = match index {
-                10 | 20 => 1.,
-                21 | 45 => std::f32::consts::FRAC_1_SQRT_2,
-                22 => 0.,
-                _ => 0.5,
-            };
-            let base = smooth_knob_svg(value, neutral, false);
-            let highlight = smooth_knob_svg(value, neutral, true);
-            let diameter = if four_decks { 22. } else { 46. };
-            div()
-                .relative()
-                .w_full()
-                .h(px(diameter))
-                .child(drawing)
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .flex()
-                        .justify_center()
-                        .child(
-                            div()
-                                .relative()
-                                .w(px(diameter))
-                                .h(px(diameter))
-                                .child(
-                                    gpui_kit::component::Icon::default()
-                                        .data(base.as_bytes())
-                                        .text_color(rgb(0x727a83))
-                                        .size_full(),
-                                )
-                                .child(
-                                    div().absolute().top_0().left_0().size_full().child(
-                                        gpui_kit::component::Icon::default()
-                                            .data(highlight.as_bytes())
-                                            .text_color(accent)
-                                            .size_full(),
-                                    ),
-                                ),
-                        ),
-                )
-                .into_any_element()
+        let drawing = if let Some(spec) = knob_spec {
+            spec.visual(value, accent, drawing)
         } else {
             drawing.into_any_element()
         };
@@ -834,10 +899,11 @@ impl Shell {
                     }).build(window, cx)
                 })
             })
-            .when((20..=22).contains(&index), |control| control.tooltip(move |window, cx| {
+            .when((20..=22).contains(&index) || index == 46, |control| control.tooltip(move |window, cx| {
                 Tooltip::new(match index {
                     20 => "Sampler bus volume; individual pad levels remain relative. Double-click resets to unity.",
                     21 => "Headphone volume only. Double-click resets to 50% gain.",
+                    46 => "Booth output volume, independent of Master. Requires a separate output pair. Double-click resets to unity.",
                     _ => "Cue / master blend: centre is both at full volume; either end fades out the opposite source. Double-click resets to cue only.",
                 }).build(window, cx)
             }))
@@ -865,8 +931,16 @@ impl Shell {
                     return;
                 }
                 let before = this.mixer_values[index];
-                let value = (before + crate::wheel::steps(event) * 0.02).clamp(0., 1.);
-                this.set_mixer_control(index, value, cx);
+                let value = if let Some(spec) = knob_spec {
+                    spec.clamp(before + crate::wheel::steps(event) * 0.02 * (spec.max - spec.min))
+                } else {
+                    (before + crate::wheel::steps(event) * 0.02).clamp(0., 1.)
+                };
+                if let Some(spec) = knob_spec {
+                    (spec.on_change)(this, index, value, cx);
+                } else {
+                    this.set_mixer_control(index, value, cx);
+                }
                 if let Some(other) = opposite_deck_control(index).filter(|_| event.modifiers.control) {
                     let delta = this.mixer_values[index] - before;
                     this.set_mixer_control(other, this.mixer_values[other] - delta, cx);
@@ -880,23 +954,11 @@ impl Shell {
                         return;
                     }
                     if event.click_count == 2 {
-                        this.set_mixer_control(
-                            index,
-                            if index == 20 || index == 10 {
-                                1.
-                            } else if index == 21 || index == 45 {
-                                std::f32::consts::FRAC_1_SQRT_2
-                            } else if index == 22 {
-                                0.
-                            } else if four_deck_volume {
-                                1.
-                            } else if is_knob(index) || index == 11 {
-                                0.5
-                            } else {
-                                1.
-                            },
-                            cx,
-                        );
+                        if let Some(spec) = knob_spec {
+                            (spec.on_change)(this, index, spec.neutral, cx);
+                        } else {
+                            this.set_mixer_control(index, if index == 11 { 0.5 } else { 1. }, cx);
+                        }
                         this.mixer_drag = None;
                     } else {
                         this.mixer_drag =
@@ -1205,21 +1267,8 @@ impl Shell {
 /// Four real sources, ordered vocals/instruments/bass/drums. Grouped controls
 /// multiply gains; they never pretend filtered drums are isolated kick/hi-hat.
 fn stem_members(mode: EqMode, control: usize) -> [bool; 4] {
-    let groups = match mode {
-        EqMode::Classic | EqMode::Stems => [0, 1, 2, 3],
-        EqMode::EzRemix => [0, 1, 1, 2],
-        EqMode::Modern => [1, 1, 2, 0],
-    };
-    groups.map(|group| group == control)
-}
-fn changed_stem_group(mode: EqMode, control: usize, value: f32, mut current: [f32; 4]) -> [f32; 4] {
-    let gains = stem_gains(mode, [value; 4]);
-    for (i, member) in stem_members(mode, control).into_iter().enumerate() {
-        if member {
-            current[i] = gains[i];
-        }
-    }
-    current
+    mode.stem_groups()
+        .map(|group| usize::from(group) == control)
 }
 pub(super) fn stem_controls_from_gains(mode: EqMode, gains: [f32; 4]) -> [f32; 4] {
     std::array::from_fn(|control| {
@@ -1242,25 +1291,31 @@ pub(super) fn stem_controls_from_gains(mode: EqMode, gains: [f32; 4]) -> [f32; 4
         }
     })
 }
-fn stem_gains(mode: EqMode, values: [f32; 4]) -> [f32; 4] {
-    let gain = values.map(|v| {
-        if v <= 0.5 {
-            v * 2.
-        } else {
-            10f32.powf((v - 0.5) * 12. / 20.).min(2.)
-        }
-    });
-    match mode {
-        EqMode::Classic => [1.; 4],
-        EqMode::EzRemix => [gain[0], gain[1], gain[1], gain[2]],
-        EqMode::Modern => [gain[1], gain[1], gain[2], gain[0]],
-        EqMode::Stems => gain,
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[core::prelude::v1::test]
+    fn output_knobs_keep_the_same_size_in_both_deck_layouts() {
+        for index in [10, 20, 21, 22, 45, 46] {
+            assert_eq!(KnobSpec::for_control(index, false).diameter, 46.);
+            assert_eq!(KnobSpec::for_control(index, true).diameter, 46.);
+        }
+        assert_eq!(KnobSpec::for_control(channel_index(2), true).diameter, 22.);
+        assert_eq!(
+            KnobSpec::for_control(channel_index(2) + 4, true).neutral,
+            1.
+        );
+    }
+
+    #[core::prelude::v1::test]
+    fn knob_range_clamps_in_its_own_units() {
+        let spec = KnobSpec::new(30., -1., 1., 0., Shell::set_mixer_control);
+        assert_eq!(spec.clamp(-2.), -1.);
+        assert_eq!(spec.clamp(0.5), 0.5);
+        assert_eq!(spec.clamp(2.), 1.);
+    }
 
     #[core::prelude::v1::test]
     fn linked_controls_pair_matching_deck_eq_and_volume() {
@@ -1330,28 +1385,8 @@ mod tests {
     #[core::prelude::v1::test]
     fn groups_mute_only_the_named_sources() {
         assert_eq!(
-            changed_stem_group(EqMode::Modern, 2, 0.25, [0., 1., 1., 0.]),
-            [0., 1., 0.5, 0.]
-        );
-        assert_eq!(
             stem_controls_from_gains(EqMode::Stems, [0., 1., 1., 0.]),
             [0., 0.5, 0.5, 0.]
-        );
-        assert_eq!(
-            stem_gains(EqMode::EzRemix, [0., 0.5, 0.5, 0.5]),
-            [0., 1., 1., 1.]
-        );
-        assert_eq!(
-            stem_gains(EqMode::EzRemix, [0.5, 0., 0.5, 0.5]),
-            [1., 0., 0., 1.]
-        );
-        assert_eq!(
-            stem_gains(EqMode::Modern, [0.5, 0., 0.5, 0.5]),
-            [0., 0., 1., 1.]
-        );
-        assert_eq!(
-            stem_gains(EqMode::Stems, [0.5, 0.5, 0., 0.5]),
-            [1., 1., 0., 1.]
         );
     }
 }

@@ -66,6 +66,7 @@ struct Held {
     restore: Restore,
 }
 enum Restore {
+    SlipCue,
     CueLoop {
         hold: bool,
     },
@@ -281,6 +282,40 @@ impl Shell {
         self.engine.as_mut().map(|e| e.state().decks[deck].clone())
     }
     fn pad_send(&mut self, deck: usize, action: DeckAction) -> bool {
+        use djcraft_protocol::script::{ButtonAction, ControlSource, Program};
+        let action = match action {
+            DeckAction::TriggerHotCue {
+                slot,
+                play: true,
+                loop_length: None,
+            } => {
+                let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
+                    return false;
+                };
+                match Program::do_action(deck, ButtonAction::HotCue(slot)).and_then(|program| {
+                    program.run_with_state(ControlSource::Skin, 0., Some(&state))
+                }) {
+                    Ok(dispatch) => dispatch.action,
+                    Err(_) => return false,
+                }
+            }
+            DeckAction::SlipReturn => {
+                let Ok(program) = Program::do_action(deck, ButtonAction::ReleaseHotCue) else {
+                    return false;
+                };
+                let Ok(dispatch) = program.run(ControlSource::Skin, 0.) else {
+                    return false;
+                };
+                dispatch.action
+            }
+            action => Action::Deck {
+                deck: deck as u8,
+                action,
+            },
+        };
+        let Action::Deck { action, .. } = action else {
+            unreachable!()
+        };
         let cue_anchor = self.transport_anchor_for(deck, &action);
         let metadata = matches!(
             action,
@@ -372,6 +407,9 @@ impl Shell {
             return;
         }
         match held.restore {
+            Restore::SlipCue => {
+                self.pad_send(deck, DeckAction::SlipReturn);
+            }
             Restore::CueLoop { hold } => {
                 if hold || held.began.elapsed().as_millis() < 250 {
                     self.pad_send(deck, DeckAction::ClearLoop);
@@ -882,6 +920,8 @@ impl Shell {
                                         },
                                     );
                                 }
+                            } else if state.slip_enabled && existed {
+                                self.hold_pad(deck, page, index, Restore::SlipCue);
                             } else if self.pads[deck].stutter {
                                 self.hold_pad(
                                     deck,
