@@ -10,13 +10,15 @@ use djcraft_analysis::TempoRange;
 use djcraft_library::lookup::Provider;
 use djcraft_library::{
     AlignOptions, ApplySummary, Camelot, Cleanup, Crate, FolderWatcher, Group, GroupCount,
-    ImportSummary, Library, PlannedChange, Playlist, PlaylistFolder, Source, SourceKind,
-    TempoResult, Track, TrackEdit, TrackQuery, read_artwork, read_playlists,
+    ImportSummary, ImportedPlaylist, Library, PlannedChange, Playlist, PlaylistFolder, Source,
+    SourceKind, TempoResult, Track, TrackEdit, TrackQuery, discover_playlists, read_artwork,
+    read_playlists,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
     button::{Button, ButtonRounded, ButtonVariants},
+    checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenu, PopupMenuItem},
     notification::Notification,
@@ -34,6 +36,64 @@ use crate::tag_tools::{FormEvent, RenameForm, ReplaceForm, ReviewEvent, ReviewVi
 const SCAN_REFRESH: Duration = Duration::from_millis(400);
 /// How often it is refreshed while tracks are being analysed.
 const ANALYSIS_REFRESH: Duration = Duration::from_secs(2);
+
+enum PlaylistPickEvent {
+    Import(Vec<ImportedPlaylist>),
+}
+
+struct PlaylistPicker {
+    playlists: Vec<ImportedPlaylist>,
+    selected: Vec<bool>,
+    errors: Vec<String>,
+}
+
+impl EventEmitter<PlaylistPickEvent> for PlaylistPicker {}
+
+impl Render for PlaylistPicker {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.selected.iter().filter(|selected| **selected).count();
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_sm().child(format!(
+                "Found {} playlist{} in the added folder. Choose which to add; tracks already scanned will be reused.",
+                self.playlists.len(), if self.playlists.len() == 1 { "" } else { "s" }
+            )))
+            .child(
+                div().id("playlist-picker-list").overflow_y_scroll().max_h(px(360.)).flex().flex_col().gap_1()
+                    .children(self.playlists.iter().enumerate().map(|(index, playlist)| {
+                        Checkbox::new(("found-playlist", index))
+                            .label(format!("{} ({} tracks)", playlist.name, playlist.files.len()))
+                            .checked(self.selected[index])
+                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                this.selected[index] = *checked;
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .when(!self.errors.is_empty(), |panel| panel.child(
+                div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
+                    "{} unreadable playlist file{} skipped.",
+                    self.errors.len(), if self.errors.len() == 1 { " was" } else { "s were" }
+                )),
+            ))
+            .child(
+                div().flex().justify_end().gap_2()
+                    .child(Button::new("skip-found-playlists").outline().label("Skip")
+                        .on_click(|_, window, cx| window.close_dialog(cx)))
+                    .child(Button::new("import-found-playlists").primary()
+                        .label(format!("Add {selected} selected"))
+                        .disabled(selected == 0)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let chosen = this.playlists.iter().zip(&this.selected)
+                                .filter_map(|(playlist, selected)| selected.then_some(playlist.clone()))
+                                .collect();
+                            cx.emit(PlaylistPickEvent::Import(chosen));
+                        }))),
+            )
+    }
+}
 /// What a menu entry does to the library view.
 type MenuAction = Box<dyn Fn(&mut LibraryView, &mut Window, &mut Context<LibraryView>)>;
 
@@ -850,6 +910,11 @@ pub struct LibraryView {
     sources: Vec<Source>,
     /// The source being shown, or `None` for all tracks.
     selected: Option<i64>,
+    selected_subfolder: Option<PathBuf>,
+    source_subfolders: Vec<(i64, PathBuf)>,
+    source_folder_parents: HashSet<(i64, PathBuf)>,
+    source_folders_dirty: bool,
+    expanded_source_folders: HashSet<(i64, PathBuf)>,
     playlists: Vec<Playlist>,
     /// The playlist open in the Playlists section.
     playlist: Option<i64>,
@@ -896,6 +961,7 @@ pub struct LibraryView {
     flow: Option<Entity<crate::flow_view::FlowView>>,
     /// Whether tracks are being analysed in the background.
     analysing: bool,
+    analysis_error: Option<String>,
     analysis: Arc<crate::analysis::Progress>,
 }
 
@@ -989,6 +1055,11 @@ impl LibraryView {
             origin: Origin::All,
             sources: Vec::new(),
             selected: None,
+            selected_subfolder: None,
+            source_subfolders: Vec::new(),
+            source_folder_parents: HashSet::new(),
+            source_folders_dirty: true,
+            expanded_source_folders: HashSet::new(),
             playlists: Vec::new(),
             playlist: None,
             crates: Vec::new(),
@@ -1019,6 +1090,7 @@ impl LibraryView {
             wheel_key: None,
             key_counts: HashMap::new(),
             analysing: false,
+            analysis_error: None,
             analysis: Arc::default(),
         };
         if !compact && let Some(settings) = cx.try_global::<crate::settings::Settings>().cloned() {
@@ -1034,12 +1106,16 @@ impl LibraryView {
         // Pick up anything that changed on disk since the last run.
         // The Library tab does this; the browser shares its database.
         let sources = if scan && !compact {
-            view.sources.clone()
+            view.sources
+                .iter()
+                .filter(|source| source.kind == SourceKind::Folder)
+                .cloned()
+                .collect()
         } else {
             Vec::new()
         };
-        for source in sources {
-            view.scan(source.id, cx);
+        if !sources.is_empty() {
+            view.scan_added_folders(sources, window, cx);
         }
         view.analyse(cx);
         if !compact {
@@ -1193,6 +1269,8 @@ impl LibraryView {
             return;
         }
         self.analysing = true;
+        self.analysis_error = None;
+        self.analysis.cancel.store(false, AtomicOrdering::Relaxed);
         let db_path = self.db_path.clone();
         let progress = self.analysis.clone();
         let range = self.tempo_range;
@@ -1217,7 +1295,10 @@ impl LibraryView {
                     // go round again until a pass finds nothing to do.
                     Ok(()) if analysed_some => this.analyse(cx),
                     Ok(()) => {}
-                    Err(error) => this.error = Some(error.to_string().into()),
+                    Err(error) => {
+                        this.analysis_error = Some(error.to_string());
+                        this.error = Some(error.to_string().into());
+                    }
                 }
                 this.reload(cx);
             })
@@ -1322,7 +1403,7 @@ impl LibraryView {
             .map(|(id, _)| *id)
             .filter(|_| self.compact && self.suggesting);
         let loaded = (|| {
-            let tracks = if let Some(reference) = suggest_for {
+            let mut tracks: Vec<Track> = if let Some(reference) = suggest_for {
                 library
                     .suggest_next(reference, SUGGESTIONS)?
                     .into_iter()
@@ -1335,6 +1416,15 @@ impl LibraryView {
             } else {
                 library.tracks(&query)?
             };
+            if !in_playlists
+                && !in_crates
+                && let (Some(source), Some(folder)) = (self.selected, &self.selected_subfolder)
+            {
+                if let Some(root) = library.source(source)? {
+                    let path = Path::new(&root.location).join(folder);
+                    tracks.retain(|track| track.path.starts_with(&path));
+                }
+            }
             self.key_counts = library.key_counts()?;
             if !self.compact {
                 self.groups = library.groups()?;
@@ -1347,6 +1437,9 @@ impl LibraryView {
                 .collect();
             Ok::<_, djcraft_library::Error>((
                 library.sources()?,
+                self.source_folders_dirty
+                    .then(|| library.source_subfolders())
+                    .transpose()?,
                 library.playlists()?,
                 library.crates()?,
                 tracks,
@@ -1354,8 +1447,20 @@ impl LibraryView {
             ))
         })();
         match loaded {
-            Ok((sources, playlists, crates, tracks, played)) => {
+            Ok((sources, subfolders, playlists, crates, tracks, played)) => {
                 self.sources = sources;
+                if let Some(subfolders) = subfolders {
+                    self.source_folder_parents = subfolders
+                        .iter()
+                        .filter_map(|(source, path)| {
+                            path.parent()
+                                .filter(|parent| !parent.as_os_str().is_empty())
+                                .map(|parent| (*source, parent.to_path_buf()))
+                        })
+                        .collect();
+                    self.source_subfolders = subfolders;
+                    self.source_folders_dirty = false;
+                }
                 self.playlists = playlists.clone();
                 self.crates = crates.clone();
                 let smart = query
@@ -2391,6 +2496,20 @@ impl LibraryView {
         self.reload(cx);
     }
 
+    pub fn analysis_progress(&self) -> Arc<crate::analysis::Progress> {
+        self.analysis.clone()
+    }
+
+    pub fn analysis_status(&self) -> String {
+        if let Some(error) = &self.analysis_error {
+            format!("Analysis stopped: {error}")
+        } else if self.analysing && self.analysis.total.load(AtomicOrdering::Relaxed) == 0 {
+            "Checking for tracks to analyse…".into()
+        } else {
+            self.analysis.status()
+        }
+    }
+
     /// The full Library owns analysis, including changes scanned by the browser.
     pub fn refresh_and_analyse(&mut self, cx: &mut Context<Self>) {
         self.reload(cx);
@@ -2398,7 +2517,7 @@ impl LibraryView {
     }
 
     /// Explicitly discover additions/changes on disk, rather than only reloading SQLite.
-    fn refresh_folders(&mut self, cx: &mut Context<Self>) {
+    fn refresh_folders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.running_scans > 0 {
             return;
         }
@@ -2407,7 +2526,7 @@ impl LibraryView {
             .sources
             .iter()
             .filter(|source| source.kind == SourceKind::Folder)
-            .map(|source| source.id)
+            .cloned()
             .collect();
         self.error = None;
         self.scan_counters.done.store(0, AtomicOrdering::Relaxed);
@@ -2415,9 +2534,7 @@ impl LibraryView {
         if folders.is_empty() {
             self.notice = Some("Add a music folder to refresh its contents.".into());
         } else {
-            for id in folders {
-                self.scan(id, cx);
-            }
+            self.scan_added_folders(folders, window, cx);
         }
         cx.notify();
     }
@@ -2428,6 +2545,16 @@ impl LibraryView {
             self.browser_section = BrowserSection::Folders;
         }
         self.selected = source;
+        self.selected_subfolder = None;
+        self.group = None;
+        self.reload(cx);
+    }
+
+    fn select_subfolder(&mut self, source: i64, path: PathBuf, cx: &mut Context<Self>) {
+        self.section = Section::Library;
+        self.browser_section = BrowserSection::Folders;
+        self.selected = Some(source);
+        self.selected_subfolder = Some(path);
         self.group = None;
         self.reload(cx);
     }
@@ -2959,31 +3086,34 @@ impl LibraryView {
                 match result {
                     Ok(summary) => {
                         this.error = None;
-                        this.notice = Some(import_notice(summary).into());
+                        this.notice =
+                            Some(import_notice(summary, "not found on this computer").into());
                         this.section = Section::Playlists;
                     }
                     Err(error) => this.error = Some(error.to_string().into()),
                 }
                 this.reload(cx);
                 this.analyse(cx);
+                cx.emit(LibraryEvent::Changed);
             })
             .ok();
         })
         .detach();
     }
 
-    fn add_folder(&mut self, cx: &mut Context<Self>) {
+    fn add_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: true,
             prompt: Some("Add".into()),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
                 return;
             };
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
+                let mut added = Vec::new();
                 for path in paths {
                     let Some(library) = &this.library else {
                         return;
@@ -2991,12 +3121,151 @@ impl LibraryView {
                     match library.add_folder(&path) {
                         Ok(source) => {
                             this.watch(&source);
-                            this.scan(source.id, cx);
+                            added.push(source);
                         }
                         Err(error) => this.error = Some(error.to_string().into()),
                     }
                 }
+                this.source_folders_dirty = true;
                 this.reload(cx);
+                if !added.is_empty() {
+                    this.scan_added_folders(added, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Scan audio first, then offer any playlists found underneath the roots.
+    fn scan_added_folders(
+        &mut self,
+        sources: Vec<Source>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let db_path = self.db_path.clone();
+        let counters = self.scan_counters.clone();
+        let scan = cx.background_spawn(async move {
+            let mut library = Library::open(&db_path)?;
+            let mut playlists = Vec::new();
+            let mut playlist_errors = Vec::new();
+            for source in sources {
+                library.scan(source.id, |progress| {
+                    counters.done.store(progress.done, AtomicOrdering::Relaxed);
+                    counters
+                        .total
+                        .store(progress.total, AtomicOrdering::Relaxed);
+                })?;
+                let (found, errors) = discover_playlists(Path::new(&source.location));
+                playlists.extend(found);
+                playlist_errors.extend(errors);
+            }
+            let existing: HashSet<_> = library
+                .playlists()?
+                .into_iter()
+                .map(|playlist| playlist.name)
+                .collect();
+            playlists.retain(|playlist| !existing.contains(&playlist.name));
+            Ok::<_, djcraft_library::Error>((playlists, playlist_errors))
+        });
+        self.running_scans += 1;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = scan.await;
+            this.update_in(cx, |this, window, cx| {
+                this.running_scans -= 1;
+                this.source_folders_dirty = true;
+                this.reload(cx);
+                cx.emit(LibraryEvent::Changed);
+                if this.running_scans == 0 {
+                    this.analyse(cx);
+                }
+                match result {
+                    Ok((playlists, errors)) if !playlists.is_empty() => {
+                        this.offer_playlists(playlists, errors, window, cx);
+                    }
+                    Ok((_, errors)) if !errors.is_empty() => {
+                        this.error = Some(
+                            format!("{} playlist file(s) could not be read.", errors.len()).into(),
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => this.error = Some(error.to_string().into()),
+                }
+            })
+            .ok();
+        })
+        .detach();
+        if self.running_scans == 1 {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(SCAN_REFRESH).await;
+                    let scanning = this.update(cx, |this, cx| {
+                        this.reload(cx);
+                        this.running_scans > 0
+                    });
+                    if !scanning.unwrap_or(false) {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn offer_playlists(
+        &mut self,
+        playlists: Vec<ImportedPlaylist>,
+        errors: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = playlists.len();
+        let picker = cx.new(|_| PlaylistPicker {
+            selected: vec![true; count],
+            playlists,
+            errors,
+        });
+        cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, event: &PlaylistPickEvent, window, cx| {
+                let PlaylistPickEvent::Import(selected) = event;
+                this.import_selected_playlists(selected.clone(), cx);
+                window.close_dialog(cx);
+            },
+        )
+        .detach();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title("Playlists found in music folder")
+                .w(px(560.))
+                .child(picker.clone())
+        });
+    }
+
+    fn import_selected_playlists(
+        &mut self,
+        playlists: Vec<ImportedPlaylist>,
+        cx: &mut Context<Self>,
+    ) {
+        let db_path = self.db_path.clone();
+        let import = cx.background_spawn(async move {
+            Library::open(&db_path)?.link_scanned_playlists(&playlists)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = import.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(summary) => {
+                        this.notice =
+                            Some(import_notice(summary, "not in the scanned library").into());
+                        this.error = None;
+                    }
+                    Err(error) => this.error = Some(error.to_string().into()),
+                }
+                this.reload(cx);
+                cx.emit(LibraryEvent::Changed);
             })
             .ok();
         })
@@ -3015,7 +3284,9 @@ impl LibraryView {
         }
         if self.selected == Some(id) {
             self.selected = None;
+            self.selected_subfolder = None;
         }
+        self.source_folders_dirty = true;
         self.reload(cx);
     }
 
@@ -3042,6 +3313,7 @@ impl LibraryView {
                 if let Err(error) = result {
                     this.error = Some(error.to_string().into());
                 }
+                this.source_folders_dirty = true;
                 this.reload(cx);
                 cx.emit(LibraryEvent::Changed);
                 if let (Section::Flow, Some(flow)) = (this.section, &this.flow) {
@@ -3243,9 +3515,12 @@ impl LibraryView {
                 .px_2()
                 .rounded_md()
                 .text_sm()
-                .when(self.selected == source && self.group.is_none(), |this| {
-                    this.bg(hover)
-                })
+                .when(
+                    self.selected == source
+                        && self.selected_subfolder.is_none()
+                        && self.group.is_none(),
+                    |this| this.bg(hover),
+                )
                 .hover(|style| style.bg(hover))
                 .child(Icon::new(icon).small().text_color(muted))
                 .child(div().flex_1().min_w_0().truncate().child(label))
@@ -3271,30 +3546,120 @@ impl LibraryView {
             ))
             .children(self.sources.iter().map(|source| {
                 let id = source.id;
-                div()
-                    .flex()
-                    .items_center()
-                    .child(div().flex_1().min_w_0().child(row(
-                        ("source", id as usize).into(),
-                        match source.kind {
-                            SourceKind::Folder => IconName::FolderOpen,
-                            SourceKind::Files => IconName::Music,
-                        },
-                        source.name.clone().into(),
-                        Some(id),
-                    )))
-                    .when(!self.compact, |this| {
-                        this.child(
-                            Button::new(("remove-source", id as usize))
+                let folders: Vec<_> = self
+                    .source_subfolders
+                    .iter()
+                    .filter(|(source_id, _)| *source_id == id)
+                    .filter(|(_, path)| {
+                        let mut parent = path.parent();
+                        while let Some(ancestor) =
+                            parent.filter(|path| !path.as_os_str().is_empty())
+                        {
+                            if !self
+                                .expanded_source_folders
+                                .contains(&(id, ancestor.to_path_buf()))
+                            {
+                                return false;
+                            }
+                            parent = ancestor.parent();
+                        }
+                        true
+                    })
+                    .map(|(_, path)| {
+                        let path = path.clone();
+                        let depth = path.components().count().min(8);
+                        let selected = self.selected == Some(id)
+                            && self.selected_subfolder.as_ref() == Some(&path);
+                        let has_children = self.source_folder_parents.contains(&(id, path.clone()));
+                        let expanded = self.expanded_source_folders.contains(&(id, path.clone()));
+                        let toggle_path = path.clone();
+                        let select_path = path.clone();
+                        div()
+                            .flex()
+                            .items_center()
+                            .h(px(30.))
+                            .pl(px((depth as f32) * 12.))
+                            .when(selected, |row| row.bg(hover))
+                            .hover(|style| style.bg(hover))
+                            .child(
+                                Button::new(format!(
+                                    "source-folder-toggle-{id}-{}",
+                                    path.display()
+                                ))
                                 .ghost()
                                 .xsmall()
-                                .icon(IconName::Minus)
-                                .tooltip("Remove from library (files are kept)")
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_source(id, cx)),
-                                ),
-                        )
+                                .icon(if has_children {
+                                    if expanded {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    }
+                                } else {
+                                    IconName::Folder
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let key = (id, toggle_path.clone());
+                                        if has_children {
+                                            if !this.expanded_source_folders.insert(key.clone()) {
+                                                this.expanded_source_folders.remove(&key);
+                                            }
+                                            cx.notify();
+                                        } else {
+                                            this.select_subfolder(id, toggle_path.clone(), cx);
+                                        }
+                                    },
+                                )),
+                            )
+                            .child(
+                                div()
+                                    .id(format!("source-folder-row-{id}-{}", path.display()))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .child(
+                                        path.file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string(),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.select_subfolder(id, select_path.clone(), cx)
+                                    })),
+                            )
                     })
+                    .collect();
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .child(div().flex_1().min_w_0().child(row(
+                                ("source", id as usize).into(),
+                                match source.kind {
+                                    SourceKind::Folder => IconName::FolderOpen,
+                                    SourceKind::Files => IconName::Music,
+                                },
+                                source.name.clone().into(),
+                                Some(id),
+                            )))
+                            .when(!self.compact, |this| {
+                                this.child(
+                                    Button::new(("remove-source", id as usize))
+                                        .ghost()
+                                        .xsmall()
+                                        .icon(IconName::Minus)
+                                        .tooltip("Remove from library (files are kept)")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.remove_source(id, cx)
+                                        })),
+                                )
+                            }),
+                    )
+                    .children(folders)
             }))
             .when(!self.compact && !self.groups.is_empty(), |this| {
                 this.child(
@@ -3362,7 +3727,9 @@ impl LibraryView {
                             .outline()
                             .icon(IconName::Plus)
                             .label("Add folder")
-                            .on_click(cx.listener(|this, _, _, cx| this.add_folder(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_folder(window, cx)),
+                            ),
                     )
             })
     }
@@ -4323,7 +4690,7 @@ impl LibraryView {
                         .label(if self.running_scans > 0 { "Refreshing…" } else { "Refresh" })
                         .tooltip("Rescan all added music folders for new and changed tracks.")
                         .disabled(self.running_scans > 0 || self.library.is_none())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh_folders(cx))))
+                        .on_click(cx.listener(|this, _, window, cx| this.refresh_folders(window, cx))))
                     .child(div().flex_1())
                     .child(
                         div()
@@ -4400,7 +4767,7 @@ impl LibraryView {
     }
 }
 
-fn import_notice(summary: ImportSummary) -> String {
+fn import_notice(summary: ImportSummary, missing_reason: &str) -> String {
     let plural = |count: usize, word: &str| {
         if count == 1 {
             format!("1 {word}")
@@ -4415,7 +4782,7 @@ fn import_notice(summary: ImportSummary) -> String {
     );
     if summary.missing > 0 {
         notice.push_str(&format!(
-            " {} not found on this computer.",
+            " {} {missing_reason}.",
             plural(summary.missing, "file")
         ));
     }

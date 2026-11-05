@@ -30,7 +30,7 @@ pub use flow::{
     ClipPlacement, FLOW_LANES, Flow, FlowClip, MAX_CLIP_SPEED, MAX_KEY_SHIFT, MIN_CLIP_SECONDS,
     MIN_CLIP_SPEED,
 };
-pub use import::{ImportSummary, ImportedPlaylist, read_playlists};
+pub use import::{ImportSummary, ImportedPlaylist, discover_playlists, read_playlists};
 pub use organise::{
     DuplicateGroup, EnergyBand, Group, GroupCount, KeyFit, PlaylistFolder, Rule, SmartRules,
     Suggestion, TextField, TextOp,
@@ -1284,6 +1284,28 @@ impl Library {
             .prepare("SELECT id, name, location, kind FROM sources ORDER BY name COLLATE NOCASE")?;
         let sources = statement.query_map([], source_from_row)?;
         Ok(sources.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Subfolders containing scanned tracks, including their parent folders.
+    pub fn source_subfolders(&self) -> Result<Vec<(i64, PathBuf)>> {
+        let mut statement = self.conn.prepare(
+            "SELECT t.source_id, t.locator FROM tracks t JOIN sources s ON s.id=t.source_id WHERE s.kind='folder' AND t.missing=0",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut folders = std::collections::HashSet::new();
+        for row in rows {
+            let (source, locator) = row?;
+            let mut parent = Path::new(&locator).parent();
+            while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
+                folders.insert((source, path.to_path_buf()));
+                parent = path.parent();
+            }
+        }
+        let mut folders: Vec<_> = folders.into_iter().collect();
+        folders.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        Ok(folders)
     }
 
     /// Removes a source and its tracks from the library. Files are untouched.

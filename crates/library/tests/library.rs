@@ -4,7 +4,7 @@ use djcraft_library::{
     AlignOptions, Camelot, Cleanup, ClipPlacement, CuePoint, EnergyBand, FolderWatcher, Group,
     ImportSummary, KeepTagged, KeyFit, KeyResult, Library, Placement, Rule, ScanSummary,
     SmartRules, SourceKind, TagField, TempoResult, TextField, TextOp, TrackEdit, TrackQuery,
-    read_artwork, read_playlists,
+    discover_playlists, read_artwork, read_playlists,
 };
 use lofty::config::WriteOptions;
 use lofty::tag::{Accessor, ItemKey, Tag, TagExt, TagType};
@@ -983,6 +983,62 @@ fn imports_a_selected_playlist_folder() {
     assert_eq!(playlists[0].name, "Events / Party");
     assert_eq!(playlists[1].name, "Set");
     assert_eq!(playlists[1].files, vec![folder.0.join("track.mp3")]);
+}
+
+#[test]
+fn added_folder_discovers_nested_playlists_and_reuses_scanned_tracks() {
+    let root = TempDir::new("nested-playlist-discovery");
+    let music = root.0.join("DJ Library");
+    let tracks = music.join("House/Deep");
+    std::fs::create_dir_all(&tracks).unwrap();
+    let track = tracks.join("one.wav");
+    write_wav(&track);
+    std::fs::write(music.join("House/Set.m3u8"), "Deep/one.wav\nDeep/one.wav\n").unwrap();
+    std::fs::write(music.join("bad.xml"), "<DJ_PLAYLISTS").unwrap();
+
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&music).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let scanned = library.tracks(&TrackQuery::default()).unwrap();
+    assert_eq!(scanned.len(), 1);
+    assert_eq!(scanned[0].source_id, source.id);
+    assert_eq!(
+        library.source_subfolders().unwrap(),
+        vec![
+            (source.id, std::path::PathBuf::from("House")),
+            (source.id, std::path::PathBuf::from("House/Deep")),
+        ]
+    );
+
+    let (playlists, errors) = discover_playlists(&music);
+    assert_eq!(playlists.len(), 1);
+    assert_eq!(playlists[0].name, "House / Set");
+    assert_eq!(errors.len(), 1);
+    let summary = library.link_scanned_playlists(&playlists).unwrap();
+    assert_eq!(summary.playlists, 1);
+    assert_eq!(summary.tracks, 2);
+    let playlist_id = library.playlists().unwrap()[0].id;
+    let entries = library
+        .tracks(&TrackQuery {
+            playlist: Some(playlist_id),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|entry| entry.id == scanned[0].id));
+    assert_eq!(library.tracks(&TrackQuery::default()).unwrap().len(), 1);
+    assert_eq!(library.sources().unwrap().len(), 1);
+    let outside = root.0.join("outside.wav");
+    write_wav(&outside);
+    let missing = library
+        .link_scanned_playlists(&[djcraft_library::ImportedPlaylist {
+            name: "Outside".into(),
+            files: vec![outside],
+        }])
+        .unwrap();
+    assert_eq!(missing.missing, 1);
+    assert_eq!(library.tracks(&TrackQuery::default()).unwrap().len(), 1);
+    assert_eq!(library.sources().unwrap().len(), 1);
 }
 
 #[test]

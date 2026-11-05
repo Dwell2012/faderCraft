@@ -424,24 +424,32 @@ pub(crate) fn unix_seconds(time: SystemTime) -> i64 {
 /// Finds audio files under `dir`, skipping hidden files and folders.
 /// Unreadable folders are skipped.
 pub(crate) fn collect_audio_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        // `metadata` follows symlinks, so linked folders and files count.
-        let Ok(metadata) = path.metadata() else {
-            continue;
+    fn walk(dir: &Path, files: &mut Vec<PathBuf>, visited: &mut HashSet<PathBuf>) {
+        let Ok(canonical) = dir.canonicalize() else {
+            return;
         };
-        if metadata.is_dir() {
-            collect_audio_files(&path, files);
-        } else if is_audio_file(&path) {
-            files.push(path);
+        if !visited.insert(canonical) {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let Ok(metadata) = path.metadata() else {
+                continue;
+            };
+            if metadata.is_dir() {
+                walk(&path, files, visited);
+            } else if is_audio_file(&path) {
+                files.push(path);
+            }
         }
     }
+    walk(dir, files, &mut HashSet::new());
 }
 
 /// Whether a path has the extension of a format the library reads.

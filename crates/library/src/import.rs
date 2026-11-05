@@ -68,6 +68,87 @@ pub fn read_playlists(path: &Path) -> Result<Vec<ImportedPlaylist>> {
     }
 }
 
+/// Discover supported playlist files anywhere below an added music folder.
+/// Each file is parsed separately, so a damaged playlist cannot hide the
+/// other playlists or stop the audio scan. Names retain their relative folder.
+pub fn discover_playlists(root: &Path) -> (Vec<ImportedPlaylist>, Vec<String>) {
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        visited: &mut std::collections::HashSet<PathBuf>,
+        playlists: &mut Vec<ImportedPlaylist>,
+        errors: &mut Vec<String>,
+    ) {
+        let Ok(canonical) = dir.canonicalize() else {
+            return;
+        };
+        if !visited.insert(canonical) {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                walk(root, &path, visited, playlists, errors);
+                continue;
+            }
+            let extension = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if !matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "m3u" | "m3u8" | "vdjfolder" | "xml"
+            ) {
+                continue;
+            }
+            if extension.eq_ignore_ascii_case("xml")
+                && !std::fs::read_to_string(&path).is_ok_and(|text| text.contains("DJ_PLAYLISTS"))
+            {
+                continue;
+            }
+            match read_playlists(&path) {
+                Ok(found) => {
+                    let prefix = path
+                        .parent()
+                        .and_then(|parent| parent.strip_prefix(root).ok());
+                    for mut playlist in found {
+                        if let Some(prefix) = prefix.filter(|prefix| !prefix.as_os_str().is_empty())
+                        {
+                            playlist.name = format!(
+                                "{} / {}",
+                                prefix.to_string_lossy().replace(['/', '\\'], " / "),
+                                playlist.name
+                            );
+                        }
+                        playlists.push(playlist);
+                    }
+                }
+                Err(error) => errors.push(format!("{}: {error}", path.display())),
+            }
+        }
+    }
+    let mut playlists = Vec::new();
+    let mut errors = Vec::new();
+    walk(
+        root,
+        root,
+        &mut Default::default(),
+        &mut playlists,
+        &mut errors,
+    );
+    (playlists, errors)
+}
+
 fn xml_error(error: roxmltree::Error) -> Error {
     Error::Import(format!("not valid XML: {error}"))
 }
@@ -260,6 +341,24 @@ impl Library {
     /// the same name if there is one. Tracks the library does not have are
     /// added to it; files that are not on disk are counted and skipped.
     pub fn import_playlists(&mut self, playlists: &[ImportedPlaylist]) -> Result<ImportSummary> {
+        self.import_playlists_with_policy(playlists, true)
+    }
+
+    /// Link discovered playlists only to tracks already scanned into the
+    /// library. A playlist cannot silently create a second copy of a track or
+    /// bring in files outside the added music folder.
+    pub fn link_scanned_playlists(
+        &mut self,
+        playlists: &[ImportedPlaylist],
+    ) -> Result<ImportSummary> {
+        self.import_playlists_with_policy(playlists, false)
+    }
+
+    fn import_playlists_with_policy(
+        &mut self,
+        playlists: &[ImportedPlaylist],
+        add_missing: bool,
+    ) -> Result<ImportSummary> {
         let folders: Vec<_> = self
             .sources()?
             .into_iter()
@@ -274,7 +373,7 @@ impl Library {
                 let id = match track_ids.get(file.as_path()) {
                     Some(id) => *id,
                     None => {
-                        let id = self.track_for_file(file, &folders)?;
+                        let id = self.track_for_file(file, &folders, add_missing)?;
                         track_ids.insert(file, id);
                         id
                     }
@@ -323,7 +422,12 @@ impl Library {
     /// The library track for a file, adding it if needed. A file inside one
     /// of the library's folders belongs to that folder; any other file goes
     /// under the loose-files source. `None` if the file does not exist.
-    fn track_for_file(&self, file: &Path, folders: &[crate::Source]) -> Result<Option<i64>> {
+    fn track_for_file(
+        &self,
+        file: &Path,
+        folders: &[crate::Source],
+        add_missing: bool,
+    ) -> Result<Option<i64>> {
         let Ok(file) = crate::canonical(file) else {
             return Ok(None);
         };
@@ -339,6 +443,7 @@ impl Library {
                 let relative = file.strip_prefix(&folder.location).unwrap_or(&file);
                 (folder.id, relative.to_string_lossy().into_owned())
             }
+            None if !add_missing => return Ok(None),
             None => (
                 self.loose_files_source()?,
                 file.to_string_lossy().into_owned(),
@@ -355,6 +460,9 @@ impl Library {
         };
         if let Some(id) = find()? {
             return Ok(Some(id));
+        }
+        if !add_missing {
+            return Ok(None);
         }
         store_track(&self.conn, source_id, &locator, &file, stamp)?;
         Ok(find()?)
