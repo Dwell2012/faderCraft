@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crate::eq::Eq;
-use djcraft_protocol::{CrossfaderCurve, CrossfaderRouting, EqMode};
+use djcraft_protocol::{
+    BeatFxState, BeatFxTarget, CrossfaderCurve, CrossfaderRouting, EffectState, EqMode,
+};
 use signalsmith_stretch::Stretch;
 
 use crate::track::{CHANNELS, Track};
@@ -53,6 +55,9 @@ pub(crate) enum Command {
         deck: usize,
         grid: Option<djcraft_protocol::BeatGrid>,
     },
+    ColourFxAll {
+        states: [djcraft_protocol::ColourFxState; DECKS],
+    },
     ColourFx {
         deck: usize,
         state: djcraft_protocol::ColourFxState,
@@ -64,6 +69,9 @@ pub(crate) enum Command {
     },
     SamplerGain {
         level: f32,
+    },
+    MasterCue {
+        enabled: bool,
     },
     Monitor {
         monitor: djcraft_protocol::MonitorState,
@@ -118,6 +126,7 @@ pub(crate) enum Command {
         end: Option<f64>,
         play: bool,
         keep_loop: bool,
+        key_shift: Option<f32>,
     },
     Jump {
         deck: usize,
@@ -244,6 +253,11 @@ pub(crate) enum Command {
     },
     MasterGain {
         level: f32,
+    },
+    BeatFx {
+        state: BeatFxState,
+        retired: Option<(usize, EffectState)>,
+        slot: Option<(usize, EffectState)>,
     },
     BoothGain {
         level: f32,
@@ -407,6 +421,7 @@ struct Deck {
     scratch: Option<f64>,
     scratch_position: Option<f64>,
     scratch_velocity: Option<(f64, f64)>,
+    scratch_target_rebased: bool,
     scratch_follow_frames: f64,
     scratch_gain: f64,
     /// Current speed on the varispeed path; follows the target smoothly.
@@ -429,6 +444,19 @@ struct Deck {
 }
 
 impl Deck {
+    fn set_colour_fx(&mut self, state: djcraft_protocol::ColourFxState) {
+        self.colour_state = state;
+        for (effect, settings) in self.colour_fx.iter_mut().zip(state.effects()) {
+            effect.set(settings);
+            if !state.enabled {
+                effect.kill();
+            }
+        }
+        if !state.enabled {
+            self.noise_gains = [0.; 2];
+        }
+    }
+
     fn start_slip(&mut self, reason: u8) {
         if !self.slip_enabled || (!self.playing && self.slip_position.is_none()) {
             return;
@@ -554,6 +582,7 @@ impl Deck {
             scratch: None,
             scratch_position: None,
             scratch_velocity: None,
+            scratch_target_rebased: false,
             scratch_follow_frames: sample_rate as f64 * 0.015,
             scratch_gain: 0.,
             speed: 0.0,
@@ -866,7 +895,17 @@ impl Deck {
                             .clamp(-MAX_SCRATCH_SPEED, MAX_SCRATCH_SPEED);
                         self.speed += (desired - self.speed) * self.speed_smoothing;
                         if self.speed.signum() == distance.signum() {
-                            self.speed = self.speed.clamp(-distance.abs(), distance.abs());
+                            // Ease into the measured target over a fraction of
+                            // the packet horizon so jitter cannot park the head
+                            // abruptly between otherwise continuous packets.
+                            let limit = if let Some((_, follow)) = self.scratch_velocity
+                                && !self.scratch_target_rebased
+                            {
+                                distance.abs() / (follow * 0.5).max(1.)
+                            } else {
+                                distance.abs()
+                            };
+                            self.speed = self.speed.clamp(-limit, limit);
                         }
                     }
                     // Keep full volume even at slow wheel speeds and through
@@ -1274,6 +1313,8 @@ pub struct Mixer {
     sampler_buffer: Box<[f32]>,
     monitor_gain: f32,
     monitor_mix: f32,
+    master_cue_enabled: bool,
+    master_cue_gain: f32,
     monitor: djcraft_protocol::MonitorState,
     cue_gains: [f32; DECKS],
     monitor_buffer: Box<[f32]>,
@@ -1285,6 +1326,8 @@ pub struct Mixer {
     shared: Arc<Shared>,
     decks: [Deck; DECKS],
     master_gain: f32,
+    beat_fx_state: BeatFxState,
+    beat_fx: crate::effects::Effect,
     current_master: f32,
     booth_gain: f32,
     current_booth: f32,
@@ -1311,6 +1354,8 @@ impl Mixer {
             sampler_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
             monitor_gain: 0.5,
             monitor_mix: 0.,
+            master_cue_enabled: false,
+            master_cue_gain: 0.,
             cue_gains: [1., 0., 0., 0.],
             monitor_buffer: vec![0.; BLOCK * CHANNELS].into_boxed_slice(),
             fade: None,
@@ -1325,6 +1370,9 @@ impl Mixer {
                 deck
             }),
             master_gain: 1.0,
+            beat_fx_state: BeatFxState::default(),
+            // 32 beats at 20 BPM plus pitch-shifting headroom, allocated here.
+            beat_fx: crate::effects::Effect::with_delay_seconds(sample_rate, 97),
             current_master: 1.,
             booth_gain: 1.0,
             current_booth: 1.0,
@@ -1611,6 +1659,7 @@ impl Mixer {
                 end,
                 play,
                 keep_loop,
+                key_shift,
             } => {
                 let deck = &mut self.decks[deck];
                 if keep_loop {
@@ -1618,6 +1667,9 @@ impl Mixer {
                     if end.is_some() {
                         deck.start_slip(SLIP_LOOP);
                     }
+                }
+                if let Some(semitones) = key_shift {
+                    deck.key_shift = semitones;
                 }
                 deck.position = frame;
                 deck.prepared_at = None;
@@ -1686,16 +1738,11 @@ impl Mixer {
                 self.decks[deck].effect_bpm = bpm;
             }
             Command::ColourFx { deck, state } => {
-                self.decks[deck].colour_state = state;
-                for (effect, settings) in self.decks[deck].colour_fx.iter_mut().zip(state.effects())
-                {
-                    effect.set(settings);
-                    if !state.enabled {
-                        effect.kill();
-                    }
-                }
-                if !state.enabled {
-                    self.decks[deck].noise_gains = [0.; 2];
+                self.decks[deck].set_colour_fx(state);
+            }
+            Command::ColourFxAll { states } => {
+                for (deck, state) in self.decks.iter_mut().zip(states) {
+                    deck.set_colour_fx(state);
                 }
             }
             Command::StemEffect { deck, stem, effect } => {
@@ -2014,6 +2061,7 @@ impl Mixer {
                 let deck = &mut self.decks[deck];
                 deck.start_slip(SLIP_SCRATCH);
                 deck.scratch_velocity = velocity;
+                deck.scratch_target_rebased = false;
                 if let Some(track) = &deck.track {
                     if deck.scratch_position.is_none() {
                         deck.scratch_gain = if deck.playing { 1. } else { 0. };
@@ -2049,7 +2097,7 @@ impl Mixer {
                     } else {
                         let frame = if let Some((speed, following)) = velocity {
                             let distance = frame - deck.position;
-                            let window = (speed.abs() * following * 2.).max(1.);
+                            let window = (speed.abs() * following * 3.).max(1.);
                             if speed != 0.
                                 && (distance.abs() > window || distance.signum() != speed.signum())
                             {
@@ -2057,6 +2105,7 @@ impl Mixer {
                                 // target seconds ahead of audible motion. Follow only
                                 // a bounded packet horizon in the measured direction;
                                 // never keep chasing that stale travel after stopping.
+                                deck.scratch_target_rebased = true;
                                 deck.position + speed * following
                             } else {
                                 frame
@@ -2082,9 +2131,35 @@ impl Mixer {
             Command::CrossfaderCurve { curve } => self.curve = curve,
             Command::CrossfaderRouting { routing } => self.routing = routing,
             Command::MasterGain { level } => self.master_gain = level,
+            Command::BeatFx {
+                state,
+                retired,
+                slot,
+            } => {
+                if let Some((deck, effect)) = retired {
+                    self.decks[deck].effects[0].set(effect);
+                    self.decks[deck].effects[0].kill();
+                }
+                if let Some((deck, effect)) = slot {
+                    self.decks[deck].effects[0].set(effect);
+                }
+                if state.target != self.beat_fx_state.target
+                    || state.kind != self.beat_fx_state.kind
+                {
+                    self.beat_fx.kill();
+                }
+                if !matches!(state.target, BeatFxTarget::Deck(_)) {
+                    self.beat_fx.set(EffectState {
+                        tails: false,
+                        ..state.effect(None).unwrap_or_default()
+                    });
+                }
+                self.beat_fx_state = state;
+            }
             Command::BoothGain { level } => self.booth_gain = level,
             Command::SamplerGain { level } => self.sampler_gain = level,
             Command::Monitor { monitor } => self.monitor = monitor,
+            Command::MasterCue { enabled } => self.master_cue_enabled = enabled,
         }
     }
 
@@ -2160,6 +2235,18 @@ impl Mixer {
                 }
             }
             let cross = crossfader_gains(self.crossfader, self.curve);
+            let beat_fx_target = self.beat_fx_state.kind.map(|_| self.beat_fx_state.target);
+            if matches!(
+                beat_fx_target,
+                Some(BeatFxTarget::Sampler | BeatFxTarget::Master)
+            ) {
+                let bpm = self
+                    .decks
+                    .iter()
+                    .filter(|deck| deck.playing)
+                    .find_map(|deck| deck.effect_bpm.map(|bpm| bpm * deck.tempo));
+                self.beat_fx.clock(Some(bpm.unwrap_or(120.)), true);
+            }
             for (index, deck) in self.decks.iter_mut().enumerate() {
                 let buffer = &mut self.deck_buffer[..block.len()];
                 let target = deck.volume;
@@ -2187,13 +2274,18 @@ impl Mixer {
                     deck.render_rhythm(buffer, pack, self.sample_rate);
                 }
                 let bpm = deck.effect_bpm.map(|bpm| bpm * deck.tempo);
-                for effect in deck
+                for (slot, effect) in deck
                     .effects
                     .iter_mut()
                     .chain(deck.colour_fx.iter_mut().rev())
+                    .enumerate()
                 {
                     effect.clock(
-                        bpm,
+                        if slot == 0 && beat_fx_target == Some(BeatFxTarget::Deck(index as u8)) {
+                            Some(bpm.unwrap_or(120.))
+                        } else {
+                            bpm
+                        },
                         source_running
                             || (deck.colour_state.active() && deck.colour_state.selected & 96 != 0),
                     );
@@ -2295,11 +2387,21 @@ impl Mixer {
                 .zip(sampler.chunks_exact(CHANNELS))
             {
                 self.current_sampler_gain += sampler_step;
+                let signal = if beat_fx_target == Some(BeatFxTarget::Sampler) {
+                    self.beat_fx.process([input[0], input[1]])
+                } else {
+                    [input[0], input[1]]
+                };
                 for c in 0..CHANNELS {
-                    out[c] += input[c] * self.current_sampler_gain;
+                    out[c] += signal[c] * self.current_sampler_gain;
                 }
             }
             self.current_sampler_gain = self.sampler_gain;
+            if beat_fx_target == Some(BeatFxTarget::Master) {
+                for frame in block.chunks_exact_mut(CHANNELS) {
+                    frame.copy_from_slice(&self.beat_fx.process([frame[0], frame[1]]));
+                }
+            }
             if let Some(booth_out) = booth.as_deref_mut() {
                 let start = block_index * BLOCK * CHANNELS;
                 let step = (self.booth_gain - self.current_booth) / frames as f32;
@@ -2324,10 +2426,12 @@ impl Mixer {
                 }
             }
             self.current_master = self.master_gain;
+            let master_cue_target = if self.master_cue_enabled { 1. } else { 0. };
             if let Some(cue_out) = headphones.as_deref_mut() {
                 let start = block_index * BLOCK * CHANNELS;
                 let gain_step = (self.monitor.gain - self.monitor_gain) / frames as f32;
                 let mix_step = (self.monitor.mix - self.monitor_mix) / frames as f32;
+                let master_cue_step = (master_cue_target - self.master_cue_gain) / frames as f32;
                 for ((output, cue), master) in cue_out[start..start + block.len()]
                     .chunks_exact_mut(CHANNELS)
                     .zip(self.monitor_buffer.chunks_exact(CHANNELS))
@@ -2335,9 +2439,11 @@ impl Mixer {
                 {
                     self.monitor_gain += gain_step;
                     self.monitor_mix += mix_step;
+                    self.master_cue_gain += master_cue_step;
                     let [cue_gain, master_gain] = cue_mix_gains(self.monitor_mix);
                     for c in 0..CHANNELS {
-                        output[c] = ((cue[c] * cue_gain + master[c] * master_gain)
+                        let cue_sample = cue[c] + master[c] * self.master_cue_gain;
+                        output[c] = ((cue_sample * cue_gain + master[c] * master_gain)
                             * self.monitor_gain)
                             .clamp(-1., 1.);
                     }
@@ -2345,6 +2451,7 @@ impl Mixer {
             }
             self.monitor_gain = self.monitor.gain;
             self.monitor_mix = self.monitor.mix;
+            self.master_cue_gain = master_cue_target;
             if let Some(mut fade) = self.fade {
                 fade.elapsed += frames as u64;
                 if fade.elapsed >= fade.total {

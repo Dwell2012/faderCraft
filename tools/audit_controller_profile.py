@@ -34,16 +34,35 @@ def expected_sources(reference):
         expected[prefix + "load"] = address(
             "note", 6, reference["load_notes"][deck_index]
         )
-        expected[prefix + "quantize-led"] = address("note", deck_index, 53)
+        for name, number in reference["deck_led_note"].items():
+            expected[prefix + name + "-led"] = address("note", deck_index, number)
+        expected[prefix + "load-led"] = address("note", 15, reference["load_led_notes"][deck_index])
+        expected[prefix + "jog"] = address("cc", deck_index, reference["jog_cc"])
         for slot in range(reference["hot_cue_slots"]):
             pad = f"{prefix}hot-cue-{slot + 1}"
             expected[pad] = address("note", 7 + 2 * deck_index, slot)
             expected[pad + "-delete"] = address("note", 8 + 2 * deck_index, slot)
             expected[pad + "-led"] = address("note", 7 + 2 * deck_index, slot)
+        for slot, number in enumerate(reference["sampler_pad_notes"], 1):
+            pad = f"{prefix}sampler-{slot}"
+            expected[pad + "-play"] = address("note", 7 + 2 * deck_index, number)
+            expected[pad + "-stop"] = address("note", 8 + 2 * deck_index, number)
+            expected[pad + "-led"] = address("note", 7 + 2 * deck_index, number)
+        for mode, notes in reference["performance_pad_notes"].items():
+            for slot, number in enumerate(notes, 1):
+                pad = f"{prefix}{mode}-pad-{slot}"
+                expected[pad] = address("note", 7 + 2 * deck_index, number)
+                expected[pad + "-shift"] = address("note", 8 + 2 * deck_index, number)
+    for name, number in reference["mixer_note"].items():
+        expected[name] = address("note", 6, number)
     for name, pair in reference["mixer_cc14"].items():
         expected[name] = address("cc14", 6, *pair)
     for name, number in reference["browser_cc"].items():
         expected[name] = address("cc", 6, number)
+    for name, number in reference["beat_fx_note"].items():
+        expected[name] = address("note", 4, number)
+    for name, pair in reference["beat_fx_cc14"].items():
+        expected[name] = address("cc14", 4, *pair)
     return expected
 
 

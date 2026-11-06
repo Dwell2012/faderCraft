@@ -90,20 +90,31 @@ pub enum StemModel {
     #[default]
     Fast,
     Detailed,
+    RocmFast,
+    RocmDetailed,
 }
 
 impl StemModel {
-    pub const ALL: [Self; 2] = [Self::Fast, Self::Detailed];
+    pub const ALL: [Self; 4] = [
+        Self::Fast,
+        Self::Detailed,
+        Self::RocmFast,
+        Self::RocmDetailed,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             Self::Fast => "htdemucs",
             Self::Detailed => "htdemucs_ft",
+            Self::RocmFast => "rocm-htdemucs",
+            Self::RocmDetailed => "rocm-htdemucs_ft",
         }
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Fast => "Fast",
-            Self::Detailed => "Detailed (fine-tuned)",
+            Self::Fast => "Fast (ONNX CPU)",
+            Self::Detailed => "Detailed (ONNX CPU)",
+            Self::RocmFast => "Fast (ROCm GPU)",
+            Self::RocmDetailed => "Detailed (ROCm GPU)",
         }
     }
 }

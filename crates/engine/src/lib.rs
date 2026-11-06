@@ -132,6 +132,9 @@ pub struct Engine {
     shared: Arc<Shared>,
     decks: [DeckControl; DECKS],
     master_gain: f32,
+    beat_fx: djcraft_protocol::BeatFxState,
+    colour_fx_bypassed: bool,
+    master_cue_enabled: bool,
     booth_gain: f32,
     sampler_gain: f32,
     monitor: djcraft_protocol::MonitorState,
@@ -309,6 +312,9 @@ impl Engine {
                 stem_gains: [1.; 4],
             }),
             master_gain: 1.0,
+            beat_fx: Default::default(),
+            colour_fx_bypassed: false,
+            master_cue_enabled: false,
             booth_gain: 1.0,
             sampler_gain: 1.,
             monitor: Default::default(),
@@ -589,6 +595,72 @@ impl Engine {
                 Ok(())
             }
             Action::Mixer {
+                action: MixerAction::ToggleColourFxBypass,
+            } => {
+                let bypassed = !self.colour_fx_bypassed;
+                let states = std::array::from_fn(|deck| {
+                    let mut state = self.decks[deck].colour_fx;
+                    state.enabled &= !bypassed;
+                    state
+                });
+                self.send(Command::ColourFxAll { states })?;
+                self.colour_fx_bypassed = bypassed;
+                Ok(())
+            }
+            Action::Mixer {
+                action: MixerAction::SetBeatFx { state },
+            } => {
+                if matches!(state.target, djcraft_protocol::BeatFxTarget::Deck(deck) if usize::from(deck) >= DECKS)
+                {
+                    return Err(Rejection::UnknownDeck);
+                }
+                unit_level(state.amount)?;
+                let max_beats = if matches!(state.target, djcraft_protocol::BeatFxTarget::Deck(_)) {
+                    8.
+                } else {
+                    32.
+                };
+                if !(0.125..=max_beats).contains(&state.beats)
+                    || (state.enabled && state.kind.is_none())
+                {
+                    return Err(Rejection::InvalidValue);
+                }
+                use djcraft_protocol::BeatFxTarget;
+                let retired = match self.beat_fx.target {
+                    BeatFxTarget::Deck(deck)
+                        if self.beat_fx.kind.is_some()
+                            && (self.beat_fx.target != state.target || state.kind.is_none()) =>
+                    {
+                        let deck = usize::from(deck);
+                        let mut effect = self.decks[deck].effects[0];
+                        effect.enabled = false;
+                        effect.beats = self.decks[deck].effect_beats;
+                        Some((deck, effect))
+                    }
+                    _ => None,
+                };
+                let slot = match state.target {
+                    BeatFxTarget::Deck(deck) => {
+                        let deck = usize::from(deck);
+                        let previous = (state.target == self.beat_fx.target
+                            && self.beat_fx.kind == state.kind)
+                            .then_some(self.decks[deck].effects[0]);
+                        state.effect(previous).map(|effect| (deck, effect))
+                    }
+                    _ => None,
+                };
+                self.send(Command::BeatFx {
+                    state,
+                    retired,
+                    slot,
+                })?;
+                for (deck, effect) in [retired, slot].into_iter().flatten() {
+                    self.decks[deck].effects[0] = effect;
+                }
+                self.beat_fx = state;
+                Ok(())
+            }
+            Action::Mixer {
                 action: MixerAction::SetMasterGain { level },
             } => {
                 let level = unit_level(level)?;
@@ -610,6 +682,14 @@ impl Engine {
                 let level = unit_level(level)?;
                 self.send(Command::SamplerGain { level })?;
                 self.sampler_gain = level;
+                Ok(())
+            }
+            Action::Mixer {
+                action: MixerAction::ToggleMasterCue,
+            } => {
+                let enabled = !self.master_cue_enabled;
+                self.send(Command::MasterCue { enabled })?;
+                self.master_cue_enabled = enabled;
                 Ok(())
             }
             Action::Mixer {
@@ -948,7 +1028,37 @@ impl Engine {
                     end: None,
                     play,
                     keep_loop: false,
+                    key_shift: None,
                 })?;
+                self.decks[deck].loop_region = None;
+                Ok(())
+            }
+            DeckAction::PlayKeyboardNote { slot, semitones } => {
+                let state = &self.decks[deck];
+                let cue = state
+                    .hot_cues
+                    .get(usize::from(slot))
+                    .copied()
+                    .flatten()
+                    .ok_or(Rejection::InvalidValue)?;
+                let available = state
+                    .track
+                    .as_ref()
+                    .map_or(0., |track| track.decoded_seconds());
+                if semitones > 12 || !(0. ..available).contains(&cue.seconds) {
+                    return Err(Rejection::InvalidValue);
+                }
+                let key_shift = f32::from(semitones);
+                self.send(Command::Cue {
+                    deck,
+                    frame: cue.seconds * self.sample_rate as f64,
+                    end: None,
+                    play: true,
+                    keep_loop: false,
+                    key_shift: Some(key_shift),
+                })?;
+                self.decks[deck].key_shift = key_shift;
+                self.decks[deck].processed_peak = None;
                 self.decks[deck].loop_region = None;
                 Ok(())
             }
@@ -981,6 +1091,7 @@ impl Engine {
                     end: end.map(|end| end * self.sample_rate as f64),
                     play,
                     keep_loop: true,
+                    key_shift: None,
                 })?;
                 self.decks[deck].loop_region = end
                     .map(|end| [cue.seconds, end])
@@ -1078,6 +1189,11 @@ impl Engine {
                 }
                 self.send(Command::EffectBeats { deck, beats })?;
                 self.decks[deck].effect_beats = beats;
+                if self.beat_fx.target == djcraft_protocol::BeatFxTarget::Deck(deck as u8)
+                    && self.beat_fx.kind.is_some()
+                {
+                    self.beat_fx.beats = beats;
+                }
                 for effect in &mut self.decks[deck].effects {
                     effect.beats = beats;
                 }
@@ -1093,7 +1209,14 @@ impl Engine {
                 {
                     return Err(Rejection::InvalidValue);
                 }
-                self.send(Command::ColourFx { deck, state })?;
+                let effective = djcraft_protocol::ColourFxState {
+                    enabled: state.enabled && !self.colour_fx_bypassed,
+                    ..state
+                };
+                self.send(Command::ColourFx {
+                    deck,
+                    state: effective,
+                })?;
                 self.decks[deck].colour_fx = state;
                 Ok(())
             }
@@ -1136,13 +1259,30 @@ impl Engine {
                 {
                     return Err(Rejection::InvalidValue);
                 }
-                effect.beats = self.decks[deck].effect_beats;
+                let beat_fx_slot = slot == 0
+                    && self.beat_fx.target == djcraft_protocol::BeatFxTarget::Deck(deck as u8)
+                    && self.beat_fx.kind.is_some();
+                effect.beats = if beat_fx_slot {
+                    self.beat_fx.beats
+                } else {
+                    self.decks[deck].effect_beats
+                };
                 self.send(Command::Effect {
                     deck,
                     slot: slot as usize,
                     effect,
                 })?;
                 self.decks[deck].effects[slot as usize] = effect;
+                if beat_fx_slot {
+                    self.beat_fx.kind = Some(effect.kind);
+                    self.beat_fx.enabled = effect.enabled;
+                    self.beat_fx.amount = if effect.kind == djcraft_protocol::EffectKind::PitchShift
+                    {
+                        ((effect.parameter - 0.5) * 2.).clamp(0., 1.)
+                    } else {
+                        effect.amount
+                    };
+                }
                 Ok(())
             }
             DeckAction::SetLoopRoll { enabled } => {
@@ -1658,6 +1798,9 @@ impl Engine {
                 })
                 .collect(),
             master_gain: self.master_gain,
+            beat_fx: self.beat_fx,
+            colour_fx_bypassed: self.colour_fx_bypassed,
+            master_cue_enabled: self.master_cue_enabled,
             booth_gain: self.booth_gain,
             sampler_gain: self.sampler_gain,
             monitor: self.monitor,

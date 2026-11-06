@@ -134,6 +134,7 @@ impl Shell {
                 | DeckAction::Unload
                 | DeckAction::Seek { .. }
                 | DeckAction::TriggerHotCue { .. }
+                | DeckAction::PlayKeyboardNote { .. }
                 | DeckAction::StartPadLoop { .. }
         ) {
             return self.cue_anchor[deck].clone();
@@ -1409,11 +1410,16 @@ fn playback_anchor(
         DeckAction::Seek { .. } if !state.playing => None,
         DeckAction::TriggerHotCue {
             slot, play: true, ..
-        } if !state.playing => state
-            .hot_cues
-            .get(usize::from(*slot))?
-            .map(|cue| (cue.seconds, state.path.clone()))
-            .or(old),
+        }
+        | DeckAction::PlayKeyboardNote { slot, .. }
+            if !state.playing =>
+        {
+            state
+                .hot_cues
+                .get(usize::from(*slot))?
+                .map(|cue| (cue.seconds, state.path.clone()))
+                .or(old)
+        }
         DeckAction::StartPadLoop { start, .. } if !state.playing => {
             Some((*start, state.path.clone()))
         }

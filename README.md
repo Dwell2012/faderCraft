@@ -30,8 +30,8 @@ for implemented features, limitations, and the broader roadmap.
   an estimate and needs checking against the tracks you play.
 - **Stems:** local separation into vocals, instruments, bass and drums, with
   cached results, stem controls and waveform overlays. Fast and Detailed models
-  can be downloaded in Audio settings. Native ONNX Runtime performs separation
-  without Python or PyTorch; see [stem setup](docs/STEMS.md).
+  can be downloaded in Audio settings. Use native ONNX on CPU or the optional
+  ROCm PyTorch worker on an AMD GPU. See [stem setup](docs/STEMS.md).
 - **Library:** searchable, sortable tracks; background scanning and folder
   watching; duplicate detection, missing-file relinking, artwork, metadata and
   played history. Supported audio formats include MP3, FLAC, WAV, AIFF, M4A,

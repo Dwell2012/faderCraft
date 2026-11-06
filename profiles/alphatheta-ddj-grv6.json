@@ -851,6 +851,569 @@
       }
     },
     {
+      "id": "deck_a-slip-led",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 0, "number": 64 },
+      "modifiers": [],
+      "binding": { "type": "led", "feedback": { "state": "slip", "deck": 0 } }
+    },
+    {
+      "id": "deck_b-slip-led",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 1, "number": 64 },
+      "modifiers": [],
+      "binding": { "type": "led", "feedback": { "state": "slip", "deck": 1 } }
+    },
+    {
+      "id": "deck_c-slip-led",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 2, "number": 64 },
+      "modifiers": [],
+      "binding": { "type": "led", "feedback": { "state": "slip", "deck": 2 } }
+    },
+    {
+      "id": "deck_d-slip-led",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 3, "number": 64 },
+      "modifiers": [],
+      "binding": { "type": "led", "feedback": { "state": "slip", "deck": 3 } }
+    },
+    {"id":"deck_a-sampler-1-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":0,"stop":false}}},
+    {"id":"deck_a-sampler-1-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":0,"stop":true}}},
+    {"id":"deck_a-sampler-1-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":48},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":0}}},
+    {"id":"deck_a-sampler-2-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":1,"stop":false}}},
+    {"id":"deck_a-sampler-2-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":1,"stop":true}}},
+    {"id":"deck_a-sampler-2-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":49},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":1}}},
+    {"id":"deck_a-sampler-3-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":2,"stop":false}}},
+    {"id":"deck_a-sampler-3-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":2,"stop":true}}},
+    {"id":"deck_a-sampler-3-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":50},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":2}}},
+    {"id":"deck_a-sampler-4-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":3,"stop":false}}},
+    {"id":"deck_a-sampler-4-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":3,"stop":true}}},
+    {"id":"deck_a-sampler-4-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":51},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":3}}},
+    {"id":"deck_a-sampler-5-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":4,"stop":false}}},
+    {"id":"deck_a-sampler-5-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":4,"stop":true}}},
+    {"id":"deck_a-sampler-5-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":52},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":4}}},
+    {"id":"deck_a-sampler-6-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":5,"stop":false}}},
+    {"id":"deck_a-sampler-6-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":5,"stop":true}}},
+    {"id":"deck_a-sampler-6-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":53},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":5}}},
+    {"id":"deck_a-sampler-7-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":6,"stop":false}}},
+    {"id":"deck_a-sampler-7-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":6,"stop":true}}},
+    {"id":"deck_a-sampler-7-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":54},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":6}}},
+    {"id":"deck_a-sampler-8-play","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":7,"stop":false}}},
+    {"id":"deck_a-sampler-8-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":0,"slot":7,"stop":true}}},
+    {"id":"deck_a-sampler-8-led","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":55},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":0,"slot":7}}},
+    {"id":"deck_b-sampler-1-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":8,"stop":false}}},
+    {"id":"deck_b-sampler-1-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":8,"stop":true}}},
+    {"id":"deck_b-sampler-1-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":48},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":8}}},
+    {"id":"deck_b-sampler-2-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":9,"stop":false}}},
+    {"id":"deck_b-sampler-2-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":9,"stop":true}}},
+    {"id":"deck_b-sampler-2-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":49},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":9}}},
+    {"id":"deck_b-sampler-3-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":10,"stop":false}}},
+    {"id":"deck_b-sampler-3-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":10,"stop":true}}},
+    {"id":"deck_b-sampler-3-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":50},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":10}}},
+    {"id":"deck_b-sampler-4-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":11,"stop":false}}},
+    {"id":"deck_b-sampler-4-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":11,"stop":true}}},
+    {"id":"deck_b-sampler-4-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":51},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":11}}},
+    {"id":"deck_b-sampler-5-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":12,"stop":false}}},
+    {"id":"deck_b-sampler-5-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":12,"stop":true}}},
+    {"id":"deck_b-sampler-5-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":52},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":12}}},
+    {"id":"deck_b-sampler-6-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":13,"stop":false}}},
+    {"id":"deck_b-sampler-6-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":13,"stop":true}}},
+    {"id":"deck_b-sampler-6-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":53},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":13}}},
+    {"id":"deck_b-sampler-7-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":14,"stop":false}}},
+    {"id":"deck_b-sampler-7-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":14,"stop":true}}},
+    {"id":"deck_b-sampler-7-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":54},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":14}}},
+    {"id":"deck_b-sampler-8-play","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":15,"stop":false}}},
+    {"id":"deck_b-sampler-8-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":1,"slot":15,"stop":true}}},
+    {"id":"deck_b-sampler-8-led","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":55},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":1,"slot":15}}},
+    {"id":"deck_c-sampler-1-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":0,"stop":false}}},
+    {"id":"deck_c-sampler-1-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":0,"stop":true}}},
+    {"id":"deck_c-sampler-1-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":48},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":0}}},
+    {"id":"deck_c-sampler-2-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":1,"stop":false}}},
+    {"id":"deck_c-sampler-2-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":1,"stop":true}}},
+    {"id":"deck_c-sampler-2-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":49},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":1}}},
+    {"id":"deck_c-sampler-3-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":2,"stop":false}}},
+    {"id":"deck_c-sampler-3-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":2,"stop":true}}},
+    {"id":"deck_c-sampler-3-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":50},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":2}}},
+    {"id":"deck_c-sampler-4-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":3,"stop":false}}},
+    {"id":"deck_c-sampler-4-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":3,"stop":true}}},
+    {"id":"deck_c-sampler-4-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":51},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":3}}},
+    {"id":"deck_c-sampler-5-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":4,"stop":false}}},
+    {"id":"deck_c-sampler-5-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":4,"stop":true}}},
+    {"id":"deck_c-sampler-5-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":52},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":4}}},
+    {"id":"deck_c-sampler-6-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":5,"stop":false}}},
+    {"id":"deck_c-sampler-6-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":5,"stop":true}}},
+    {"id":"deck_c-sampler-6-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":53},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":5}}},
+    {"id":"deck_c-sampler-7-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":6,"stop":false}}},
+    {"id":"deck_c-sampler-7-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":6,"stop":true}}},
+    {"id":"deck_c-sampler-7-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":54},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":6}}},
+    {"id":"deck_c-sampler-8-play","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":7,"stop":false}}},
+    {"id":"deck_c-sampler-8-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":2,"slot":7,"stop":true}}},
+    {"id":"deck_c-sampler-8-led","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":55},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":2,"slot":7}}},
+    {"id":"deck_d-sampler-1-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":8,"stop":false}}},
+    {"id":"deck_d-sampler-1-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":48},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":8,"stop":true}}},
+    {"id":"deck_d-sampler-1-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":48},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":8}}},
+    {"id":"deck_d-sampler-2-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":9,"stop":false}}},
+    {"id":"deck_d-sampler-2-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":49},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":9,"stop":true}}},
+    {"id":"deck_d-sampler-2-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":49},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":9}}},
+    {"id":"deck_d-sampler-3-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":10,"stop":false}}},
+    {"id":"deck_d-sampler-3-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":50},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":10,"stop":true}}},
+    {"id":"deck_d-sampler-3-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":50},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":10}}},
+    {"id":"deck_d-sampler-4-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":11,"stop":false}}},
+    {"id":"deck_d-sampler-4-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":51},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":11,"stop":true}}},
+    {"id":"deck_d-sampler-4-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":51},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":11}}},
+    {"id":"deck_d-sampler-5-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":12,"stop":false}}},
+    {"id":"deck_d-sampler-5-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":52},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":12,"stop":true}}},
+    {"id":"deck_d-sampler-5-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":52},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":12}}},
+    {"id":"deck_d-sampler-6-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":13,"stop":false}}},
+    {"id":"deck_d-sampler-6-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":53},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":13,"stop":true}}},
+    {"id":"deck_d-sampler-6-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":53},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":13}}},
+    {"id":"deck_d-sampler-7-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":14,"stop":false}}},
+    {"id":"deck_d-sampler-7-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":54},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":14,"stop":true}}},
+    {"id":"deck_d-sampler-7-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":54},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":14}}},
+    {"id":"deck_d-sampler-8-play","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":15,"stop":false}}},
+    {"id":"deck_d-sampler-8-stop","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":55},"modifiers":[],"binding":{"type":"host_button","press":{"command":"sample_pad","deck":3,"slot":15,"stop":true}}},
+    {"id":"deck_d-sampler-8-led","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":55},"modifiers":[],"binding":{"type":"led","feedback":{"state":"sample","deck":3,"slot":15}}},
+    {"id":"deck_a-loop-in","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"in"}}},
+    {"id":"deck_a-loop-out","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"out"}}},
+    {"id":"deck_a-loop-four-beat","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"four_beat"}}},
+    {"id":"deck_a-loop-reloop","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":77},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"reloop"}}},
+    {"id":"deck_a-loop-half","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":81},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"half"}}},
+    {"id":"deck_a-loop-double","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":83},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":0,"button":"double"}}},
+    {"id":"deck_a-loop-in-led","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":16},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop_in","deck":0}}},
+    {"id":"deck_a-loop-out-led","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":17},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop","deck":0}}},
+    {"id":"deck_a-keyboard-mode","port":"DDJ-GRV6","source":{"kind":"note","channel":0,"number":105},"modifiers":[],"binding":{"type":"pad_mode","deck":0,"mode":"keyboard"}},
+    {"id":"deck_a-keyboard-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":0,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":0,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":1,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":1,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":2,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":2,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":3,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":3,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":4,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":4,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":5,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":5,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":6,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":6,"alternate":true}}},
+    {"id":"deck_a-keyboard-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":7,"alternate":false}}},
+    {"id":"deck_a-keyboard-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"keyboard","pad":7,"alternate":true}}},
+    {"id":"deck_a-stems-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":0,"alternate":false}}},
+    {"id":"deck_a-stems-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":0,"alternate":true}}},
+    {"id":"deck_a-stems-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":1,"alternate":false}}},
+    {"id":"deck_a-stems-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":1,"alternate":true}}},
+    {"id":"deck_a-stems-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":2,"alternate":false}}},
+    {"id":"deck_a-stems-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":2,"alternate":true}}},
+    {"id":"deck_a-stems-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":3,"alternate":false}}},
+    {"id":"deck_a-stems-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":3,"alternate":true}}},
+    {"id":"deck_a-stems-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":4,"alternate":false}}},
+    {"id":"deck_a-stems-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":4,"alternate":true}}},
+    {"id":"deck_a-stems-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":5,"alternate":false}}},
+    {"id":"deck_a-stems-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":5,"alternate":true}}},
+    {"id":"deck_a-stems-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":6,"alternate":false}}},
+    {"id":"deck_a-stems-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":6,"alternate":true}}},
+    {"id":"deck_a-stems-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":7,"alternate":false}}},
+    {"id":"deck_a-stems-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"stems","pad":7,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":0,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":0,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":1,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":1,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":2,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":2,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":3,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":3,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":4,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":4,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":5,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":5,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":6,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":6,"alternate":true}}},
+    {"id":"deck_a-beat-jump-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":7,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":7,"alternate":false}}},
+    {"id":"deck_a-beat-jump-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":8,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":0,"mode":"beat_jump","pad":7,"alternate":true}}},
+    {"id":"deck_b-loop-in","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"in"}}},
+    {"id":"deck_b-loop-out","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"out"}}},
+    {"id":"deck_b-loop-four-beat","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"four_beat"}}},
+    {"id":"deck_b-loop-reloop","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":77},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"reloop"}}},
+    {"id":"deck_b-loop-half","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":81},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"half"}}},
+    {"id":"deck_b-loop-double","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":83},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":1,"button":"double"}}},
+    {"id":"deck_b-loop-in-led","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":16},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop_in","deck":1}}},
+    {"id":"deck_b-loop-out-led","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":17},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop","deck":1}}},
+    {"id":"deck_b-keyboard-mode","port":"DDJ-GRV6","source":{"kind":"note","channel":1,"number":105},"modifiers":[],"binding":{"type":"pad_mode","deck":1,"mode":"keyboard"}},
+    {"id":"deck_b-keyboard-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":0,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":0,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":1,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":1,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":2,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":2,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":3,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":3,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":4,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":4,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":5,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":5,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":6,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":6,"alternate":true}}},
+    {"id":"deck_b-keyboard-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":7,"alternate":false}}},
+    {"id":"deck_b-keyboard-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"keyboard","pad":7,"alternate":true}}},
+    {"id":"deck_b-stems-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":0,"alternate":false}}},
+    {"id":"deck_b-stems-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":0,"alternate":true}}},
+    {"id":"deck_b-stems-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":1,"alternate":false}}},
+    {"id":"deck_b-stems-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":1,"alternate":true}}},
+    {"id":"deck_b-stems-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":2,"alternate":false}}},
+    {"id":"deck_b-stems-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":2,"alternate":true}}},
+    {"id":"deck_b-stems-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":3,"alternate":false}}},
+    {"id":"deck_b-stems-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":3,"alternate":true}}},
+    {"id":"deck_b-stems-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":4,"alternate":false}}},
+    {"id":"deck_b-stems-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":4,"alternate":true}}},
+    {"id":"deck_b-stems-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":5,"alternate":false}}},
+    {"id":"deck_b-stems-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":5,"alternate":true}}},
+    {"id":"deck_b-stems-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":6,"alternate":false}}},
+    {"id":"deck_b-stems-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":6,"alternate":true}}},
+    {"id":"deck_b-stems-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":7,"alternate":false}}},
+    {"id":"deck_b-stems-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"stems","pad":7,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":0,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":0,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":1,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":1,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":2,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":2,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":3,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":3,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":4,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":4,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":5,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":5,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":6,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":6,"alternate":true}}},
+    {"id":"deck_b-beat-jump-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":9,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":7,"alternate":false}}},
+    {"id":"deck_b-beat-jump-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":10,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":1,"mode":"beat_jump","pad":7,"alternate":true}}},
+    {"id":"deck_c-loop-in","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"in"}}},
+    {"id":"deck_c-loop-out","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"out"}}},
+    {"id":"deck_c-loop-four-beat","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"four_beat"}}},
+    {"id":"deck_c-loop-reloop","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":77},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"reloop"}}},
+    {"id":"deck_c-loop-half","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":81},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"half"}}},
+    {"id":"deck_c-loop-double","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":83},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":2,"button":"double"}}},
+    {"id":"deck_c-loop-in-led","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":16},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop_in","deck":2}}},
+    {"id":"deck_c-loop-out-led","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":17},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop","deck":2}}},
+    {"id":"deck_c-keyboard-mode","port":"DDJ-GRV6","source":{"kind":"note","channel":2,"number":105},"modifiers":[],"binding":{"type":"pad_mode","deck":2,"mode":"keyboard"}},
+    {"id":"deck_c-keyboard-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":0,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":0,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":1,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":1,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":2,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":2,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":3,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":3,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":4,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":4,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":5,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":5,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":6,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":6,"alternate":true}}},
+    {"id":"deck_c-keyboard-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":7,"alternate":false}}},
+    {"id":"deck_c-keyboard-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"keyboard","pad":7,"alternate":true}}},
+    {"id":"deck_c-stems-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":0,"alternate":false}}},
+    {"id":"deck_c-stems-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":0,"alternate":true}}},
+    {"id":"deck_c-stems-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":1,"alternate":false}}},
+    {"id":"deck_c-stems-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":1,"alternate":true}}},
+    {"id":"deck_c-stems-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":2,"alternate":false}}},
+    {"id":"deck_c-stems-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":2,"alternate":true}}},
+    {"id":"deck_c-stems-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":3,"alternate":false}}},
+    {"id":"deck_c-stems-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":3,"alternate":true}}},
+    {"id":"deck_c-stems-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":4,"alternate":false}}},
+    {"id":"deck_c-stems-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":4,"alternate":true}}},
+    {"id":"deck_c-stems-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":5,"alternate":false}}},
+    {"id":"deck_c-stems-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":5,"alternate":true}}},
+    {"id":"deck_c-stems-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":6,"alternate":false}}},
+    {"id":"deck_c-stems-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":6,"alternate":true}}},
+    {"id":"deck_c-stems-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":7,"alternate":false}}},
+    {"id":"deck_c-stems-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"stems","pad":7,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":0,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":0,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":1,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":1,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":2,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":2,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":3,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":3,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":4,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":4,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":5,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":5,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":6,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":6,"alternate":true}}},
+    {"id":"deck_c-beat-jump-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":11,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":7,"alternate":false}}},
+    {"id":"deck_c-beat-jump-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":12,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":2,"mode":"beat_jump","pad":7,"alternate":true}}},
+    {"id":"deck_d-loop-in","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"in"}}},
+    {"id":"deck_d-loop-out","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"out"}}},
+    {"id":"deck_d-loop-four-beat","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"four_beat"}}},
+    {"id":"deck_d-loop-reloop","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":77},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"reloop"}}},
+    {"id":"deck_d-loop-half","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":81},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"half"}}},
+    {"id":"deck_d-loop-double","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":83},"modifiers":[],"binding":{"type":"host_button","press":{"command":"loop_button","deck":3,"button":"double"}}},
+    {"id":"deck_d-loop-in-led","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":16},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop_in","deck":3}}},
+    {"id":"deck_d-loop-out-led","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":17},"modifiers":[],"binding":{"type":"led","feedback":{"state":"loop","deck":3}}},
+    {"id":"deck_d-keyboard-mode","port":"DDJ-GRV6","source":{"kind":"note","channel":3,"number":105},"modifiers":[],"binding":{"type":"pad_mode","deck":3,"mode":"keyboard"}},
+    {"id":"deck_d-keyboard-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":0,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":64},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":0,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":1,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":65},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":1,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":2,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":66},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":2,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":3,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":67},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":3,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":4,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":68},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":4,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":5,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":69},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":5,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":6,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":70},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":6,"alternate":true}}},
+    {"id":"deck_d-keyboard-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":7,"alternate":false}}},
+    {"id":"deck_d-keyboard-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":71},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"keyboard","pad":7,"alternate":true}}},
+    {"id":"deck_d-stems-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":0,"alternate":false}}},
+    {"id":"deck_d-stems-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":16},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":0,"alternate":true}}},
+    {"id":"deck_d-stems-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":1,"alternate":false}}},
+    {"id":"deck_d-stems-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":17},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":1,"alternate":true}}},
+    {"id":"deck_d-stems-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":2,"alternate":false}}},
+    {"id":"deck_d-stems-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":18},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":2,"alternate":true}}},
+    {"id":"deck_d-stems-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":3,"alternate":false}}},
+    {"id":"deck_d-stems-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":19},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":3,"alternate":true}}},
+    {"id":"deck_d-stems-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":4,"alternate":false}}},
+    {"id":"deck_d-stems-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":20},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":4,"alternate":true}}},
+    {"id":"deck_d-stems-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":5,"alternate":false}}},
+    {"id":"deck_d-stems-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":21},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":5,"alternate":true}}},
+    {"id":"deck_d-stems-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":6,"alternate":false}}},
+    {"id":"deck_d-stems-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":22},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":6,"alternate":true}}},
+    {"id":"deck_d-stems-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":7,"alternate":false}}},
+    {"id":"deck_d-stems-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":23},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"stems","pad":7,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-1","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":0,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-1-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":32},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":0,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-2","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":1,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-2-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":33},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":1,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-3","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":2,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-3-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":34},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":2,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-4","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":3,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-4-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":35},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":3,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-5","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":4,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-5-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":36},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":4,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-6","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":5,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-6-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":37},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":5,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-7","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":6,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-7-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":38},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":6,"alternate":true}}},
+    {"id":"deck_d-beat-jump-pad-8","port":"DDJ-GRV6","source":{"kind":"note","channel":13,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":7,"alternate":false}}},
+    {"id":"deck_d-beat-jump-pad-8-shift","port":"DDJ-GRV6","source":{"kind":"note","channel":14,"number":39},"modifiers":[],"binding":{"type":"host_button","press":{"command":"performance_pad","deck":3,"mode":"beat_jump","pad":7,"alternate":true}}},
+    {
+      "id": "beat-fx-delay",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":32},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Delay"}
+    },
+    {
+      "id": "beat-fx-echo",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":33},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Echo"}
+    },
+    {
+      "id": "beat-fx-low-cut-echo",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":34},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"LowCutEcho"}
+    },
+    {
+      "id": "beat-fx-spiral",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":35},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Spiral"}
+    },
+    {
+      "id": "beat-fx-helix",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":36},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"BeatRepeat"}
+    },
+    {
+      "id": "beat-fx-reverb",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":37},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Reverb"}
+    },
+    {
+      "id": "beat-fx-flanger",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":38},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Flanger"}
+    },
+    {
+      "id": "beat-fx-phaser",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":39},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Phaser"}
+    },
+    {
+      "id": "beat-fx-filter",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":40},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Filter"}
+    },
+    {
+      "id": "beat-fx-trans",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":41},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"Cut"}
+    },
+    {
+      "id": "beat-fx-pitch",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":42},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"PitchShift"}
+    },
+    {
+      "id": "beat-fx-roll",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":43},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":"BeatRepeat"}
+    },
+    {
+      "id": "beat-fx-mobius-saw",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":44},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":null}
+    },
+    {
+      "id": "beat-fx-mobius-tri",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":45},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"select","kind":null}
+    },
+    {
+      "id": "beat-fx-ch-1",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":16},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":{"deck":0}}
+    },
+    {
+      "id": "beat-fx-ch-2",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":17},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":{"deck":1}}
+    },
+    {
+      "id": "beat-fx-ch-3",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":18},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":{"deck":2}}
+    },
+    {
+      "id": "beat-fx-ch-4",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":19},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":{"deck":3}}
+    },
+    {
+      "id": "beat-fx-master",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":20},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":"master"}
+    },
+    {
+      "id": "beat-fx-sampler",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":22},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"target","target":"sampler"}
+    },
+    {
+      "id": "beat-fx-on-off",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":71},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"toggle"}
+    },
+    {
+      "id": "beat-fx-beat-down",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":74},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"step","forward":false}
+    },
+    {
+      "id": "beat-fx-beat-up",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"note","channel":4,"number":75},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"step","forward":true}
+    },
+    {
+      "id": "beat-fx-depth",
+      "port": "DDJ-GRV6",
+      "source": {"kind":"cc14","channel":4,"msb":2,"lsb":34},
+      "modifiers": [],
+      "binding": {"type":"beat_fx","control":"depth"}
+    },
+    {
+      "id": "mixer-master-cue", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 6, "number": 99 },
+      "modifiers": [], "binding": { "type": "toggle_master_cue" }
+    },
+    {
+      "id": "mixer-cfx-on-off", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 6, "number": 0 },
+      "modifiers": [], "binding": { "type": "toggle_colour_fx_bypass" }
+    },
+    {
+      "id": "mixer-cfx-on-off-led", "port": "DDJ-GRV6",
+      "source": { "kind": "note", "channel": 6, "number": 0 },
+      "modifiers": [], "binding": { "type": "led", "feedback": { "state": "colour_fx_master" } }
+    },
+    {
+      "id": "mixer-cfx-a",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 6, "msb": 23, "lsb": 55 },
+      "modifiers": [],
+      "binding": { "type": "script", "program": "set_param(\"deck_a\", \"cfx\", $value)" }
+    },
+    {
+      "id": "mixer-cfx-b",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 6, "msb": 24, "lsb": 56 },
+      "modifiers": [],
+      "binding": { "type": "script", "program": "set_param(\"deck_b\", \"cfx\", $value)" }
+    },
+    {
+      "id": "mixer-cfx-c",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 6, "msb": 25, "lsb": 57 },
+      "modifiers": [],
+      "binding": { "type": "script", "program": "set_param(\"deck_c\", \"cfx\", $value)" }
+    },
+    {
+      "id": "mixer-cfx-d",
+      "port": "DDJ-GRV6",
+      "source": { "kind": "cc14", "channel": 6, "msb": 26, "lsb": 58 },
+      "modifiers": [],
+      "binding": { "type": "script", "program": "set_param(\"deck_d\", \"cfx\", $value)" }
+    },
+    {
       "id": "mixer-crossfader",
       "port": "DDJ-GRV6",
       "source": {
@@ -2977,6 +3540,454 @@
         "feedback": {
           "state": "quantize",
           "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_a-play-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-load-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 15,
+        "number": 0
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loaded",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_a-headphone-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 0,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "headphone_cue",
+          "deck": 0
+        }
+      }
+    },
+    {
+      "id": "deck_b-play-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-load-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 15,
+        "number": 1
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loaded",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_b-headphone-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 1,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "headphone_cue",
+          "deck": 1
+        }
+      }
+    },
+    {
+      "id": "deck_c-play-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-load-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 15,
+        "number": 2
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loaded",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_c-headphone-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 2,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "headphone_cue",
+          "deck": 2
+        }
+      }
+    },
+    {
+      "id": "deck_d-play-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 11
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "playing",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 12
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "cue",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-load-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 15,
+        "number": 3
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "loaded",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_d-headphone-cue-led",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "note",
+        "channel": 3,
+        "number": 84
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "led",
+        "feedback": {
+          "state": "headphone_cue",
+          "deck": 3
+        }
+      }
+    },
+    {
+      "id": "deck_a-jog",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc",
+        "channel": 0,
+        "number": 34
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "jog",
+        "config": {
+          "deck": 0,
+          "touch": {
+            "kind": "note",
+            "channel": 0,
+            "number": 54
+          },
+          "alternate_motion": [
+            {
+              "kind": "cc",
+              "channel": 0,
+              "number": 33
+            },
+            {
+              "kind": "cc",
+              "channel": 0,
+              "number": 35
+            }
+          ],
+          "scratch_toggle": null,
+          "scratch_led": {
+            "kind": "note",
+            "channel": 0,
+            "number": 23
+          },
+          "encoding": "offset64",
+          "seconds_per_tick": 0.0002903225806451613,
+          "bend_seconds_per_tick": 0.00025,
+          "scratch_enabled": true,
+          "mode_controlled": true
+        }
+      }
+    },
+    {
+      "id": "deck_b-jog",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc",
+        "channel": 1,
+        "number": 34
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "jog",
+        "config": {
+          "deck": 1,
+          "touch": {
+            "kind": "note",
+            "channel": 1,
+            "number": 54
+          },
+          "alternate_motion": [
+            {
+              "kind": "cc",
+              "channel": 1,
+              "number": 33
+            },
+            {
+              "kind": "cc",
+              "channel": 1,
+              "number": 35
+            }
+          ],
+          "scratch_toggle": null,
+          "scratch_led": {
+            "kind": "note",
+            "channel": 1,
+            "number": 23
+          },
+          "encoding": "offset64",
+          "seconds_per_tick": 0.0002903225806451613,
+          "bend_seconds_per_tick": 0.00025,
+          "scratch_enabled": true,
+          "mode_controlled": true
+        }
+      }
+    },
+    {
+      "id": "deck_c-jog",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc",
+        "channel": 2,
+        "number": 34
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "jog",
+        "config": {
+          "deck": 2,
+          "touch": {
+            "kind": "note",
+            "channel": 2,
+            "number": 54
+          },
+          "alternate_motion": [
+            {
+              "kind": "cc",
+              "channel": 2,
+              "number": 33
+            },
+            {
+              "kind": "cc",
+              "channel": 2,
+              "number": 35
+            }
+          ],
+          "scratch_toggle": null,
+          "scratch_led": {
+            "kind": "note",
+            "channel": 2,
+            "number": 23
+          },
+          "encoding": "offset64",
+          "seconds_per_tick": 0.0002903225806451613,
+          "bend_seconds_per_tick": 0.00025,
+          "scratch_enabled": true,
+          "mode_controlled": true
+        }
+      }
+    },
+    {
+      "id": "deck_d-jog",
+      "port": "DDJ-GRV6",
+      "source": {
+        "kind": "cc",
+        "channel": 3,
+        "number": 34
+      },
+      "modifiers": [],
+      "binding": {
+        "type": "jog",
+        "config": {
+          "deck": 3,
+          "touch": {
+            "kind": "note",
+            "channel": 3,
+            "number": 54
+          },
+          "alternate_motion": [
+            {
+              "kind": "cc",
+              "channel": 3,
+              "number": 33
+            },
+            {
+              "kind": "cc",
+              "channel": 3,
+              "number": 35
+            }
+          ],
+          "scratch_toggle": null,
+          "scratch_led": {
+            "kind": "note",
+            "channel": 3,
+            "number": 23
+          },
+          "encoding": "offset64",
+          "seconds_per_tick": 0.0002903225806451613,
+          "bend_seconds_per_tick": 0.00025,
+          "scratch_enabled": true,
+          "mode_controlled": true
         }
       }
     }

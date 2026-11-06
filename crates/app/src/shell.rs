@@ -39,7 +39,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::library_view::{DraggedTrack, LibraryEvent, LibraryView};
+use crate::library_view::{DeckMetadata, DraggedTrack, LibraryEvent, LibraryView};
 use crate::settings::{Settings, StartTab, data_dir};
 use crate::settings_view::{SettingsEvent, SettingsView};
 use crate::waveform::{VISIBLE_SECONDS, overview, waveform};
@@ -247,7 +247,8 @@ pub struct Shell {
     grids: Vec<Option<TempoResult>>,
     deck_keys: Vec<Option<djcraft_library::Camelot>>,
     deck_modes: Vec<Option<djcraft_library::ModalKeyResult>>,
-    deck_metadata: Vec<Option<(String, String)>>,
+    deck_metadata: Vec<Option<DeckMetadata>>,
+    deck_file_bpm: [Option<f64>; DECKS],
     deck_artwork: Vec<Option<Arc<Image>>>,
     artwork_paths: Vec<Option<PathBuf>>,
     /// Where each deck's whole-track waveform is on screen, for seeking.
@@ -317,6 +318,7 @@ pub struct Shell {
     saved_loops: crate::loop_store::SavedLoops,
     loop_recording: [Option<(std::sync::Arc<djcraft_engine::Track>, f64)>; DECKS],
     loop_in: [Option<f64>; DECKS],
+    controller_loop_press: [Option<f64>; DECKS],
     loop_notice: [String; DECKS],
 }
 
@@ -571,7 +573,8 @@ impl Shell {
             grids: vec![None; DECKS],
             deck_keys: vec![None; DECKS],
             deck_modes: vec![None; DECKS],
-            deck_metadata: vec![None; DECKS],
+            deck_metadata: (0..DECKS).map(|_| None).collect(),
+            deck_file_bpm: [None; DECKS],
             deck_artwork: vec![None; DECKS],
             artwork_paths: vec![None; DECKS],
             overview_areas: (0..DECKS).map(|_| Rc::default()).collect(),
@@ -644,6 +647,7 @@ impl Shell {
             saved_loops: crate::loop_store::load(&data_dir()),
             loop_recording: std::array::from_fn(|_| None),
             loop_in: [None; DECKS],
+            controller_loop_press: [None; DECKS],
             loop_notice: std::array::from_fn(|_| String::new()),
         };
         if !quick {
@@ -781,7 +785,7 @@ impl Shell {
             .and_then(|path| library.track_at(path));
         self.browser
             .update(cx, |view, cx| view.set_reference(reference, cx));
-        self.refresh_deck_artwork(cx);
+        self.refresh_deck_file_details(cx);
         for deck in 0..DECKS {
             self.send(
                 deck,
@@ -1309,6 +1313,7 @@ impl Shell {
         if matches!(action, DeckAction::Load { .. } | DeckAction::Unload) {
             self.release_pad(deck);
             self.loop_in[deck] = None;
+            self.controller_loop_press[deck] = None;
             self.loop_last[deck] = None;
             self.loop_recording[deck] = None;
             self.loop_notice[deck].clear();
@@ -1416,7 +1421,7 @@ impl Shell {
             self.controller_action(action, cx);
         }
         for command in controllers.take_commands() {
-            self.controller_command(command, cx);
+            self.controller_command(&mut controllers, command, cx);
         }
         for (port, events) in batches {
             let mut jog_batch = crate::controllers::JogBatch::default();
@@ -1443,7 +1448,7 @@ impl Shell {
                     }
                 }
                 for command in commands {
-                    self.controller_command(command, cx);
+                    self.controller_command(&mut controllers, command, cx);
                 }
             }
             for action in jog_batch.flush() {
@@ -1581,6 +1586,7 @@ impl Shell {
 
     fn controller_command(
         &mut self,
+        controllers: &mut crate::controllers::Controllers,
         command: djcraft_controllers::HostCommand,
         cx: &mut Context<Self>,
     ) {
@@ -1630,11 +1636,22 @@ impl Shell {
                 });
                 self.auto_loop(deck, same_length, cx);
             }
+            HostCommand::LoopButton { button, .. } => {
+                self.controller_loop_button(deck, button, cx);
+            }
             HostCommand::LoopPad { pad, alternate, .. } => {
                 self.controller_loop_pad(deck, pad, alternate, cx);
             }
             HostCommand::SamplePad { slot, stop, .. } => {
                 self.controller_sample_pad(deck, slot, stop);
+            }
+            HostCommand::PerformancePad {
+                mode,
+                pad,
+                alternate,
+                ..
+            } => {
+                self.controller_performance_pad(deck, mode, pad, alternate, cx);
             }
             HostCommand::Sync { .. } => self.sync_deck(deck, cx),
             HostCommand::Cue { pressed: true, .. } => self.begin_cue_preview(deck, cx),
@@ -1653,7 +1670,13 @@ impl Shell {
             HostCommand::ToggleSlip { .. } => {
                 self.toggle_slip(deck, djcraft_protocol::script::ControlSource::Controller)
             }
-            HostCommand::ToggleVinyl { .. } => self.toggle_vinyl(deck, cx),
+            HostCommand::ToggleVinyl { .. } => {
+                let enabled = self.flip_vinyl_setting(deck);
+                for action in controllers.set_vinyl_mode(deck as u8, enabled) {
+                    self.controller_action(action, cx);
+                }
+                cx.notify();
+            }
             HostCommand::SelectDeck { .. } => {
                 self.active_deck = deck;
             }
@@ -1686,10 +1709,15 @@ impl Shell {
         }
     }
 
-    fn toggle_vinyl(&mut self, deck: usize, cx: &mut Context<Self>) {
+    fn flip_vinyl_setting(&mut self, deck: usize) -> bool {
         let enabled = !self.performance_settings.scratch_modes[deck].unwrap_or(true);
         self.performance_settings.scratch_modes[deck] = Some(enabled);
         self.performance_dirty = Some(Instant::now());
+        enabled
+    }
+
+    fn toggle_vinyl(&mut self, deck: usize, cx: &mut Context<Self>) {
+        let enabled = self.flip_vinyl_setting(deck);
         if let Some(controllers) = &mut self.controllers {
             let actions = controllers.set_vinyl_mode(deck as u8, enabled);
             for action in actions {
@@ -2645,6 +2673,7 @@ impl Render for Shell {
                     if let Some(path) = channel.path.as_ref().map(PathBuf::from) {
                         if self.deck_paths[deck].as_ref() != Some(&path) {
                             self.deck_paths[deck] = Some(path);
+                            self.controller_loop_press[deck] = None;
                             self.pad_tracks[deck] = None;
                             auto_paths_changed = true;
                         }

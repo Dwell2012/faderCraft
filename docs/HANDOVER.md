@@ -1,5 +1,13 @@
 # Codex handover
 
+DDJ-GRV6 Beat FX (5 November 2026): the shared protocol state controls the
+selected deck's FX1 or an independent processor for master/booth and sampler.
+On/Off can use the visible FX1 before the selector sends its position.
+The bundled profile maps the documented selector notes, six target buttons,
+On/Off, Beat −/+ and Level/Depth. Helix uses Beat Repeat, Mobius bypasses.
+Sampler pads use slots 1–8 on the left and 9–16 on the right, with Shift stop.
+See CONTROLLERS.md for the performance workflow and limits.
+
 Analysis progress/priority (4 November 2026): a shared queue promotes loaded library tracks, including in-flight work. A reserved priority worker prevents all background workers parking without a worker available for the deck. Background workers pause at decode/DSP stage boundaries and retain intermediate work; results are saved serially before priority is cleared. Both views show the analysis status strip with Check pending. Compact playlist import now emits Changed so the full Library starts analysis. Existing files and completed analysis are preserved. Restart is needed to use the change.
 
 

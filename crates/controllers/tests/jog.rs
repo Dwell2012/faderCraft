@@ -800,6 +800,41 @@ fn paused_released_platter_spin_remains_audible_and_tracks_both_directions() {
     }
 }
 #[test]
+fn grv6_dense_jog_packets_measure_travel_over_a_short_window() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let s = state(false);
+    let now = Instant::now();
+    bridge.process_at("DDJ-GRV6", event(0x90, 54, 127), &s, now);
+    let travel_per_count = 1.8 / 6200.;
+    for (i, ms) in [0, 1, 1, 3, 4, 5, 5, 7, 8].into_iter().enumerate() {
+        let actions = bridge.process_at(
+            "DDJ-GRV6",
+            event(0xb0, 34, 65),
+            &s,
+            now + Duration::from_millis(ms),
+        );
+        assert!((position(&actions) - (5. + (i + 1) as f64 * travel_per_count)).abs() < 1e-9);
+        if ms >= 4 {
+            assert!(matches!(&actions[..], [Action::Deck {
+                action: DeckAction::JogScratch { speed, interval_seconds, .. }, ..
+            }] if (*speed - travel_per_count / 0.001).abs() < 1e-9 && *interval_seconds == 0.004));
+        }
+    }
+    let reversed = bridge.process_at(
+        "DDJ-GRV6",
+        event(0xb0, 34, 63),
+        &s,
+        now + Duration::from_millis(8),
+    );
+    assert!(matches!(&reversed[..], [Action::Deck {
+        action: DeckAction::JogScratch { speed, .. }, ..
+    }] if *speed < 0.));
+    assert!((position(&reversed) - (5. + 8. * travel_per_count)).abs() < 1e-9);
+}
+
+#[test]
 fn jog_speed_uses_packet_timing_and_slows_after_surface_release_even_when_replayed_in_a_batch() {
     let mut b = bridge();
     // Paused decks have no motor; all measured reverse speeds remain audible.

@@ -24,8 +24,51 @@ Hot Cue pads and their saved-cue LEDs are mapped; the shifted pad messages
 delete individual cues. The four Quantize buttons toggle each deck's general
 quantize gate, and their LEDs report its state. Dedicated Hot Cue, Stems,
 Beat Jump and Sampler mode buttons switch the visible pad page for each deck.
-The profile has 218 entries. Jog wheels, pad actions beyond Hot Cues,
-advanced features and audio routing still need mapping and hardware tests.
+Shift + Hot Cue opens Keyboard. Pick a saved cue with its pad, then play the
+eight scale notes. Shift + pad selects a different cue. See [pad modes](PADS.md).
+Master Cue adds the master feed to the headphone cue bus. Headphones Mix
+blends that bus with the always-available master side.
+Loop In and Out set a manual loop. Hold In / 4 Beat to start a four-beat loop
+anchored to the initial press, using the track's beatgrid and loop options.
+Reloop / Exit exits or recalls the last loop. While
+a loop is active, Cue/Loop Call left and right halve and double it. The In and
+Out lamps follow the loop marker and active loop. These buttons leave the
+current performance pad page selected.
+The profile has 597 entries. Each Sound Color FX knob drives its channel's
+CFX amount, with the centre detent at neutral. Sound Color FX ON/OFF bypasses
+all four channels and lights when CFX is enabled. Turning the knobs while
+bypassed sets the amount that will be used on re-enable. Each deck's platter and rim
+share a jog gesture. GRV6 scratch travel uses 6,200 counts per revolution at
+33⅓ rpm, or about 0.290 ms of source audio per count. A hand turn slightly
+over a quarter revolution measured 1,577 net counts.
+Vinyl mode uses platter touch to scratch. The rim bends pitch during playback
+and scrubs when stopped. Play, Cue, headphone Cue, Load, Slip and Vinyl have lamp
+feedback alongside Quantize and Hot Cues. Jog sensitivity and visible lamp
+behaviour still need a hardware check.
+
+For Beat FX, turn the selector to choose an effect, press CH 1–4, MST
+(Master), or SP (Sampler) to route it, then press On/Off. Level/Depth sets the
+effect amount. Beat −/+ steps from ¼ to 8 beats on decks and up to 32 beats
+on Master and Sampler. The hardware indicator follows the division.
+Deck routing uses the selected deck's first FX slot. On startup, On/Off uses
+that slot until the GRV6 reports a selector change. The tested startup requests
+did not return a resting selector position.
+Deck timing follows that deck's effective BPM. Master and Sampler follow the
+first playing deck with a beat grid, with 120 BPM as a fallback.
+
+The selector uses faderCraft's Delay, Echo, Low-cut Echo, Spiral, Reverb,
+Flanger, Phaser, Filter, Cut (Trans), Pitch Shift, and Beat Repeat (Roll).
+Helix uses Beat Repeat as an approximation. Mobius Saw and Mobius Tri bypass
+the processor. Changing the target switches off the previous deck's first
+FX slot. Master processing feeds both Master and
+Booth, and Sampler processing affects only sample playback.
+
+In Sampler mode the left pads trigger slots 1–8 of the selected sample bank
+and the right pads trigger slots 9–16. Shift stops the corresponding sample.
+The lamps show populated and playing slots.
+Stems and Beat Jump pads mirror the corresponding faderCraft pad pages.
+Shift solos a source on the first four Stems pads. Beat Jump uses the
+selected page's beat bank and requires a beat grid.
 
 The GRV6 Hot Cue page uses note 0–7 on MIDI channels 8/10/12/14 for decks
 A/B/C/D (zero-based channels 7/9/11/13 in the profile). Shifted pads arrive

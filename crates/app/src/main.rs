@@ -28,6 +28,26 @@ actions!(
     [Quit, ShowLibrary, ShowLive, ShowRadio, OpenSettings]
 );
 
+#[cfg(windows)]
+fn keep_windows_awake(awake: bool) {
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+    const ES_SYSTEM_REQUIRED: u32 = 1;
+    const ES_DISPLAY_REQUIRED: u32 = 2;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetThreadExecutionState(flags: u32) -> u32;
+    }
+    let flags = if awake {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    // This request belongs to the main thread and lasts until cleared or it exits.
+    if unsafe { SetThreadExecutionState(flags) } == 0 {
+        eprintln!("Windows did not apply DJCraft's keep-awake request");
+    }
+}
+
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--asio-probe") {
         let device = std::env::args().nth(2).unwrap_or_default();
@@ -63,6 +83,8 @@ fn main() {
         storage::show_problem(error.to_string());
         return;
     }
+    #[cfg(windows)]
+    keep_windows_awake(true);
     gpui_kit::application().with_assets(AllAssets).run(|cx| {
         gpui_kit::init(cx);
         let settings = settings::Settings::load(&storage::machine_dir());
@@ -136,4 +158,6 @@ fn main() {
     if let Err(error) = storage::finish() {
         eprintln!("Library snapshot was not published: {error}");
     }
+    #[cfg(windows)]
+    keep_windows_awake(false);
 }

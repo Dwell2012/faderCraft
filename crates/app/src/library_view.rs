@@ -965,6 +965,12 @@ pub struct LibraryView {
     analysis: Arc<crate::analysis::Progress>,
 }
 
+pub(super) struct DeckMetadata {
+    pub title: String,
+    pub artist: String,
+    pub bpm: Option<f64>,
+}
+
 impl LibraryView {
     pub fn set_stem_states(&mut self, states: HashMap<PathBuf, StemState>, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
@@ -2660,7 +2666,7 @@ impl LibraryView {
         djcraft_library::artwork::cached_path(&crate::settings::data_dir(), &relative)
     }
 
-    pub fn deck_metadata(&self, path: &Path) -> Option<(String, String)> {
+    pub(super) fn deck_metadata(&self, path: &Path) -> Option<DeckMetadata> {
         let library = self.library.as_ref()?;
         let id = library.track_at(path).ok()??;
         let track = library
@@ -2670,7 +2676,11 @@ impl LibraryView {
             })
             .ok()?
             .pop()?;
-        Some((track.title, track.artist))
+        Some(DeckMetadata {
+            title: track.title,
+            artist: track.artist,
+            bpm: track.bpm,
+        })
     }
 
     pub fn track_at(&self, path: &Path) -> Option<(i64, SharedString)> {

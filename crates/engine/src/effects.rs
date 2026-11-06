@@ -120,13 +120,16 @@ impl Effect {
         self.state.beats = beats;
     }
     pub fn new(rate: u32) -> Self {
+        // Eight beats at 20 BPM plus room for pitch-shifting grain offsets.
+        Self::with_delay_seconds(rate, 25)
+    }
+
+    pub fn with_delay_seconds(rate: u32, seconds: usize) -> Self {
         Self {
             state: EffectState::default(),
             rate: rate as f32,
             smoothing: 1. - (-1. / (rate as f32 * 0.01)).exp(),
-            // Eight beats at the minimum effective tempo (20 BPM),
-            // with room for pitch-shifting grain offsets. Allocated off-thread.
-            delay: Delay::new(rate as usize * 25),
+            delay: Delay::new(rate as usize * seconds),
             reverb: Reverb::new(rate),
             low: [0.; 2],
             allpass: [[0.; 2]; 6],

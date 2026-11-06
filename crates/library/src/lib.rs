@@ -35,7 +35,7 @@ pub use organise::{
     DuplicateGroup, EnergyBand, Group, GroupCount, KeyFit, PlaylistFolder, Rule, SmartRules,
     Suggestion, TextField, TextOp,
 };
-pub use scan::{Artwork, ScanProgress, ScanSummary, TrackEdit, read_artwork};
+pub use scan::{Artwork, ScanProgress, ScanSummary, TrackEdit, read_artwork, read_tagged_bpm};
 pub use tags::{AlignOptions, ApplySummary, Cleanup, Placement, PlannedChange, TagBatch, TagField};
 pub use watch::FolderWatcher;
 

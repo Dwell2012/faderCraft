@@ -1,12 +1,18 @@
-//! Blocking ONNX stem preparation and cache IO. Never called on the audio/UI thread.
+//! Blocking stem preparation and cache IO. Never called on the audio/UI thread.
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use djcraft_engine::Track;
+
+#[path = "rocm_stems.rs"]
+mod rocm_stems;
+
+static PREPARATION: Mutex<()> = Mutex::new(());
 
 pub const AUTO_TIMEOUT: &str = "Stopped: automatic stem separation exceeded 20% of track duration";
 const SOURCES: [&str; 4] = ["vocals", "other", "bass", "drums"];
@@ -59,18 +65,28 @@ fn check_deadline(deadline: Option<Instant>) -> Result<(), String> {
 }
 
 pub fn warm_up(model: &str) -> Result<(), String> {
-    crate::onnx_stems::warm_up(model)
+    match model.strip_prefix("rocm-") {
+        Some(model) => rocm_stems::warm_up(model),
+        None => crate::onnx_stems::warm_up(model),
+    }
 }
 
 pub fn download_model(model: &str) -> Result<(), String> {
-    crate::onnx_stems::download_model(model)
+    match model.strip_prefix("rocm-") {
+        Some(model) => rocm_stems::download_model(model),
+        None => crate::onnx_stems::download_model(model),
+    }
 }
 
 pub fn model_downloaded(model: &str) -> bool {
-    crate::onnx_stems::model_downloaded(model)
+    match model.strip_prefix("rocm-") {
+        Some(model) => rocm_stems::model_downloaded(model),
+        None => crate::onnx_stems::model_downloaded(model),
+    }
 }
 
 pub fn shutdown() {
+    rocm_stems::shutdown();
     crate::onnx_stems::shutdown();
 }
 
@@ -83,7 +99,19 @@ fn cache_key(samples: &[f32], rate: u32, model: &str) -> String {
     {
         hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
     }
-    format!("onnx-{model}-v1-{rate}-{}-{hash:016x}", samples.len())
+    format!(
+        "{}-v1-{rate}-{}-{hash:016x}",
+        cache_model(model),
+        samples.len()
+    )
+}
+
+fn cache_model(model: &str) -> String {
+    if model.starts_with("rocm-") {
+        model.to_owned()
+    } else {
+        format!("onnx-{model}")
+    }
 }
 
 fn attach(track: &Track, directory: &Path) -> Result<(), String> {
@@ -133,8 +161,9 @@ pub fn load_or_prepare_with_limit(
     if !track.is_complete() {
         return Err("Wait for the track to finish loading".into());
     }
-    if !["htdemucs", "htdemucs_ft"].contains(&model) {
-        return Err("Unknown ONNX stem model".into());
+    let rocm = model.strip_prefix("rocm-");
+    if !["htdemucs", "htdemucs_ft"].contains(&rocm.unwrap_or(model)) {
+        return Err("Unknown stem model".into());
     }
     let samples = track.export_stereo();
     let directory = root.join(cache_key(&samples, track.sample_rate, model));
@@ -144,27 +173,41 @@ pub fn load_or_prepare_with_limit(
     if !prepare {
         return Ok(false);
     }
+    let _job = PREPARATION.lock().map_err(|error| error.to_string())?;
+    if directory.join("complete").exists() && attach(track, &directory).is_ok() {
+        return Ok(true);
+    }
     let deadline = limit.map(|limit| Instant::now() + limit);
     check_deadline(deadline)?;
     progress.store(0, Ordering::Relaxed);
     fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let _ = fs::remove_file(directory.join("complete"));
-    if let Err(error) = crate::onnx_stems::separate(
+    let separate = if rocm.is_some() {
+        rocm_stems::separate
+    } else {
+        crate::onnx_stems::separate
+    };
+    let result = separate(
         &samples,
         track.sample_rate,
         &directory,
         progress,
         deadline,
-        model,
-    ) {
+        rocm.unwrap_or(model),
+    )
+    .and_then(|()| check_deadline(deadline));
+    if let Err(error) = result {
         for source in SOURCES {
             let _ = fs::remove_file(directory.join(format!("{source}.f32")));
         }
         return Err(error);
     }
-    check_deadline(deadline)?;
     attach(track, &directory)?;
-    fs::write(directory.join("complete"), format!("onnx-{model}-v1")).map_err(|e| e.to_string())?;
+    fs::write(
+        directory.join("complete"),
+        format!("{}-v1", cache_model(model)),
+    )
+    .map_err(|e| e.to_string())?;
     progress.store(100, Ordering::Relaxed);
     Ok(true)
 }
@@ -174,7 +217,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_identity_includes_model_audio_and_rate() {
+    fn cache_identity_includes_backend_model_audio_and_rate() {
+        assert_ne!(
+            cache_key(&[0., 1.], 44100, "htdemucs_ft"),
+            cache_key(&[0., 1.], 44100, "rocm-htdemucs_ft")
+        );
         assert_ne!(
             cache_key(&[0., 1.], 44100, "htdemucs"),
             cache_key(&[0., 1.], 44100, "htdemucs_ft")

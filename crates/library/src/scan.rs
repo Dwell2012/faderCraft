@@ -114,6 +114,11 @@ pub(crate) fn read_file_tags(path: &Path) -> Result<TrackEdit> {
     })
 }
 
+/// Read a file's tagged BPM without adding it to the library.
+pub fn read_tagged_bpm(path: &Path) -> Option<f64> {
+    read_file_tags(path).ok()?.bpm.filter(|bpm| bpm.is_finite())
+}
+
 /// Writes details into a file's own tags, leaving everything else in the
 /// tag (artwork, other fields) as it was.
 pub(crate) fn write_tags(path: &Path, edit: &TrackEdit) -> Result<()> {

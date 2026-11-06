@@ -1162,6 +1162,17 @@ fn measured_tempo_is_stored_and_shown() {
         downbeat: 0,
         confidence: 0.03,
     };
+    assert_eq!(
+        djcraft_library::read_tagged_bpm(&dir.0.join("a.wav")),
+        Some(100.)
+    );
+    assert_eq!(djcraft_library::read_tagged_bpm(&dir.0.join("b.wav")), None);
+    for result in [None, Some(unsure)] {
+        library.store_tempo(tagged, 1, result).unwrap();
+        assert_eq!(bpm_of(&library, "Tagged"), Some(100.));
+        assert_eq!(library.beat_grid(tagged).unwrap(), None);
+    }
+    library.store_tempo(tagged, 1, Some(sure)).unwrap();
     library.store_tempo(bare, 1, Some(unsure)).unwrap();
     assert_eq!(bpm_of(&library, "b"), None);
     assert_eq!(library.beat_grid(bare).unwrap(), None);

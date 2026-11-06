@@ -385,6 +385,11 @@ pub enum DeckAction {
         seconds: f64,
         play: bool,
     },
+    /// Retrigger one hot cue with a pitch offset from the unshifted track.
+    PlayKeyboardNote {
+        slot: u8,
+        semitones: u8,
+    },
     TriggerHotCue {
         slot: u8,
         play: bool,
@@ -517,6 +522,11 @@ pub enum DeckAction {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MixerAction {
+    ToggleMasterCue,
+    ToggleColourFxBypass,
+    SetBeatFx {
+        state: BeatFxState,
+    },
     Sampler {
         action: SamplerAction,
     },
@@ -565,6 +575,59 @@ pub enum MixerAction {
     SetCrossfaderRouting {
         routing: CrossfaderRouting,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BeatFxTarget {
+    Deck(u8),
+    Sampler,
+    Master,
+}
+
+/// One mixer Beat FX processor with a switchable destination.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BeatFxState {
+    pub target: BeatFxTarget,
+    /// An unsupported selector position leaves the processor unassigned.
+    pub kind: Option<EffectKind>,
+    pub enabled: bool,
+    pub amount: f32,
+    pub beats: f32,
+}
+
+impl Default for BeatFxState {
+    fn default() -> Self {
+        Self {
+            target: BeatFxTarget::Deck(0),
+            kind: None,
+            enabled: false,
+            amount: 0.5,
+            beats: 0.5,
+        }
+    }
+}
+
+impl BeatFxState {
+    pub fn effect(self, previous: Option<EffectState>) -> Option<EffectState> {
+        let kind = self.kind?;
+        let mut effect = previous
+            .filter(|effect| effect.kind == kind)
+            .unwrap_or_else(|| EffectState {
+                kind,
+                parameter: if kind == EffectKind::Filter { 0. } else { 0.5 },
+                ..EffectState::default()
+            });
+        effect.enabled = self.enabled;
+        effect.beats = self.beats;
+        if kind == EffectKind::PitchShift {
+            effect.parameter = 0.5 + 0.5 * self.amount;
+            effect.amount = 1.;
+        } else {
+            effect.amount = self.amount;
+        }
+        Some(effect)
+    }
 }
 
 /// A–D bitmasks for each crossfader side. Neither side bypasses the crossfader;
@@ -853,9 +916,15 @@ pub struct SessionState {
     #[serde(default)]
     pub monitor: MonitorState,
     #[serde(default)]
+    pub master_cue_enabled: bool,
+    #[serde(default)]
     pub automix: AutomixState,
     pub decks: Vec<DeckState>,
     pub master_gain: f32,
+    #[serde(default)]
+    pub beat_fx: BeatFxState,
+    #[serde(default)]
+    pub colour_fx_bypassed: bool,
     #[serde(default = "unity_gain")]
     pub booth_gain: f32,
     pub crossfader: f32,

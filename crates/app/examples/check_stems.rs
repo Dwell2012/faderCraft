@@ -19,9 +19,9 @@ fn main() -> Result<(), String> {
     if std::env::args().nth(1).as_deref() == Some("--download") {
         let model = std::env::args()
             .nth(2)
-            .ok_or("usage: check_stems --download <htdemucs|htdemucs_ft>")?;
+            .ok_or("usage: check_stems --download <model>")?;
         stems::download_model(&model)?;
-        println!("Downloaded {model} ONNX model");
+        println!("Downloaded {model} model");
         return Ok(());
     }
     let path = std::env::args()

@@ -186,6 +186,7 @@ fn main() -> Result<(), String> {
             },
             binding: Binding::Jog {
                 config: JogConfig {
+                    alternate_motion: Vec::new(),
                     deck,
                     touch: Some(Source::Note {
                         channel: 0,

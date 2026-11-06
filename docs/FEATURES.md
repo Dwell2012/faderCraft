@@ -1,5 +1,49 @@
 # djcraft feature list
 
+- [x] On Windows, DJCraft keeps the display on and prevents automatic idle
+      sleep while the app is open. Closing the app releases both requests.
+
+- [x] Deck BPM follows the library tempo preference and shows a file tag when
+      analysis produces no reliable BPM. Direct file drops also read tagged BPM.
+
+- [~] DDJ-GRV6 dedicated loop buttons set In/Out, start a four-beat loop from the initial IN press,
+      exit or recall the last loop, and halve or double an active loop.
+      [Loop edge adjustment, cue/loop memory controls and hardware verification pending.]
+
+- [~] DDJ-GRV6 Master Cue adds the master feed to the headphone cue bus and preserves
+      channel cues and headphone mix/level. [Physical controller check pending.]
+
+- [~] Keyboard pads select a saved hot cue and retrigger it at eight ascending
+      scale pitches. The pad page and DDJ-GRV6 Shift + Hot Cue use the track's
+      detected mode when available, or its major/natural minor key.
+      [Physical controller verification and Keyboard pad lamps pending.]
+
+- [x] Optional ROCm PyTorch preparation runs Fast and Detailed Demucs on an AMD
+      GPU. Library and deck preparation share the existing progress and deck
+      attachment workflow. ONNX CPU remains available with separate caches.
+
+- [~] DDJ-GRV6 Beat FX uses the selected deck's first FX slot or a shared
+      processor for Master and Sampler. Selector, on/off, 14-bit depth, beat
+      steps and LED feedback are mapped.
+      Sampler pads trigger or stop the selected bank's 16 slots.
+      Stems and Beat Jump pads mirror the app's existing pad pages.
+      [Helix uses Beat Repeat, Mobius positions bypass, startup dial position is unavailable through the tested requests.]
+
+- [x] Measured jog scratching eases into each incoming position so brief MIDI
+      delivery gaps during steady motion cause fewer audible dropouts. Large
+      backlogs still use a bounded target, and the wheel settles when input stops.
+      Dense MIDI packets share a short velocity measurement window so packets
+      with identical timestamps still contribute their full travel.
+
+- [~] DDJ-GRV6 jog platter, rim and touch inputs share one wheel state per deck.
+      Play, Cue, headphone Cue, Load, Slip, Vinyl, Quantize and hot-cue lamps use
+      documented MIDI output. Jog-ring animation follows playback position at
+      33⅓ rpm at unity tempo. [Physical sensitivity and lamp checks pending.]
+
+- [x] DDJ-GRV6 Sound Color FX knobs control the four deck CFX amounts via
+      14-bit MIDI. The ON/OFF button and lamp control global CFX bypass
+      while preserving each channel's selection and knob amount.
+
 - [x] Library analysis progress remains visible in Library and Perform. Deck loads promote pending tracks and pause other workers between DSP stages, then resume. Playlist imports notify the analysis owner; Check pending retries an idle/error pass.
 
 

@@ -569,6 +569,7 @@ impl Controllers {
                                 m.binding,
                                 djcraft_controllers::Binding::Led { .. }
                                     | djcraft_controllers::Binding::BrowserLed { .. }
+                                    | djcraft_controllers::Binding::BeatFx { .. }
                             )
                     }))
             {
@@ -589,7 +590,6 @@ impl Controllers {
                     }
                     self.outputs.insert(name.clone(), (output, Vec::new()));
                     self.failed.remove(&error_key);
-                    self.sync_feedback(&name, true);
                 }
                 Err(error) => {
                     if self.failed.insert(error_key) {
@@ -600,7 +600,7 @@ impl Controllers {
         }
     }
 
-    fn sync_feedback(&mut self, port: &str, force: bool) {
+    fn sync_feedback(&mut self, port: &str) {
         let mut desired = self.bridge.feedback_monitor(port, self.monitor);
         desired.extend(self.state_leds.get(port).into_iter().flatten().copied());
         for m in &self.bridge.profile().mappings {
@@ -622,18 +622,24 @@ impl Controllers {
         let Some((output, previous)) = self.outputs.get_mut(port) else {
             return;
         };
-        if !force && *previous == desired {
+        if *previous == desired {
             return;
         }
-        let messages: Vec<_> = feedback_messages(&desired, previous, force)
+        let messages: Vec<_> = feedback_messages(&desired, previous, false)
             .copied()
             .collect();
         for message in messages {
             if let Err(error) = output.send(&message) {
-                eprintln!("Controller LED send: {error}");
+                eprintln!("Controller LED send {port} {message:02X?}: {error}");
                 self.outputs.remove(port);
                 return;
             }
+        }
+        if previous.is_empty() {
+            eprintln!(
+                "Controller LED feedback sent: {port} ({} lamps)",
+                desired.len()
+            );
         }
         *previous = desired;
     }
@@ -695,7 +701,7 @@ impl Controllers {
                     loop_in,
                 ),
             );
-            self.sync_feedback(&port, false);
+            self.sync_feedback(&port);
         }
         actions
     }

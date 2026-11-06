@@ -171,6 +171,41 @@ impl Shell {
                 )
             })
     }
+    pub(super) fn controller_loop_button(
+        &mut self,
+        deck: usize,
+        button: djcraft_controllers::LoopButton,
+        cx: &mut Context<Self>,
+    ) {
+        use djcraft_controllers::LoopButton;
+        let Some(state) = self.loop_state(deck).filter(|s| s.track.is_some()) else {
+            return;
+        };
+        match button {
+            LoopButton::In => {
+                self.controller_loop_press[deck] = Some(state.position_seconds);
+                if state.loop_region.is_none() {
+                    self.loop_in[deck] = Some(state.position_seconds);
+                    self.send(deck, DeckAction::ClearLoop);
+                    cx.notify();
+                }
+            }
+            LoopButton::Out if state.loop_region.is_none() => {
+                self.controller_loop_pad(deck, 1, false, cx)
+            }
+            LoopButton::Reloop => self.controller_loop_pad(deck, 2, false, cx),
+            LoopButton::FourBeat => {
+                if let Some(position) = self.controller_loop_press[deck].take() {
+                    self.loop_size[deck] = 2;
+                    self.auto_loop_at(deck, position, cx);
+                }
+            }
+            LoopButton::Half if state.loop_region.is_some() => self.resize_loop(deck, -1, cx),
+            LoopButton::Double if state.loop_region.is_some() => self.resize_loop(deck, 1, cx),
+            _ => {}
+        }
+    }
+
     pub(super) fn controller_loop_pad(
         &mut self,
         deck: usize,
@@ -251,9 +286,13 @@ impl Shell {
             cx.notify();
             return;
         }
+        self.auto_loop_at(deck, state.position_seconds, cx);
+    }
+
+    fn auto_loop_at(&mut self, deck: usize, position: f64, cx: &mut Context<Self>) {
         if let Some(grid) = self.grids[deck] {
             let [start, end] = auto_region(
-                state.position_seconds,
+                position,
                 grid,
                 2f64.powi(self.loop_size[deck]),
                 self.effective_loop_options(deck),

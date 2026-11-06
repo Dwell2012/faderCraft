@@ -1715,6 +1715,52 @@ fn effects_render_budget() {
 }
 
 #[test]
+fn keyboard_notes_retrigger_one_cue_at_the_requested_pitch() {
+    use djcraft_protocol::{HOT_CUES, HotCue};
+    let (mut engine, mut mixer) = engine_with(sine(440., 4., RATE));
+    let mut cues = [None; HOT_CUES];
+    cues[3] = Some(HotCue {
+        seconds: 1.,
+        loop_end: Some(1.25),
+    });
+    engine
+        .apply(Role::Host, deck(DeckAction::SetHotCues { cues }))
+        .unwrap();
+    for semitones in [7, 12, 0] {
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::PlayKeyboardNote { slot: 3, semitones }),
+            )
+            .unwrap();
+        let audio = render(&mut mixer, 0.3);
+        let expected = 440. * 2f32.powf(f32::from(semitones) / 12.);
+        let pitch = frequency(&audio[RATE as usize / 5..]);
+        assert!(
+            (pitch - expected).abs() < 8.,
+            "pitch {pitch}, expected {expected}"
+        );
+        let state = &engine.state().decks[0];
+        assert!(state.playing);
+        assert!((state.position_seconds - 1.3).abs() < 0.02);
+        assert_eq!(state.key_shift, f32::from(semitones));
+        assert_eq!(state.loop_region, None);
+        assert_eq!(state.hot_cues, cues);
+    }
+    for (slot, semitones) in [(4, 7), (3, 13)] {
+        assert!(
+            engine
+                .apply(
+                    Role::Host,
+                    deck(DeckAction::PlayKeyboardNote { slot, semitones })
+                )
+                .is_err()
+        );
+    }
+    assert_eq!(engine.state().decks[0].key_shift, 0.);
+}
+
+#[test]
 fn hot_cues_trigger_atomically_and_are_cleared_on_new_track() {
     use djcraft_protocol::{HOT_CUES, HotCue};
     let (mut engine, mut mixer) = engine_with(ramp(4.));
@@ -1871,6 +1917,128 @@ fn stem_pads_work_with_classic_eq_and_mute_the_route() {
     // The meter's hold decays; the signal-route check also accounts for closed stems.
     render(&mut mixer, 6.);
     assert!(!engine.deck_has_open_output(0));
+}
+
+#[test]
+fn beat_fx_routes_only_to_the_selected_deck_or_bus() {
+    use djcraft_protocol::{BeatFxState, BeatFxTarget, EffectKind};
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    for (index, frequency) in [2000., 3000., 4000.].into_iter().enumerate() {
+        let samples = sine(frequency, 3., RATE)
+            .into_iter()
+            .map(|x| x * 0.2)
+            .collect();
+        engine
+            .load_track(
+                index,
+                Arc::new(Track::from_samples("Beat FX", RATE, samples)),
+            )
+            .unwrap();
+    }
+    for (index, action) in [
+        (
+            2,
+            DeckAction::CaptureSample {
+                slot: 0,
+                start: 0.,
+                end: 0.1,
+            },
+        ),
+        (0, DeckAction::Play),
+        (1, DeckAction::Play),
+        (
+            2,
+            DeckAction::Sample {
+                slot: 0,
+                play: true,
+                restart: true,
+                repeat: true,
+                level: 1.,
+            },
+        ),
+    ] {
+        engine
+            .apply(
+                Role::Host,
+                Action::Deck {
+                    deck: index,
+                    action,
+                },
+            )
+            .unwrap();
+    }
+    let measure = |mixer: &mut Mixer| {
+        let audio = render(mixer, 0.15);
+        let audio = &audio[audio.len() - RATE as usize / 10..];
+        [2000., 3000., 4000.].map(|frequency| {
+            let (sin, cos) = audio
+                .iter()
+                .enumerate()
+                .fold((0., 0.), |(sin, cos), (i, sample)| {
+                    let phase = TAU * frequency * i as f32 / RATE as f32;
+                    (sin + sample * phase.sin(), cos + sample * phase.cos())
+                });
+            sin.hypot(cos)
+        })
+    };
+    let dry = measure(&mut mixer);
+    assert!(dry.iter().all(|level| *level > 10.));
+    let rack = engine.state().decks[0].effects;
+    for (target, affected) in [
+        (BeatFxTarget::Deck(0), [true, false, false]),
+        (BeatFxTarget::Sampler, [false, false, true]),
+        (BeatFxTarget::Master, [true, true, true]),
+    ] {
+        let state = BeatFxState {
+            target,
+            kind: Some(EffectKind::Filter),
+            enabled: true,
+            amount: 1.,
+            beats: 0.5,
+        };
+        let action = Action::Mixer {
+            action: MixerAction::SetBeatFx { state },
+        };
+        assert_eq!(
+            engine.apply(Role::CoDj, action.clone()),
+            Err(Rejection::NotPermitted)
+        );
+        engine.apply(Role::Host, action).unwrap();
+        assert_eq!(engine.state().beat_fx, state);
+        let levels = measure(&mut mixer);
+        for i in 0..3 {
+            let ratio = levels[i] / dry[i];
+            if affected[i] {
+                assert!(ratio < 0.15, "{target:?} left frequency {i} at {ratio}");
+            } else {
+                assert!(
+                    (ratio - 1.).abs() < 0.05,
+                    "{target:?} changed frequency {i} to {ratio}"
+                );
+            }
+        }
+        if target == BeatFxTarget::Deck(0) {
+            let slot = engine.state().decks[0].effects[0];
+            assert_eq!(slot.kind, EffectKind::Filter);
+            assert!(slot.enabled);
+            for enabled in [false, true] {
+                engine
+                    .apply(
+                        Role::Host,
+                        deck(DeckAction::SetEffect {
+                            slot: 0,
+                            effect: djcraft_protocol::EffectState { enabled, ..slot },
+                        }),
+                    )
+                    .unwrap();
+                assert_eq!(engine.state().beat_fx.enabled, enabled);
+            }
+        }
+    }
+    let effects = engine.state().decks[0].effects;
+    assert!(!effects[0].enabled);
+    assert_eq!(effects[0].kind, EffectKind::Filter);
+    assert_eq!(effects[1..], rack[1..]);
 }
 
 #[test]
@@ -3664,6 +3832,46 @@ fn tempo_fader_range_is_per_deck_role_gated_and_preserves_playing_tempo() {
     assert_eq!(state.decks[1].tempo_range, TempoFaderRange::Low);
 }
 #[test]
+fn delayed_jog_packets_do_not_gate_continuous_scratch_audio() {
+    let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 4]);
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 0.5 }))
+        .unwrap();
+    let mut target = 0.5;
+    let mut block = [0.; CALLBACK * 2];
+    let mut minimum = 1f32;
+    // The wheel reports a steady speed every 10 ms. A delayed input drain
+    // sometimes delivers three ticks together, keeping the latest target.
+    for packet in 0..40 {
+        let callbacks = if packet % 2 == 0 { 3 } else { 1 };
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::JogScratch {
+                    seconds: target,
+                    speed: 0.25,
+                    interval_seconds: 0.01,
+                }),
+            )
+            .unwrap();
+        for _ in 0..callbacks {
+            mixer.render(&mut block);
+            if packet >= 8 {
+                minimum = block.iter().fold(minimum, |a, v| a.min(v.abs()));
+            }
+        }
+        target += 0.0025 * f64::from(callbacks);
+    }
+    assert!(minimum > 0.36, "continuous motion gated down to {minimum}");
+    let final_target = target - 0.0025;
+    for _ in 0..40 {
+        mixer.render(&mut block);
+    }
+    assert!(block.iter().all(|v| v.abs() < 0.001));
+    assert!((engine.state().decks[0].position_seconds - final_target).abs() < 1e-4);
+}
+
+#[test]
 fn jog_audio_tracks_measured_speed_and_decays_only_when_the_physical_target_stops() {
     for speed in [-2., -1., -0.25, 0.25, 1., 2.] {
         let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 16 * 2]);
@@ -3790,6 +3998,54 @@ fn filter_resonance_is_validated_and_isolated_per_slot_and_deck() {
     assert_eq!(state.decks[0].effects[0].resonance, 0.8);
     assert_eq!(state.decks[0].effects[1].resonance, 0.5);
     assert_eq!(state.decks[1].effects[0].resonance, 0.5);
+}
+
+#[test]
+fn colour_fx_master_bypass_cuts_noise_and_preserves_channel_settings() {
+    use djcraft_protocol::ColourFxState;
+    let (mut engine, mut mixer) = engine_with(vec![0.; RATE as usize * 8]);
+    let noise = ColourFxState {
+        position: 1.,
+        selected: 32,
+        enabled: true,
+    };
+    let set = |state| deck(DeckAction::SetColourFx { state });
+    let toggle = || Action::Mixer {
+        action: MixerAction::ToggleColourFxBypass,
+    };
+    engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+    engine.apply(Role::Host, set(noise)).unwrap();
+    assert!(
+        render(&mut mixer, 0.1)
+            .iter()
+            .any(|sample| sample.abs() > 0.01)
+    );
+    engine.apply(Role::Host, toggle()).unwrap();
+    assert!(engine.state().colour_fx_bypassed);
+    assert_eq!(engine.state().decks[0].colour_fx, noise);
+    assert!(
+        render(&mut mixer, 0.1)
+            .iter()
+            .all(|sample| sample.abs() < 1e-6)
+    );
+    let adjusted = ColourFxState {
+        position: 0.9,
+        ..noise
+    };
+    engine.apply(Role::Host, set(adjusted)).unwrap();
+    assert!(
+        render(&mut mixer, 0.1)
+            .iter()
+            .all(|sample| sample.abs() < 1e-6)
+    );
+    engine.apply(Role::Host, toggle()).unwrap();
+    assert!(!engine.state().colour_fx_bypassed);
+    assert_eq!(engine.state().decks[0].colour_fx, adjusted);
+    assert!(
+        render(&mut mixer, 0.1)
+            .iter()
+            .any(|sample| sample.abs() > 0.01)
+    );
 }
 
 #[test]

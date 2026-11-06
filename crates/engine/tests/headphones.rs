@@ -180,6 +180,64 @@ fn cue_is_independent_of_faders_and_switches_decks_without_advancing_twice() {
 }
 
 #[test]
+fn master_cue_adds_master_to_the_cue_side_of_the_blend() {
+    let (mut engine, mut mixer) = Engine::headless(48000);
+    for (index, level) in [(0, 0.1), (1, 0.3)] {
+        engine
+            .load_track(
+                index,
+                Arc::new(Track::from_samples("tone", 48000, vec![level; 48000])),
+            )
+            .unwrap();
+        deck(&mut engine, index as u8, DeckAction::Play);
+    }
+    engine
+        .apply(
+            Role::Host,
+            Action::Mixer {
+                action: MixerAction::SetCrossfader { position: 1. },
+            },
+        )
+        .unwrap();
+    let settings = MonitorState {
+        deck: 0,
+        mix: 0.5,
+        gain: 1.,
+        ..Default::default()
+    };
+    monitor(&mut engine, settings).unwrap();
+    let mut master = [0.; 2048];
+    let mut cue = [0.; 2048];
+    for enabled in [false, true, false] {
+        for (mix, without_master_cue, with_master_cue) in
+            [(0., 0.1, 0.4), (0.5, 0.4, 0.7), (1., 0.3, 0.3)]
+        {
+            let settings = MonitorState { mix, ..settings };
+            monitor(&mut engine, settings).unwrap();
+            mixer.render_with_monitor(&mut master, Some(&mut cue));
+            let expected = if enabled {
+                with_master_cue
+            } else {
+                without_master_cue
+            };
+            assert!((cue[2046] - expected).abs() < 1e-4);
+            assert!((master[2046] - 0.3).abs() < 1e-4);
+            let state = engine.state();
+            assert_eq!(state.master_cue_enabled, enabled);
+            assert_eq!(state.monitor, settings);
+        }
+        engine
+            .apply(
+                Role::Host,
+                Action::Mixer {
+                    action: MixerAction::ToggleMasterCue,
+                },
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn headphone_blend_and_level_leave_master_unchanged() {
     let (mut engine, mut mixer) = Engine::headless(48000);
     for (index, level) in [(0, 0.2), (1, 0.6)] {

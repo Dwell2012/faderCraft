@@ -7,12 +7,18 @@ const SCRUB_IDLE: Duration = Duration::from_millis(80);
 const BEND_IDLE: Duration = Duration::from_millis(40);
 // Some controllers pulse the contact note between successive wheel packets.
 const CONTACT_RELEASE: Duration = Duration::from_millis(30);
+// Dense MIDI packets can share a driver timestamp. Measure their combined
+// movement over a short interval rather than inventing time for each packet.
+const MOTION_SAMPLE: Duration = Duration::from_millis(4);
 
 /// One relative movement source plus its touch and optional Scratch-mode button.
 /// Distances are source-track seconds per tick, independent of tempo or pitch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct JogConfig {
     pub deck: u8,
+    /// Other motion messages from the same wheel, such as its rim.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternate_motion: Vec<Source>,
     #[serde(default)]
     pub touch: Option<Source>,
     pub scratch_toggle: Option<Source>,
@@ -32,6 +38,13 @@ impl JogConfig {
     pub(crate) fn validate(&self, movement: Source) -> Result<(), &'static str> {
         if !matches!(movement, Source::Cc { .. }) || self.encoding == Encoding::Absolute {
             return Err("jog movement requires a relative CC encoding");
+        }
+        if self
+            .alternate_motion
+            .iter()
+            .any(|source| !source.valid() || !matches!(source, Source::Cc { .. }))
+        {
+            return Err("alternate jog movement requires a valid CC source");
         }
         if self
             .touch
@@ -69,6 +82,7 @@ pub(crate) struct Jog {
     stationary: bool,
     target: Option<f64>,
     last_motion: Option<Instant>,
+    motion_sample: Option<(Instant, f64)>,
     motion_interval: f64,
     last_speed: f64,
     motor_tail: Option<Instant>,
@@ -95,6 +109,7 @@ impl Jog {
             stationary: false,
             target: None,
             last_motion: None,
+            motion_sample: None,
             motion_interval: 0.01,
             last_speed: 0.,
             motor_tail: None,
@@ -132,6 +147,7 @@ impl Jog {
     }
 
     fn grab(&mut self, config: &JogConfig, local: &DeckState) -> Action {
+        self.reset_motion();
         self.motor_tail = None;
         self.bending = false;
         self.bend_at = None;
@@ -167,10 +183,40 @@ impl Jog {
         self.transient = false;
         self.stationary = false;
         self.target = None;
+        self.reset_motion();
+        actions
+    }
+
+    fn reset_motion(&mut self) {
         self.last_motion = None;
+        self.motion_sample = None;
         self.motion_interval = 0.01;
         self.last_speed = 0.;
-        actions
+    }
+
+    fn measure_motion(&mut self, now: Instant, travel: f64) {
+        let previous_packet = self.last_motion.replace(now);
+        if let Some((start, accumulated)) = &mut self.motion_sample
+            && travel.signum() == self.last_speed.signum()
+        {
+            *accumulated += travel;
+            let elapsed = now.saturating_duration_since(*start);
+            if elapsed < MOTION_SAMPLE {
+                return;
+            }
+            self.motion_interval = elapsed.as_secs_f64().min(0.08);
+            self.last_speed = (*accumulated / self.motion_interval).clamp(-4., 4.);
+        } else {
+            // A reversal takes effect on its first packet. Discard travel
+            // accumulated in the old direction.
+            self.motion_interval = previous_packet
+                .map(|last| now.saturating_duration_since(last).as_secs_f64())
+                .filter(|dt| *dt >= 0.001)
+                .unwrap_or(self.motion_interval)
+                .clamp(0.001, 0.08);
+            self.last_speed = (travel / self.motion_interval).clamp(-4., 4.);
+        }
+        self.motion_sample = Some((now, 0.));
     }
 
     fn finish_at_audio_head(&mut self, deck: u8, local: &DeckState) -> Vec<Action> {
@@ -297,8 +343,7 @@ impl Jog {
             // Hold the head actually being heard, not a later catch-up target.
             self.stationary = true;
             self.target = None;
-            self.last_motion = None;
-            self.motion_interval = 0.01;
+            self.reset_motion();
             return vec![Self::action(config.deck, DeckAction::HoldJog)];
         }
         Vec::new()
@@ -353,7 +398,7 @@ impl Jog {
             self.touched = down;
             return actions;
         }
-        if event.source != movement {
+        if event.source != movement && !config.alternate_motion.contains(&event.source) {
             return actions;
         }
         let raw = i32::from(event.value);
@@ -380,24 +425,14 @@ impl Jog {
         if vinyl || !local.playing {
             self.bending = false;
             self.bend_at = None;
-            let seconds = (self.target.unwrap_or(local.position_seconds)
-                + f64::from(ticks) * config.seconds_per_tick)
-                .clamp(0., limit);
+            let travel = f64::from(ticks) * config.seconds_per_tick;
+            let seconds = (self.target.unwrap_or(local.position_seconds) + travel).clamp(0., limit);
             self.track = Some(Self::identity(local));
             self.target = Some(seconds);
             self.active = true;
             self.stationary = false;
             self.transient = !vinyl || config.touch.is_none();
-            let interval = self
-                .last_motion
-                .map(|last| now.saturating_duration_since(last).as_secs_f64())
-                .filter(|dt| *dt >= 0.001)
-                .unwrap_or(self.motion_interval)
-                .clamp(0.001, 0.08);
-            self.motion_interval = interval;
-            self.last_motion = Some(now);
-            let speed = (f64::from(ticks) * config.seconds_per_tick / interval).clamp(-4., 4.);
-            self.last_speed = speed;
+            self.measure_motion(now, travel);
             if self.motor_ready(local, now) {
                 actions.extend(self.pickup_motor(config.deck, local, now));
                 return actions;
@@ -406,8 +441,8 @@ impl Jog {
                 config.deck,
                 DeckAction::JogScratch {
                     seconds,
-                    speed,
-                    interval_seconds: interval,
+                    speed: self.last_speed,
+                    interval_seconds: self.motion_interval,
                 },
             ));
         } else if local.playing {

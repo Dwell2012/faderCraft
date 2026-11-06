@@ -21,9 +21,10 @@ pub(super) enum Page {
     AutoScratch,
     KeyShift,
     StemFx,
+    Keyboard,
 }
 impl Page {
-    pub(super) const ALL: [Self; 14] = [
+    pub(super) const ALL: [Self; 15] = [
         Self::HotCues,
         Self::Loop,
         Self::Roll,
@@ -38,6 +39,7 @@ impl Page {
         Self::Sampler,
         Self::AutoScratch,
         Self::KeyShift,
+        Self::Keyboard,
     ];
     pub(super) fn label(self) -> &'static str {
         match self {
@@ -55,6 +57,7 @@ impl Page {
             Self::Sampler => "Sampler",
             Self::AutoScratch => "Scratch",
             Self::KeyShift => "Key Shift",
+            Self::Keyboard => "Keyboard",
         }
     }
 }
@@ -83,6 +86,7 @@ enum Restore {
     },
 }
 pub(super) struct Pads {
+    keyboard_cue: Option<usize>,
     stem_fx_target: usize,
     sample_edit: u8,
     sample_hold: Option<usize>,
@@ -92,9 +96,9 @@ pub(super) struct Pads {
     pub(super) page: Page,
     pub(super) split: Option<Page>,
     pub(super) favorites: bool,
-    bank: [i32; 14],
-    size: [i32; 14],
-    step: [i32; 14],
+    bank: [i32; Page::ALL.len()],
+    size: [i32; Page::ALL.len()],
+    step: [i32; Page::ALL.len()],
     delete_saved: bool,
     pub(super) quantize: bool,
     pub(super) quantize_window: f64,
@@ -107,9 +111,10 @@ pub(super) struct Pads {
 }
 impl Default for Pads {
     fn default() -> Self {
-        let mut bank = [0; 14];
+        let mut bank = [0; Page::ALL.len()];
         bank[Page::BeatJump as usize] = 2;
         Self {
+            keyboard_cue: None,
             stem_fx_target: 0,
             sample_edit: 0,
             sample_hold: None,
@@ -120,8 +125,8 @@ impl Default for Pads {
             split: None,
             favorites: false,
             bank,
-            size: [0; 14],
-            step: [0; 14],
+            size: [0; Page::ALL.len()],
+            step: [0; Page::ALL.len()],
             delete_saved: false,
             quantize: true,
             quantize_window: 0.05,
@@ -148,6 +153,23 @@ fn cue_loop_length(
     loop_size: i32,
 ) -> Option<f64> {
     grid.map(|grid| region.map_or(grid.beat_seconds() * 2f64.powi(loop_size), |[a, b]| b - a))
+}
+
+const MAJOR_SCALE: [u8; 8] = [0, 2, 4, 5, 7, 9, 11, 12];
+const MINOR_SCALE: [u8; 8] = [0, 2, 3, 5, 7, 8, 10, 12];
+
+fn keyboard_scale(key: djcraft_library::Camelot, mode: Option<&str>) -> [u8; 8] {
+    match mode {
+        Some("Ionian") => MAJOR_SCALE,
+        Some("Dorian") => [0, 2, 3, 5, 7, 9, 10, 12],
+        Some("Phrygian") => [0, 1, 3, 5, 7, 8, 10, 12],
+        Some("Lydian") => [0, 2, 4, 6, 7, 9, 11, 12],
+        Some("Mixolydian") => [0, 2, 4, 5, 7, 9, 10, 12],
+        Some("Aeolian") => MINOR_SCALE,
+        Some("Locrian") => [0, 1, 3, 5, 6, 8, 10, 12],
+        _ if key.major => MAJOR_SCALE,
+        _ => MINOR_SCALE,
+    }
 }
 
 // Absolute offsets from the unshifted track: centre pad restores its key.
@@ -265,6 +287,7 @@ impl Shell {
     ) {
         let page = match mode {
             djcraft_controllers::PadMode::HotCues => Page::HotCues,
+            djcraft_controllers::PadMode::Keyboard => Page::Keyboard,
             djcraft_controllers::PadMode::Loop => Page::ManualLoop,
             djcraft_controllers::PadMode::Sampler => Page::Sampler,
             djcraft_controllers::PadMode::Stems => Page::Stems,
@@ -357,6 +380,7 @@ impl Shell {
                 continue;
             }
             self.pads[deck].held = None;
+            self.pads[deck].keyboard_cue = None;
             self.pads[deck].slicer_anchor = None;
             self.pads[deck].notice.clear();
             self.pad_tracks[deck] = track;
@@ -730,6 +754,78 @@ impl Shell {
         }
     }
 
+    pub(super) fn controller_performance_pad(
+        &mut self,
+        deck: usize,
+        mode: djcraft_controllers::PadMode,
+        pad: u8,
+        alternate: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let page = match mode {
+            djcraft_controllers::PadMode::Stems => Page::Stems,
+            djcraft_controllers::PadMode::BeatJump => Page::BeatJump,
+            djcraft_controllers::PadMode::Keyboard => Page::Keyboard,
+            _ => return,
+        };
+        self.press_pad(deck, page, usize::from(pad), alternate, cx);
+    }
+
+    fn keyboard_offsets(&self, deck: usize) -> Option<[u8; 8]> {
+        let key = self.deck_keys[deck]?;
+        let mode = self.deck_modes[deck]
+            .as_ref()
+            .map(|mode| mode.mode.as_str());
+        Some(keyboard_scale(key, mode))
+    }
+
+    fn keyboard_cue(&self, deck: usize, state: &DeckState) -> Option<usize> {
+        self.pads[deck]
+            .keyboard_cue
+            .filter(|slot| state.hot_cues[*slot].is_some())
+    }
+
+    fn press_keyboard_pad(
+        &mut self,
+        deck: usize,
+        index: usize,
+        alternate: bool,
+        state: &DeckState,
+    ) {
+        if index >= MAJOR_SCALE.len() {
+            return;
+        }
+        if let Some(slot) = self.keyboard_cue(deck, state).filter(|_| !alternate) {
+            if let Some(offsets) = self.keyboard_offsets(deck) {
+                if self.pad_send(
+                    deck,
+                    DeckAction::PlayKeyboardNote {
+                        slot: slot as u8,
+                        semitones: offsets[index],
+                    },
+                ) {
+                    self.pads[deck].notice = format!(
+                        "Cue {} · Note {} · +{} st",
+                        slot + 1,
+                        index + 1,
+                        offsets[index]
+                    );
+                }
+            } else {
+                self.pads[deck].notice =
+                    "Analyse or set the track key to play Keyboard notes.".into();
+            }
+        } else if state.hot_cues[index].is_some() {
+            self.pads[deck].keyboard_cue = Some(index);
+            self.pads[deck].notice = format!(
+                "Cue {} selected · Shift + pad selects another cue",
+                index + 1
+            );
+        } else {
+            self.pads[deck].notice = "Choose a pad with a saved hot cue.".into();
+        }
+    }
+
     fn press_pad(
         &mut self,
         deck: usize,
@@ -838,6 +934,7 @@ impl Shell {
         let start = snapped(state.position_seconds, grid, quantize).min(track.loaded_seconds);
         let loop_hold = self.pads[deck].loop_mode;
         match page {
+            Page::Keyboard => self.press_keyboard_pad(deck, index, alternate, &state),
             Page::Sampler => {}
             Page::KeyShift => {
                 let semitones = if alternate {
@@ -1406,6 +1503,25 @@ impl Shell {
             .as_ref()
             .is_some_and(|h| h.page == page && h.index == index);
         match page {
+            Page::Keyboard if index >= MAJOR_SCALE.len() => (String::new(), false, false),
+            Page::Keyboard => {
+                if self.keyboard_cue(deck, state).is_none() {
+                    (
+                        format!("Cue {}", index + 1),
+                        false,
+                        loaded && state.hot_cues[index].is_some(),
+                    )
+                } else if let Some(offsets) = self.keyboard_offsets(deck) {
+                    let shift = offsets[index];
+                    (
+                        format!("{} · +{shift} st", index + 1),
+                        state.playing && state.key_shift == f32::from(shift),
+                        loaded,
+                    )
+                } else {
+                    ("Key unknown".into(), false, loaded)
+                }
+            }
             Page::KeyShift => {
                 let shift = key_shift_pad(self.pads[deck].bank[page as usize], index);
                 (
@@ -1669,7 +1785,7 @@ impl Shell {
             Page::AutoScratch => &[(0, "Cut / over"), (1, "Quantize / immediate")],
             Page::KeyShift => &[(0, "Key layout"), (1, "Key shift")],
             Page::StemFx => &[(0, "Effect bank"), (1, "Wet amount")],
-            Page::HotCues | Page::Stems | Page::Fx => &[],
+            Page::HotCues | Page::Stems | Page::Fx | Page::Keyboard => &[],
         };
         if !controls.is_empty() {
             menu = menu.separator();
@@ -2223,6 +2339,11 @@ impl Shell {
             }
         }
         if !upper {
+            if !compact && (page == Page::Keyboard || split == Some(Page::Keyboard)) {
+                panel = panel.child(div().text_size(px(10.)).child(
+                    "Choose a saved cue, then play eight notes. Shift + pad changes the cue.",
+                ));
+            }
             if !compact && (page == Page::KeyShift || split == Some(Page::KeyShift)) {
                 panel = panel.child(div().text_size(px(10.)).child(
                     "Latched offsets from the original key · Reset restores 0 · Scale pads follow major or natural minor intervals · Key Lock keeps tempo changes from altering pitch"
@@ -2250,6 +2371,25 @@ mod tests {
         Page, cue_loop_length, hot_cue_position, pad_beats, sample_capture_region, snapped,
     };
     use djcraft_library::TempoResult;
+
+    #[test]
+    fn keyboard_maps_eight_ascending_degrees_in_the_track_scale() {
+        use djcraft_library::Camelot;
+        let major = Camelot::parse("D major").unwrap();
+        let minor = Camelot::parse("A minor").unwrap();
+        assert_eq!(
+            super::keyboard_scale(major, None),
+            [0, 2, 4, 5, 7, 9, 11, 12]
+        );
+        assert_eq!(
+            super::keyboard_scale(minor, None),
+            [0, 2, 3, 5, 7, 8, 10, 12]
+        );
+        assert_eq!(
+            super::keyboard_scale(minor, Some("Dorian")),
+            [0, 2, 3, 5, 7, 9, 10, 12]
+        );
+    }
 
     #[test]
     fn key_shift_pads_use_signed_scale_intervals() {

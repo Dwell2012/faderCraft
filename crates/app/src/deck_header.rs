@@ -12,7 +12,7 @@ fn clock_hundredths(seconds: f64) -> String {
 }
 
 impl Shell {
-    pub(super) fn refresh_deck_artwork(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_deck_file_details(&mut self, cx: &mut Context<Self>) {
         for deck in 0..DECKS {
             let path = self.deck_paths[deck].clone();
             if self.artwork_paths[deck] == path {
@@ -20,34 +20,43 @@ impl Shell {
             }
             self.artwork_paths[deck] = path.clone();
             self.deck_artwork[deck] = None;
+            self.deck_file_bpm[deck] = None;
             let Some(path) = path else {
                 continue;
             };
             let cover = self.library.read(cx).deck_artwork_path(&path);
+            let read_file_bpm = self.deck_metadata[deck].is_none();
             cx.spawn(async move |this, cx| {
                 let file = path.clone();
-                let artwork = cx
+                let (artwork, bpm) = cx
                     .background_spawn(async move {
-                        cover
+                        let artwork = cover
                             .and_then(|path| std::fs::read(path).ok())
                             .map(|data| djcraft_library::Artwork {
                                 data,
                                 mime_type: None,
                             })
-                            .or_else(|| djcraft_library::read_artwork(&file))
-                    })
-                    .await
-                    .and_then(|artwork| {
-                        let format = match artwork.data.as_slice() {
-                            [0xff, 0xd8, ..] => ImageFormat::Jpeg,
-                            [0x89, b'P', b'N', b'G', ..] => ImageFormat::Png,
-                            _ => return None,
+                            .or_else(|| djcraft_library::read_artwork(&file));
+                        let bpm = if read_file_bpm {
+                            djcraft_library::read_tagged_bpm(&file)
+                        } else {
+                            None
                         };
-                        Some(Arc::new(Image::from_bytes(format, artwork.data)))
-                    });
+                        (artwork, bpm)
+                    })
+                    .await;
+                let artwork = artwork.and_then(|artwork| {
+                    let format = match artwork.data.as_slice() {
+                        [0xff, 0xd8, ..] => ImageFormat::Jpeg,
+                        [0x89, b'P', b'N', b'G', ..] => ImageFormat::Png,
+                        _ => return None,
+                    };
+                    Some(Arc::new(Image::from_bytes(format, artwork.data)))
+                });
                 let _ = this.update(cx, |this, cx| {
                     if this.artwork_paths[deck].as_ref() == Some(&path) {
                         this.deck_artwork[deck] = artwork;
+                        this.deck_file_bpm[deck] = bpm;
                         cx.notify();
                     }
                 });
@@ -190,11 +199,11 @@ impl Shell {
             .as_ref()
             .filter(|_| state.track.is_some() && !state.loading && state.error.is_none());
         let title: SharedString = metadata
-            .filter(|m| !m.0.is_empty())
-            .map(|m| m.0.clone().into())
+            .filter(|m| !m.title.is_empty())
+            .map(|m| m.title.clone().into())
             .unwrap_or(fallback);
         let artist = metadata
-            .map(|m| m.1.clone())
+            .map(|m| m.artist.clone())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| {
                 if state.track.is_some() {
@@ -204,9 +213,14 @@ impl Shell {
                 }
             });
         let accent = deck_colour(deck);
-        let bpm = self.grids[deck]
-            .map(|g| format!("{:.2}", g.bpm * state.tempo))
-            .unwrap_or_else(|| "—".into());
+        let bpm = if state.track.is_some() && !state.loading && state.error.is_none() {
+            metadata.map_or(self.deck_file_bpm[deck], |metadata| metadata.bpm)
+        } else {
+            None
+        }
+        .filter(|bpm| bpm.is_finite() && *bpm > 0.)
+        .map(|bpm| format!("{:.2}", bpm * state.tempo))
+        .unwrap_or_else(|| "—".into());
         div()
             .flex()
             .gap(px(4.))

@@ -1,5 +1,15 @@
 # Pro performance pads
 
+**Keyboard** turns a saved hot cue into eight pitch pads. Choose Keyboard and
+press a pad with a saved cue to select it. Then play pads 1–8 for the scale from
+the cue's original pitch to one octave up. Shift + pad or right-click chooses
+another saved cue. The DDJ-GRV6 opens Keyboard with Shift + Hot Cue.
+
+The intervals follow the track's detected mode when available, or its major
+or natural minor key. Use a cue on the tonic for scale notes that align with
+the track key. A note retriggers playback and holds that pitch until another
+note or key shift changes it. Pad 1 restores the original pitch.
+
 Reference: https://virtualdj.com/manuals/virtualdj/interface/decks/decksadvanced/pads.html
 
 Each deck has eight pads in two rows of four. The page dropdown selects the mode;

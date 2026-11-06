@@ -117,7 +117,7 @@ pub struct SettingsView {
     controller_present: bool,
     model_download: bool,
     model_notice: String,
-    models_downloaded: [bool; 2],
+    models_downloaded: [bool; StemModel::ALL.len()],
 }
 
 impl SettingsView {
@@ -665,10 +665,14 @@ impl SettingsView {
                     StemModel::label, |s, model| s.stem_model = model, cx);
                 let fast_download = self.model_download_button(StemModel::Fast, 0, cx);
                 let detailed_download = self.model_download_button(StemModel::Detailed, 1, cx);
+                let rocm_fast = self.model_download_button(StemModel::RocmFast, 2, cx);
+                let rocm_detailed = self.model_download_button(StemModel::RocmDetailed, 3, cx);
                 let mut stem_rows = vec![
-                    self.row("Separation model", "Reload a deck after switching. Each model keeps its own stem cache.", model, cx),
+                    self.row("Separation model", "Reload a deck after switching. Each backend and model keeps its own stem cache.", model, cx),
                     self.row("Fast model", "Demucs: quicker four-stem separation.", fast_download, cx),
                     self.row("Detailed model", "Four fine-tuned ONNX specialists (about 1.3 GB total). Slower, potentially cleaner separation.", detailed_download, cx),
+                    self.row("ROCm Fast model", "Requires the local AMD ROCm PyTorch runtime.", rocm_fast, cx),
+                    self.row("ROCm Detailed model", "Four fine-tuned Demucs specialists on the Radeon.", rocm_detailed, cx),
                 ];
                 if !self.model_notice.is_empty() {
                     stem_rows.push(self.row("Download status", "", self.info(self.model_notice.clone(), cx), cx));

@@ -1,7 +1,7 @@
 //! User-owned controller mappings. All processing happens on the control thread.
 //! The bridge produces protocol actions; the host must apply them under its Role.
 use djcraft_protocol::script::{ControlSource, ParamDomain, Program};
-use djcraft_protocol::{Action, DeckAction, MixerAction, SessionState};
+use djcraft_protocol::{Action, BeatFxTarget, DeckAction, EffectKind, MixerAction, SessionState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -19,20 +19,71 @@ pub const PROFILE_VERSION: u32 = 1;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum HostCommand {
-    Browse { steps: i32 },
+    Browse {
+        steps: i32,
+    },
     BrowseBack,
-    LoadSelected { deck: u8 },
-    Sync { deck: u8 },
-    Cue { deck: u8, pressed: bool },
-    SelectDeck { deck: u8 },
-    ToggleHeadphoneCue { deck: u8 },
-    ToggleSlip { deck: u8 },
-    ToggleVinyl { deck: u8 },
-    Stutter { deck: u8 },
-    AutoLoop { deck: u8, beats: u8 },
-    LoopPad { deck: u8, pad: u8, alternate: bool },
-    SamplePad { deck: u8, slot: u8, stop: bool },
+    LoadSelected {
+        deck: u8,
+    },
+    Sync {
+        deck: u8,
+    },
+    Cue {
+        deck: u8,
+        pressed: bool,
+    },
+    SelectDeck {
+        deck: u8,
+    },
+    ToggleHeadphoneCue {
+        deck: u8,
+    },
+    ToggleSlip {
+        deck: u8,
+    },
+    ToggleVinyl {
+        deck: u8,
+    },
+    Stutter {
+        deck: u8,
+    },
+    AutoLoop {
+        deck: u8,
+        beats: u8,
+    },
+    LoopButton {
+        deck: u8,
+        button: LoopButton,
+    },
+    LoopPad {
+        deck: u8,
+        pad: u8,
+        alternate: bool,
+    },
+    SamplePad {
+        deck: u8,
+        slot: u8,
+        stop: bool,
+    },
+    PerformancePad {
+        deck: u8,
+        mode: PadMode,
+        pad: u8,
+        alternate: bool,
+    },
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopButton {
+    In,
+    Out,
+    FourBeat,
+    Reloop,
+    Half,
+    Double,
+}
+
 impl HostCommand {
     pub fn deck(&self) -> u8 {
         match *self {
@@ -46,8 +97,10 @@ impl HostCommand {
             | Self::ToggleVinyl { deck }
             | Self::Stutter { deck }
             | Self::AutoLoop { deck, .. }
+            | Self::LoopButton { deck, .. }
             | Self::LoopPad { deck, .. }
-            | Self::SamplePad { deck, .. } => deck,
+            | Self::SamplePad { deck, .. }
+            | Self::PerformancePad { deck, .. } => deck,
         }
     }
 }
@@ -252,6 +305,10 @@ pub enum Encoding {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Binding {
+    BeatFx {
+        #[serde(flatten)]
+        control: BeatFxControl,
+    },
     /// Compile once at profile load; execute on a note press or every absolute
     /// CC/pitch-bend value. A note release can run a separate program.
     Script {
@@ -259,6 +316,8 @@ pub enum Binding {
         #[serde(default)]
         release: Option<String>,
     },
+    ToggleMasterCue,
+    ToggleColourFxBypass,
     ToggleColourFx {
         deck: u8,
     },
@@ -341,6 +400,36 @@ pub enum Binding {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "control", rename_all = "snake_case")]
+pub enum BeatFxControl {
+    Select { kind: Option<EffectKind> },
+    Target { target: BeatFxTarget },
+    Toggle,
+    Depth,
+    Step { forward: bool },
+}
+
+// Beat choices supported by the engine, paired with the GRV6 indicator values.
+const BEAT_FX_DIVISIONS: [(f32, u8); 9] = [
+    (0.25, 3),
+    (0.5, 4),
+    (0.75, 0x21),
+    (1., 5),
+    (2., 6),
+    (4., 7),
+    (8., 8),
+    (16., 9),
+    (32., 10),
+];
+
+fn beat_fx_division(beats: f32) -> usize {
+    BEAT_FX_DIVISIONS
+        .iter()
+        .position(|(value, _)| *value >= beats)
+        .unwrap_or(BEAT_FX_DIVISIONS.len() - 1)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mapping {
     pub id: String,
@@ -362,6 +451,10 @@ pub struct Modifier {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LedFeedback {
+    Slip { deck: u8 },
+    Loaded { deck: u8 },
+    HeadphoneCue { deck: u8 },
+    ColourFxMaster,
     ColourFx { deck: u8 },
     Pressed { deck: u8 },
     LoopIn { deck: u8 },
@@ -414,6 +507,17 @@ impl Profile {
                 }
                 Source::PitchBend { channel } => channel < 16,
             };
+            if let Binding::BeatFx { control } = m.binding {
+                let source_matches = match control {
+                    BeatFxControl::Depth => matches!(m.source, Source::Cc14 { .. }),
+                    _ => matches!(m.source, Source::Note { .. }),
+                };
+                if !source_matches
+                    || matches!(control, BeatFxControl::Target { target: BeatFxTarget::Deck(deck) } if usize::from(deck) >= djcraft_protocol::DECKS)
+                {
+                    return Err(format!("{}: invalid Beat FX source or target", m.id));
+                }
+            }
             if let Binding::Script { program, release } = &m.binding {
                 let compiled =
                     Program::compile(program).map_err(|error| format!("{}: {error}", m.id))?;
@@ -525,6 +629,8 @@ impl Profile {
                     if matches!(command, HostCommand::LoopPad { pad, .. } if *pad >= 4)
                         || matches!(command, HostCommand::AutoLoop { beats, .. } if ![1,2,4,16].contains(beats))
                         || matches!(command, HostCommand::SamplePad { slot, .. } if *slot >= 16)
+                        || matches!(command, HostCommand::PerformancePad { mode, pad, .. }
+                            if *pad >= 8 || !matches!(mode, PadMode::Stems | PadMode::BeatJump | PadMode::Keyboard))
                     {
                         return Err(format!("{}: invalid pad index", m.id));
                     }
@@ -611,6 +717,7 @@ struct Memory {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PadMode {
+    Keyboard,
     HotCues,
     Loop,
     Sampler,
@@ -628,6 +735,7 @@ pub struct Bridge {
     jogs: BTreeMap<String, jog::Jog>,
     commands: Vec<HostCommand>,
     delete_modes: std::collections::BTreeSet<(String, u8)>,
+    beat_fx_selector_seen: std::collections::BTreeSet<String>,
 }
 
 impl Bridge {
@@ -661,6 +769,7 @@ impl Bridge {
             jogs: BTreeMap::new(),
             commands: Vec::new(),
             delete_modes: Default::default(),
+            beat_fx_selector_seen: Default::default(),
         })
     }
 
@@ -750,7 +859,8 @@ impl Bridge {
         loop_in: &[Option<f64>],
     ) -> Vec<[u8; 3]> {
         let blink = elapsed_ms / 250 % 2 == 0;
-        self.profile
+        let mut messages: Vec<_> = self
+            .profile
             .mappings
             .iter()
             .filter_map(|m| {
@@ -764,10 +874,20 @@ impl Bridge {
                     return None;
                 };
                 let (deck, slot) = match *feedback {
+                    LedFeedback::ColourFxMaster => {
+                        return Some([
+                            0x90 | channel,
+                            number,
+                            if state.colour_fx_bypassed { 0 } else { 127 },
+                        ]);
+                    }
                     LedFeedback::ColourFx { deck }
                     | LedFeedback::Pressed { deck }
                     | LedFeedback::LoopIn { deck }
                     | LedFeedback::Playing { deck }
+                    | LedFeedback::Slip { deck }
+                    | LedFeedback::Loaded { deck }
+                    | LedFeedback::HeadphoneCue { deck }
                     | LedFeedback::Cue { deck }
                     | LedFeedback::PitchCenter { deck }
                     | LedFeedback::Loop { deck } => (deck, 0),
@@ -780,7 +900,10 @@ impl Bridge {
                     .decks
                     .get(usize::from(deck))
                     .is_some_and(|s| match feedback {
-                        LedFeedback::ColourFx { .. } => s.colour_fx.active(),
+                        LedFeedback::ColourFxMaster => unreachable!(),
+                        LedFeedback::ColourFx { .. } => {
+                            !state.colour_fx_bypassed && s.colour_fx.active()
+                        }
                         LedFeedback::Pressed { .. } => self
                             .held
                             .get(&(port.to_owned(), m.source))
@@ -791,6 +914,11 @@ impl Bridge {
                                 || loop_in.get(usize::from(deck)).is_some_and(Option::is_some)
                         }
                         LedFeedback::Playing { .. } => s.track.is_some() && (s.playing || blink),
+                        LedFeedback::Slip { .. } => s.slip_enabled,
+                        LedFeedback::Loaded { .. } => s.track.is_some(),
+                        LedFeedback::HeadphoneCue { .. } => {
+                            state.monitor.cue_enabled(usize::from(deck))
+                        }
                         LedFeedback::Cue { .. } => {
                             s.track.is_some()
                                 && (self
@@ -821,9 +949,56 @@ impl Bridge {
                             .get(slot)
                             .is_some_and(|fx| fx.active_in_slot(slot)),
                     });
-                Some([0x90 | channel, number, if on { 100 } else { 0 }])
+                let on_velocity = if port == "DDJ-GRV6" { 0x7f } else { 100 };
+                Some([0x90 | channel, number, if on { on_velocity } else { 0 }])
             })
-            .collect()
+            .collect();
+        if port == "DDJ-GRV6"
+            && self
+                .profile
+                .mappings
+                .iter()
+                .any(|mapping| mapping.port == port)
+        {
+            // AlphaTheta's MIDI list specifies BF 00–03 with values up to 0x48.
+            // One turn takes 1.8 source seconds (33⅓ rpm at normal speed).
+            for deck in 0..djcraft_protocol::DECKS {
+                let position = state
+                    .decks
+                    .get(deck)
+                    .filter(|s| s.track.is_some() && (s.playing || s.scratching))
+                    .map_or(0, |s| {
+                        let phase = (s.position_seconds / 1.8).rem_euclid(1.);
+                        1 + ((phase * 72.) as u8).min(71)
+                    });
+                messages.push([0xbf, deck as u8, position]);
+            }
+        }
+        for mapping in &self.profile.mappings {
+            if mapping.port == port
+                && matches!(
+                    mapping.binding,
+                    Binding::BeatFx {
+                        control: BeatFxControl::Toggle
+                    }
+                )
+                && let Source::Note { channel, number } = mapping.source
+            {
+                messages.push([
+                    0x90 | channel,
+                    number,
+                    if state.beat_fx.enabled { 127 } else { 0 },
+                ]);
+                if port == "DDJ-GRV6" {
+                    messages.push([
+                        0xb4,
+                        0x64,
+                        BEAT_FX_DIVISIONS[beat_fx_division(state.beat_fx.beats)].1,
+                    ]);
+                }
+            }
+        }
+        messages
     }
 
     /// Explicit profile-owned Scratch LEDs. Send again on button release when
@@ -846,7 +1021,12 @@ impl Bridge {
                     .jogs
                     .get(&mapping.id)
                     .map_or(config.scratch_enabled, |j| j.enabled());
-                Some([0x90 | channel, number, if enabled { 100 } else { 0 }])
+                let on_velocity = if port == "DDJ-GRV6" { 0x7f } else { 100 };
+                Some([
+                    0x90 | channel,
+                    number,
+                    if enabled { on_velocity } else { 0 },
+                ])
             })
             .collect()
     }
@@ -1006,6 +1186,7 @@ impl Bridge {
             {
                 // Jog touch and mode are companion sources of this one mapping.
                 if mapping.source == event.source
+                    || config.alternate_motion.contains(&event.source)
                     || config.touch == Some(event.source)
                     || config.scratch_toggle == Some(event.source)
                 {
@@ -1083,6 +1264,10 @@ impl Bridge {
                         press: HostCommand::SamplePad { deck, .. },
                         ..
                     } => Some((*deck, PadMode::Sampler)),
+                    Binding::HostButton {
+                        press: HostCommand::PerformancePad { deck, mode, .. },
+                        ..
+                    } => Some((*deck, *mode)),
                     _ => None,
                 };
                 if let Some((deck, mode)) = mode {
@@ -1090,6 +1275,70 @@ impl Bridge {
                 }
             }
             let action = match &mapping.binding {
+                Binding::BeatFx { control }
+                    if rising
+                        || *control == BeatFxControl::Depth
+                        || (down
+                            && matches!(
+                                control,
+                                BeatFxControl::Select { .. } | BeatFxControl::Target { .. }
+                            )) =>
+                {
+                    let mut fx = state.beat_fx;
+                    match *control {
+                        BeatFxControl::Select { kind } => {
+                            self.beat_fx_selector_seen.insert(port.to_owned());
+                            fx.kind = kind;
+                            fx.enabled &= kind.is_some();
+                        }
+                        BeatFxControl::Target { target } => {
+                            fx.target = target;
+                            if matches!(target, BeatFxTarget::Deck(_)) {
+                                fx.beats = fx.beats.min(8.);
+                            }
+                        }
+                        BeatFxControl::Toggle => {
+                            // The GRV6 may not send a selector detent at startup.
+                            // In that case, use the selected deck's visible FX1.
+                            if fx.kind.is_none() && !self.beat_fx_selector_seen.contains(port) {
+                                if let BeatFxTarget::Deck(deck) = fx.target
+                                    && let Some(deck) = state.decks.get(usize::from(deck))
+                                {
+                                    let slot = deck.effects[0];
+                                    fx.kind = Some(slot.kind);
+                                    fx.enabled = slot.enabled;
+                                    fx.amount = if slot.kind == EffectKind::PitchShift {
+                                        ((slot.parameter - 0.5) * 2.).clamp(0., 1.)
+                                    } else {
+                                        slot.amount
+                                    };
+                                    fx.beats = slot.beats;
+                                } else {
+                                    fx.kind = Some(EffectKind::Echo);
+                                }
+                            }
+                            fx.enabled = !fx.enabled && fx.kind.is_some();
+                        }
+                        BeatFxControl::Depth => fx.amount = f32::from(event.value) / 16383.,
+                        BeatFxControl::Step { forward } => {
+                            let current = beat_fx_division(fx.beats);
+                            let next = if forward {
+                                let last = if matches!(fx.target, BeatFxTarget::Deck(_)) {
+                                    beat_fx_division(8.)
+                                } else {
+                                    BEAT_FX_DIVISIONS.len() - 1
+                                };
+                                (current + 1).min(last)
+                            } else {
+                                current.saturating_sub(1)
+                            };
+                            fx.beats = BEAT_FX_DIVISIONS[next].0;
+                        }
+                    }
+                    Some(Action::Mixer {
+                        action: MixerAction::SetBeatFx { state: fx },
+                    })
+                }
                 Binding::Script { .. } => {
                     let Some((press, release)) = self.scripts.get(&mapping.id) else {
                         continue;
@@ -1184,6 +1433,12 @@ impl Bridge {
                     None
                 }
                 Binding::PadMode { .. } => None,
+                Binding::ToggleMasterCue if rising => Some(Action::Mixer {
+                    action: MixerAction::ToggleMasterCue,
+                }),
+                Binding::ToggleColourFxBypass if rising => Some(Action::Mixer {
+                    action: MixerAction::ToggleColourFxBypass,
+                }),
                 Binding::ToggleColourFx { deck } if rising => state
                     .decks
                     .get(usize::from(*deck))
