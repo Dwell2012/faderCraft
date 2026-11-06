@@ -76,6 +76,7 @@ struct DeckControl {
     hot_cues: [Option<djcraft_protocol::HotCue>; djcraft_protocol::HOT_CUES],
     cue_appearance: [djcraft_protocol::CueAppearance; djcraft_protocol::HOT_CUES],
     effects: [djcraft_protocol::EffectState; djcraft_protocol::EFFECT_SLOTS],
+    pad_fx_hold: Option<(u8, usize, djcraft_protocol::EffectState)>,
     stem_effects: [djcraft_protocol::EffectState; 4],
     colour_fx: djcraft_protocol::ColourFxState,
     effect_beats: f32,
@@ -306,6 +307,7 @@ impl Engine {
                 hot_cues: [None; djcraft_protocol::HOT_CUES],
                 cue_appearance: Default::default(),
                 effects: djcraft_protocol::default_effects(),
+                pad_fx_hold: None,
                 stem_effects: djcraft_protocol::default_stem_effects(),
                 colour_fx: Default::default(),
                 effect_beats: djcraft_protocol::default_effect_beats(),
@@ -507,6 +509,7 @@ impl Engine {
             return Err(Rejection::NotPermitted);
         }
         match action {
+            Action::Host { .. } => Err(Rejection::NotPermitted),
             Action::Mixer {
                 action: MixerAction::Sampler { action },
             } => self.apply_sampler(action),
@@ -1273,6 +1276,12 @@ impl Engine {
                     effect,
                 })?;
                 self.decks[deck].effects[slot as usize] = effect;
+                if self.decks[deck]
+                    .pad_fx_hold
+                    .is_some_and(|(_, held_slot, _)| held_slot == slot as usize)
+                {
+                    self.decks[deck].pad_fx_hold = None;
+                }
                 if beat_fx_slot {
                     self.beat_fx.kind = Some(effect.kind);
                     self.beat_fx.enabled = effect.enabled;
@@ -1283,6 +1292,74 @@ impl Engine {
                         effect.amount
                     };
                 }
+                Ok(())
+            }
+            DeckAction::PadFx { pad, pressed } => {
+                if pad as usize >= djcraft_protocol::PAD_EFFECTS.len() {
+                    return Err(Rejection::InvalidValue);
+                }
+                if !pressed {
+                    if self.decks[deck]
+                        .pad_fx_hold
+                        .is_some_and(|(held_pad, _, _)| held_pad == pad)
+                    {
+                        let (_, slot, previous) = self.decks[deck].pad_fx_hold.take().unwrap();
+                        self.apply_deck(
+                            deck,
+                            DeckAction::SetEffect {
+                                slot: slot as u8,
+                                effect: previous,
+                            },
+                        )?;
+                    }
+                    return Ok(());
+                }
+                if self.decks[deck].track.is_none() {
+                    return Err(Rejection::InvalidValue);
+                }
+                if let Some((held_pad, _, _)) = self.decks[deck].pad_fx_hold {
+                    if held_pad == pad {
+                        return Ok(());
+                    }
+                    self.apply_deck(
+                        deck,
+                        DeckAction::PadFx {
+                            pad: held_pad,
+                            pressed: false,
+                        },
+                    )?;
+                }
+                let slot = self.decks[deck]
+                    .effects
+                    .iter()
+                    .position(|fx| !fx.enabled)
+                    .ok_or(Rejection::Busy)?;
+                let previous = self.decks[deck].effects[slot];
+                let kind = djcraft_protocol::PAD_EFFECTS[pad as usize];
+                let effect = djcraft_protocol::EffectState {
+                    kind,
+                    enabled: true,
+                    sync: self.decks[deck].grid.is_some(),
+                    beats: 0.5,
+                    amount: if matches!(
+                        kind,
+                        djcraft_protocol::EffectKind::Brake
+                            | djcraft_protocol::EffectKind::BeatRepeat
+                    ) {
+                        1.
+                    } else {
+                        0.5
+                    },
+                    ..djcraft_protocol::EffectState::default()
+                };
+                self.apply_deck(
+                    deck,
+                    DeckAction::SetEffect {
+                        slot: slot as u8,
+                        effect,
+                    },
+                )?;
+                self.decks[deck].pad_fx_hold = Some((pad, slot, previous));
                 Ok(())
             }
             DeckAction::SetLoopRoll { enabled } => {
@@ -1296,6 +1373,15 @@ impl Engine {
                 Ok(())
             }
             DeckAction::Unload => {
+                if let Some((pad, _, _)) = self.decks[deck].pad_fx_hold {
+                    self.apply_deck(
+                        deck,
+                        DeckAction::PadFx {
+                            pad,
+                            pressed: false,
+                        },
+                    )?;
+                }
                 self.send(Command::Unload { deck })?;
                 let control = &mut self.decks[deck];
                 control.rhythm_shift = false;
@@ -1318,6 +1404,15 @@ impl Engine {
                 Ok(())
             }
             DeckAction::Load { path } => {
+                if let Some((pad, _, _)) = self.decks[deck].pad_fx_hold {
+                    self.apply_deck(
+                        deck,
+                        DeckAction::PadFx {
+                            pad,
+                            pressed: false,
+                        },
+                    )?;
+                }
                 self.send(Command::RhythmGrid { deck, grid: None })?;
                 self.decks[deck].grid = None;
                 self.decks[deck].rhythm_shift = false;

@@ -192,6 +192,12 @@ impl Effect {
     pub fn processing(&self) -> bool {
         self.state.enabled || self.wet > 0.00001 || self.tail_active()
     }
+    pub fn post_fader(&self) -> bool {
+        matches!(
+            self.state.kind,
+            Kind::Echo | Kind::PingPong | Kind::LowCutEcho | Kind::EchoOut | Kind::Reverb
+        )
+    }
     pub fn set(&mut self, state: EffectState) {
         if self.state.kind != state.kind {
             self.clear();

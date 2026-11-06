@@ -2313,7 +2313,9 @@ impl Mixer {
                     // Deck inserts precede the independent CFX generators and
                     // reverse-menu CFX chain; Filter is the final processor.
                     for effect in &mut deck.effects {
-                        signal = effect.process(signal);
+                        if !effect.post_fader() {
+                            signal = effect.process(signal);
+                        }
                     }
                     let noise_amount = if deck.colour_state.active() {
                         (deck.colour_state.position - 0.5).abs() * 0.4
@@ -2343,7 +2345,9 @@ impl Mixer {
                         }
                     }
                     for effect in deck.colour_fx.iter_mut().rev() {
-                        signal = effect.process(signal);
+                        if !effect.post_fader() {
+                            signal = effect.process(signal);
+                        }
                     }
                     if deck.start_attack > 0 {
                         let gain = (33 - deck.start_attack) as f32 / 32.;
@@ -2353,11 +2357,31 @@ impl Mixer {
                     if deck.stretching {
                         signal = self.deck_guards[index].process(signal);
                     }
+                    // Feed time-based effects from the channel fader and sum their
+                    // returns afterwards. Closing the fader stops new input while
+                    // the buffered echo/reverb can still decay into the mix.
+                    let fader_signal = signal.map(|sample| sample * deck.gain);
+                    let mut channel = fader_signal;
+                    for effect in &mut deck.effects {
+                        if effect.post_fader() {
+                            let processed = effect.process(fader_signal);
+                            for c in 0..CHANNELS {
+                                channel[c] += processed[c] - fader_signal[c];
+                            }
+                        }
+                    }
+                    for effect in deck.colour_fx.iter_mut().rev() {
+                        if effect.post_fader() {
+                            let processed = effect.process(fader_signal);
+                            for c in 0..CHANNELS {
+                                channel[c] += processed[c] - fader_signal[c];
+                            }
+                        }
+                    }
                     for c in 0..CHANNELS {
-                        let channel = signal[c] * deck.gain;
                         cue[c] += signal[c] * cue_gain;
-                        peaks[index] = peaks[index].max(channel.abs());
-                        out[c] += channel * deck.cross_gain;
+                        peaks[index] = peaks[index].max(channel[c].abs());
+                        out[c] += channel[c] * deck.cross_gain;
                     }
                 }
                 deck.gain = target;

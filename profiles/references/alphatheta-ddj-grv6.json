@@ -6,7 +6,7 @@
     "headphone-cue": 84, "select": 114,
     "loop-in": 16, "loop-out": 17, "loop-four-beat": 20,
     "loop-reloop": 77, "loop-half": 81, "loop-double": 83,
-    "hot-cue-mode": 27, "keyboard-mode": 105, "stems-mode": 30, "beat-jump-mode": 32, "sampler-mode": 34,
+    "hot-cue-mode": 27, "keyboard-mode": 105, "stems-mode": 30, "pad-fx-mode": 107, "beat-jump-mode": 32, "beat-loop-mode": 109, "sampler-mode": 34, "key-shift-mode": 111,
     "slip": 64, "vinyl": 23, "quantize": 53,
     "rhythm-swap-1": 44, "rhythm-roll-1": 48, "rhythm-roll-2": 49,
     "rhythm-roll-3": 50, "rhythm-roll-4": 51,
@@ -17,7 +17,7 @@
     "eq-high": [7, 39], "eq-mid": [11, 43], "eq-low": [15, 47],
     "volume": [19, 51], "rhythm-gain": [18, 50]
   },
-  "mixer_note": {"mixer-master-cue": 99, "mixer-cfx-on-off": 0, "mixer-cfx-on-off-led": 0},
+  "mixer_note": {"mixer-master-cue": 99, "mixer-master-cue-led": 99, "mixer-cfx-on-off": 0, "mixer-cfx-on-off-led": 0},
   "mixer_cc14": {
     "mixer-cfx-a": [23, 55], "mixer-cfx-b": [24, 56],
     "mixer-cfx-c": [25, 57], "mixer-cfx-d": [26, 58],
@@ -33,9 +33,12 @@
   "load_notes": [70, 71, 72, 73],
   "hot_cue_slots": 8,
   "sampler_pad_notes": [48, 49, 50, 51, 52, 53, 54, 55],
+  "pad_fx_notes": [80, 81, 82, 83, 84, 85, 86, 87],
   "performance_pad_notes": {
     "keyboard": [64, 65, 66, 67, 68, 69, 70, 71],
     "stems": [16, 17, 18, 19, 20, 21, 22, 23],
-    "beat-jump": [32, 33, 34, 35, 36, 37, 38, 39]
+    "beat-jump": [32, 33, 34, 35, 36, 37, 38, 39],
+    "beat-loop": [96, 97, 98, 99, 100, 101, 102, 103],
+    "key-shift": [112, 113, 114, 115, 116, 117, 118, 119]
   }
 }

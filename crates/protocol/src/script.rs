@@ -65,6 +65,7 @@ pub enum Param {
     SamplerGain,
     HeadphoneGain,
     HeadphoneMix,
+    BeatFxDepth,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +86,7 @@ impl Param {
             | Self::SamplerGain
             | Self::HeadphoneGain
             | Self::HeadphoneMix => ParamDomain::Unipolar,
+            Self::BeatFxDepth => ParamDomain::Unipolar,
             Self::Eq(_) | Self::Eq4 | Self::Trim | Self::Tempo | Self::ColourFx => {
                 ParamDomain::Bipolar
             }
@@ -106,6 +108,7 @@ pub enum ButtonAction {
     ToggleQuantize,
     ToggleSlip,
     HotCue(u8),
+    DeleteHotCue(u8),
     ReleaseHotCue,
     ToggleColourFxSelection(u8),
     ToggleCrossfaderLeft,
@@ -123,6 +126,17 @@ pub enum ButtonAction {
     RhythmShiftOn,
     RhythmShiftOff,
     RhythmRoll(u8),
+    PadFxPress(u8),
+    PadFxRelease(u8),
+    SelectPadMode(crate::PadMode),
+    PerformancePad(crate::PadMode, u8, bool),
+    Host(crate::HostAction),
+    ToggleMasterCue,
+    ToggleColourFxBypass,
+    BeatFxSelect(Option<crate::EffectKind>),
+    BeatFxTarget(crate::BeatFxTarget),
+    BeatFxToggle,
+    BeatFxStep(bool),
 }
 
 impl ButtonAction {
@@ -135,6 +149,12 @@ impl ButtonAction {
                 | Self::ToggleCrossfaderPower
                 | Self::ToggleCrossfaderReverse
                 | Self::ToggleCrossfaderDisabled
+                | Self::ToggleMasterCue
+                | Self::ToggleColourFxBypass
+                | Self::BeatFxSelect(_)
+                | Self::BeatFxTarget(_)
+                | Self::BeatFxToggle
+                | Self::BeatFxStep(_)
         )
     }
 }
@@ -182,6 +202,42 @@ fn deck_id(name: &str) -> Result<Target, &'static str> {
     }
 }
 
+fn parse_pad_mode(name: &str) -> Result<crate::PadMode, &'static str> {
+    match name {
+        "hot_cues" => Ok(crate::PadMode::HotCues),
+        "keyboard" => Ok(crate::PadMode::Keyboard),
+        "loop" => Ok(crate::PadMode::Loop),
+        "sampler" => Ok(crate::PadMode::Sampler),
+        "stems" => Ok(crate::PadMode::Stems),
+        "beat_jump" => Ok(crate::PadMode::BeatJump),
+        "fx" => Ok(crate::PadMode::Fx),
+        "beat_loop" => Ok(crate::PadMode::BeatLoop),
+        "loop_roll" => Ok(crate::PadMode::LoopRoll),
+        "slicer" => Ok(crate::PadMode::Slicer),
+        "key_shift" => Ok(crate::PadMode::KeyShift),
+        _ => Err("unknown pad mode"),
+    }
+}
+
+fn parse_beat_fx_kind(name: &str) -> Result<Option<crate::EffectKind>, &'static str> {
+    use crate::EffectKind;
+    Ok(match name {
+        "none" => None,
+        "delay" => Some(EffectKind::Delay),
+        "echo" => Some(EffectKind::Echo),
+        "low_cut_echo" => Some(EffectKind::LowCutEcho),
+        "spiral" => Some(EffectKind::Spiral),
+        "beat_repeat" => Some(EffectKind::BeatRepeat),
+        "reverb" => Some(EffectKind::Reverb),
+        "flanger" => Some(EffectKind::Flanger),
+        "phaser" => Some(EffectKind::Phaser),
+        "filter" => Some(EffectKind::Filter),
+        "cut" => Some(EffectKind::Cut),
+        "pitch_shift" => Some(EffectKind::PitchShift),
+        _ => return Err("unknown Beat FX kind"),
+    })
+}
+
 fn quoted(word: &str) -> Result<&str, &'static str> {
     word.strip_prefix('"')
         .and_then(|word| word.strip_suffix('"'))
@@ -225,6 +281,7 @@ impl Program {
                 "sampler_gain" => Param::SamplerGain,
                 "headphone_gain" => Param::HeadphoneGain,
                 "headphone_mix" => Param::HeadphoneMix,
+                "beat_fx_depth" => Param::BeatFxDepth,
                 _ => return Err("unknown parameter"),
             };
             if (target == Target::Mixer) != param.is_mixer() {
@@ -257,6 +314,35 @@ impl Program {
                 "toggle_quantize" => ButtonAction::ToggleQuantize,
                 "toggle_slip" => ButtonAction::ToggleSlip,
                 "release_hot_cue" => ButtonAction::ReleaseHotCue,
+                "cue_press" => ButtonAction::Host(crate::HostAction::Cue { pressed: true }),
+                "cue_release" => ButtonAction::Host(crate::HostAction::Cue { pressed: false }),
+                "sync" => ButtonAction::Host(crate::HostAction::Sync),
+                "select_deck" => ButtonAction::Host(crate::HostAction::SelectDeck),
+                "toggle_vinyl" => ButtonAction::Host(crate::HostAction::ToggleVinyl),
+                "toggle_master_cue" => ButtonAction::ToggleMasterCue,
+                "toggle_colour_fx_bypass" => ButtonAction::ToggleColourFxBypass,
+                "beat_fx_toggle" => ButtonAction::BeatFxToggle,
+                "beat_fx_step_up" => ButtonAction::BeatFxStep(true),
+                "beat_fx_step_down" => ButtonAction::BeatFxStep(false),
+                "load_selected" => ButtonAction::Host(crate::HostAction::LoadSelected),
+                "loop_in" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::In,
+                }),
+                "loop_out" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::Out,
+                }),
+                "loop_four_beat" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::FourBeat,
+                }),
+                "loop_reloop" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::Reloop,
+                }),
+                "loop_half" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::Half,
+                }),
+                "loop_double" => ButtonAction::Host(crate::HostAction::LoopButton {
+                    button: crate::LoopButton::Double,
+                }),
                 "toggle_crossfader_left" => ButtonAction::ToggleCrossfaderLeft,
                 "toggle_crossfader_right" => ButtonAction::ToggleCrossfaderRight,
                 "toggle_headphone_cue" => ButtonAction::ToggleHeadphoneCue,
@@ -292,6 +378,68 @@ impl Program {
                     }
                     ButtonAction::HotCue(slot - 1)
                 }
+                name if name.starts_with("delete_hot_cue_") => {
+                    let slot: u8 = name[15..].parse().map_err(|_| "invalid hot cue slot")?;
+                    if !(1..=16).contains(&slot) {
+                        return Err("invalid hot cue slot");
+                    }
+                    ButtonAction::DeleteHotCue(slot - 1)
+                }
+                name if name.starts_with("pad_fx_press_") => {
+                    let pad: u8 = name[13..].parse().map_err(|_| "invalid pad FX number")?;
+                    if !(1..=16).contains(&pad) {
+                        return Err("invalid pad FX number");
+                    }
+                    ButtonAction::PadFxPress(pad - 1)
+                }
+                name if name.starts_with("pad_fx_release_") => {
+                    let pad: u8 = name[15..].parse().map_err(|_| "invalid pad FX number")?;
+                    if !(1..=16).contains(&pad) {
+                        return Err("invalid pad FX number");
+                    }
+                    ButtonAction::PadFxRelease(pad - 1)
+                }
+                name if name.starts_with("pad_mode_") => {
+                    ButtonAction::SelectPadMode(parse_pad_mode(&name[9..])?)
+                }
+                name if name.starts_with("pad_press_") || name.starts_with("pad_shift_") => {
+                    let shifted = name.starts_with("pad_shift_");
+                    let suffix = &name[if shifted { 10 } else { 10 }..];
+                    let (mode, number) =
+                        suffix.rsplit_once('_').ok_or("invalid performance pad")?;
+                    let pad: u8 = number.parse().map_err(|_| "invalid performance pad")?;
+                    if !(1..=8).contains(&pad) {
+                        return Err("invalid performance pad");
+                    }
+                    ButtonAction::PerformancePad(parse_pad_mode(mode)?, pad - 1, shifted)
+                }
+                "pad_release" => ButtonAction::Host(crate::HostAction::ReleasePerformancePad),
+                name if name.starts_with("sample_play_") || name.starts_with("sample_stop_") => {
+                    let stop = name.starts_with("sample_stop_");
+                    let slot: u8 = name[12..].parse().map_err(|_| "invalid sample slot")?;
+                    if !(1..=16).contains(&slot) {
+                        return Err("invalid sample slot");
+                    }
+                    ButtonAction::Host(crate::HostAction::SamplePad {
+                        slot: slot - 1,
+                        stop,
+                    })
+                }
+                name if name.starts_with("beat_fx_select_") => {
+                    ButtonAction::BeatFxSelect(parse_beat_fx_kind(&name[15..])?)
+                }
+                name if name.starts_with("beat_fx_target_") => {
+                    let target = match &name[15..] {
+                        "deck_a" => crate::BeatFxTarget::Deck(0),
+                        "deck_b" => crate::BeatFxTarget::Deck(1),
+                        "deck_c" => crate::BeatFxTarget::Deck(2),
+                        "deck_d" => crate::BeatFxTarget::Deck(3),
+                        "master" => crate::BeatFxTarget::Master,
+                        "sampler" => crate::BeatFxTarget::Sampler,
+                        _ => return Err("unknown Beat FX target"),
+                    };
+                    ButtonAction::BeatFxTarget(target)
+                }
                 _ => return Err("unknown action"),
             };
             let mixer_action = matches!(
@@ -302,6 +450,12 @@ impl Program {
                     | ButtonAction::ToggleCrossfaderPower
                     | ButtonAction::ToggleCrossfaderReverse
                     | ButtonAction::ToggleCrossfaderDisabled
+                    | ButtonAction::ToggleMasterCue
+                    | ButtonAction::ToggleColourFxBypass
+                    | ButtonAction::BeatFxSelect(_)
+                    | ButtonAction::BeatFxTarget(_)
+                    | ButtonAction::BeatFxToggle
+                    | ButtonAction::BeatFxStep(_)
             );
             if (target == Target::Mixer) != mixer_action {
                 return Err("deck action requires a deck target");
@@ -505,6 +659,79 @@ impl Program {
                 return Err("relative target requires invocation context");
             }
         };
+        if let Self::DoAction { action, .. } = self {
+            let mixer_action = match action {
+                ButtonAction::ToggleMasterCue => Some(MixerAction::ToggleMasterCue),
+                ButtonAction::ToggleColourFxBypass => Some(MixerAction::ToggleColourFxBypass),
+                ButtonAction::BeatFxSelect(kind) => {
+                    let mut fx = state
+                        .ok_or("Beat FX selection requires session state")?
+                        .beat_fx;
+                    fx.kind = kind;
+                    fx.enabled &= kind.is_some();
+                    Some(MixerAction::SetBeatFx { state: fx })
+                }
+                ButtonAction::BeatFxTarget(target) => {
+                    let mut fx = state
+                        .ok_or("Beat FX target requires session state")?
+                        .beat_fx;
+                    fx.target = target;
+                    if matches!(target, crate::BeatFxTarget::Deck(_)) {
+                        fx.beats = fx.beats.min(8.);
+                    }
+                    Some(MixerAction::SetBeatFx { state: fx })
+                }
+                ButtonAction::BeatFxToggle => {
+                    let state = state.ok_or("Beat FX toggle requires session state")?;
+                    let mut fx = state.beat_fx;
+                    if fx.kind.is_none() {
+                        if let crate::BeatFxTarget::Deck(deck) = fx.target {
+                            if let Some(deck) = state.decks.get(deck as usize) {
+                                let slot = deck.effects[0];
+                                fx.kind = Some(slot.kind);
+                                fx.enabled = slot.enabled;
+                                fx.amount = if slot.kind == crate::EffectKind::PitchShift {
+                                    ((slot.parameter - 0.5) * 2.).clamp(0., 1.)
+                                } else {
+                                    slot.amount
+                                };
+                                fx.beats = slot.beats;
+                            }
+                        } else {
+                            fx.kind = Some(crate::EffectKind::Echo);
+                        }
+                    }
+                    fx.enabled = !fx.enabled && fx.kind.is_some();
+                    Some(MixerAction::SetBeatFx { state: fx })
+                }
+                ButtonAction::BeatFxStep(forward) => {
+                    let mut fx = state.ok_or("Beat FX step requires session state")?.beat_fx;
+                    let beats = crate::BEAT_FX_BEATS;
+                    let current = beats
+                        .iter()
+                        .position(|value| *value >= fx.beats)
+                        .unwrap_or(beats.len() - 1);
+                    let next = if forward {
+                        (current + 1).min(if matches!(fx.target, crate::BeatFxTarget::Deck(_)) {
+                            6
+                        } else {
+                            beats.len() - 1
+                        })
+                    } else {
+                        current.saturating_sub(1)
+                    };
+                    fx.beats = beats[next];
+                    Some(MixerAction::SetBeatFx { state: fx })
+                }
+                _ => None,
+            };
+            if let Some(action) = mixer_action {
+                return Ok(Dispatch {
+                    source,
+                    action: Action::Mixer { action },
+                });
+            }
+        }
         if let Self::DoAction { action, .. } = self
             && action.is_mixer()
         {
@@ -579,6 +806,26 @@ impl Program {
                 },
             });
         }
+        if let Self::DoAction { action, .. } = self {
+            let host = match action {
+                ButtonAction::SelectPadMode(mode) => Some(crate::HostAction::PadMode { mode }),
+                ButtonAction::PerformancePad(mode, pad, alternate) => {
+                    Some(crate::HostAction::PerformancePad {
+                        mode,
+                        pad,
+                        alternate,
+                    })
+                }
+                ButtonAction::Host(action) => Some(action),
+                _ => None,
+            };
+            if let Some(action) = host {
+                return Ok(Dispatch {
+                    source,
+                    action: Action::Host { deck, action },
+                });
+            }
+        }
         let action = match self {
             Self::LegacyEq { band, .. } => {
                 if !input.is_finite() || !(0.0..=1.0).contains(&input) {
@@ -628,6 +875,12 @@ impl Program {
                                     disabled,
                                 },
                             }
+                        }
+                        Param::BeatFxDepth => {
+                            let mut fx =
+                                state.ok_or("Beat FX depth requires session state")?.beat_fx;
+                            fx.amount = normalized;
+                            MixerAction::SetBeatFx { state: fx }
                         }
                         Param::SamplerGain => MixerAction::SetSamplerGain {
                             level: normalized * normalized,
@@ -783,6 +1036,16 @@ impl Program {
                             DeckAction::SetHotCues { cues }
                         }
                     }
+                    ButtonAction::DeleteHotCue(slot) => {
+                        let deck_state = state
+                            .ok_or("delete_hot_cue requires session state")?
+                            .decks
+                            .get(deck as usize)
+                            .ok_or("deck missing from state")?;
+                        let mut cues = deck_state.hot_cues;
+                        cues[slot as usize] = None;
+                        DeckAction::SetHotCues { cues }
+                    }
                     ButtonAction::ToggleQuantize => {
                         let deck = state
                             .ok_or("toggle_quantize requires session state")?
@@ -812,6 +1075,23 @@ impl Program {
                         }
                     }
                     ButtonAction::RhythmRoll(slot) => DeckAction::TriggerRhythmRoll { slot },
+                    ButtonAction::PadFxPress(pad) => DeckAction::PadFx { pad, pressed: true },
+                    ButtonAction::PadFxRelease(pad) => DeckAction::PadFx {
+                        pad,
+                        pressed: false,
+                    },
+                    ButtonAction::SelectPadMode(_)
+                    | ButtonAction::PerformancePad(_, _, _)
+                    | ButtonAction::Host(_) => {
+                        unreachable!("handled above")
+                    }
+                    ButtonAction::ToggleMasterCue | ButtonAction::ToggleColourFxBypass => {
+                        unreachable!("handled above")
+                    }
+                    ButtonAction::BeatFxSelect(_)
+                    | ButtonAction::BeatFxTarget(_)
+                    | ButtonAction::BeatFxToggle
+                    | ButtonAction::BeatFxStep(_) => unreachable!("handled above"),
                     ButtonAction::RhythmShiftOn => DeckAction::SetRhythmShift { enabled: true },
                     ButtonAction::RhythmShiftOff => DeckAction::SetRhythmShift { enabled: false },
                     ButtonAction::ToggleRhythmShift => {
@@ -859,12 +1139,43 @@ impl Param {
                 | Self::SamplerGain
                 | Self::HeadphoneGain
                 | Self::HeadphoneMix
+                | Self::BeatFxDepth
         )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn loop_roll_and_slicer_pad_actions_dispatch_through_fcscript() {
+        use super::*;
+        for (name, mode) in [
+            ("loop_roll", crate::PadMode::LoopRoll),
+            ("slicer", crate::PadMode::Slicer),
+        ] {
+            let press = Program::compile(&format!("do_action(\"deck_c\", \"pad_press_{name}_3\")"))
+                .unwrap();
+            assert_eq!(
+                press.run(ControlSource::Controller, 0.).unwrap().action,
+                Action::Host {
+                    deck: 2,
+                    action: crate::HostAction::PerformancePad {
+                        mode,
+                        pad: 2,
+                        alternate: false,
+                    },
+                }
+            );
+            let release = Program::compile("do_action(\"deck_c\", \"pad_release\")").unwrap();
+            assert_eq!(
+                release.run(ControlSource::Controller, 0.).unwrap().action,
+                Action::Host {
+                    deck: 2,
+                    action: crate::HostAction::ReleasePerformancePad,
+                }
+            );
+        }
+    }
     use super::*;
 
     #[test]

@@ -32,7 +32,7 @@ impl Role {
     pub fn allows(self, action: &Action) -> bool {
         match (self, action) {
             (Role::Host, _) => true,
-            (Role::CoDj, Action::Deck { .. }) => true,
+            (Role::CoDj, Action::Deck { .. } | Action::Host { .. }) => true,
             (Role::CoDj, Action::Mixer { .. }) => false,
             (Role::Viewer, _) => false,
         }
@@ -42,8 +42,73 @@ impl Role {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "target", rename_all = "snake_case")]
 pub enum Action {
-    Deck { deck: DeckId, action: DeckAction },
-    Mixer { action: MixerAction },
+    Deck {
+        deck: DeckId,
+        action: DeckAction,
+    },
+    Mixer {
+        action: MixerAction,
+    },
+    /// UI-owned control request emitted by fcScript, never sent to the audio engine.
+    Host {
+        deck: DeckId,
+        action: HostAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PadMode {
+    Keyboard,
+    HotCues,
+    Loop,
+    Sampler,
+    Stems,
+    BeatJump,
+    Fx,
+    BeatLoop,
+    LoopRoll,
+    Slicer,
+    KeyShift,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum HostAction {
+    PadMode {
+        mode: PadMode,
+    },
+    PerformancePad {
+        mode: PadMode,
+        pad: u8,
+        alternate: bool,
+    },
+    ReleasePerformancePad,
+    SamplePad {
+        slot: u8,
+        stop: bool,
+    },
+    LoopButton {
+        button: LoopButton,
+    },
+    Cue {
+        pressed: bool,
+    },
+    Sync,
+    SelectDeck,
+    ToggleVinyl,
+    LoadSelected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopButton {
+    In,
+    Out,
+    FourBeat,
+    Reloop,
+    Half,
+    Double,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -74,6 +139,26 @@ impl EqMode {
 }
 
 pub const EFFECT_SLOTS: usize = 6;
+pub const BEAT_FX_BEATS: [f32; 9] = [0.25, 0.5, 0.75, 1., 2., 4., 8., 16., 32.];
+/// The four banks of momentary Pad FX, shared by skins and controller scripts.
+pub const PAD_EFFECTS: [EffectKind; 16] = [
+    EffectKind::Echo,
+    EffectKind::Reverb,
+    EffectKind::Flanger,
+    EffectKind::Cut,
+    EffectKind::Spiral,
+    EffectKind::BeatRepeat,
+    EffectKind::Brake,
+    EffectKind::PitchShift,
+    EffectKind::Delay,
+    EffectKind::PingPong,
+    EffectKind::LowCutEcho,
+    EffectKind::EchoOut,
+    EffectKind::Phaser,
+    EffectKind::Chorus,
+    EffectKind::Tremolo,
+    EffectKind::Bitcrusher,
+];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EffectKind {
     #[default]
@@ -414,6 +499,11 @@ pub enum DeckAction {
     SetEffect {
         slot: u8,
         effect: EffectState,
+    },
+    /// Momentary Pad FX press/release; the engine owns the temporary slot.
+    PadFx {
+        pad: u8,
+        pressed: bool,
     },
     SetStemEffect {
         stem: u8,

@@ -1518,8 +1518,7 @@ fn effects_six_slots_follow_tempo_and_keep_tails_audible_after_pause() {
         .apply(Role::Host, deck(DeckAction::SetVolume { level: 0. }))
         .unwrap();
     render(&mut mixer, 0.02);
-    assert!(render(&mut mixer, 0.2).iter().all(|x| x.abs() < 1e-7));
-    assert!(!engine.deck_has_open_output(0));
+    assert!(render(&mut mixer, 0.2).iter().any(|x| x.abs() > 0.01));
     engine
         .load_track(
             0,
@@ -1532,6 +1531,80 @@ fn effects_six_slots_follow_tempo_and_keep_tails_audible_after_pause() {
         .unwrap();
     render(&mut mixer, 0.02);
     assert!(!engine.state().decks[0].effect_tail);
+}
+
+#[test]
+fn echo_and_reverb_tails_survive_closing_the_channel_fader() {
+    use djcraft_protocol::{EffectKind, EffectState};
+    for kind in [EffectKind::Echo, EffectKind::Reverb] {
+        let (mut engine, mut mixer) = engine_with(sine(200., 3., RATE));
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::SetEffect {
+                    slot: 0,
+                    effect: EffectState {
+                        kind,
+                        enabled: true,
+                        amount: 1.,
+                        ..EffectState::default()
+                    },
+                }),
+            )
+            .unwrap();
+        engine.apply(Role::Host, deck(DeckAction::Play)).unwrap();
+        render(&mut mixer, 0.5);
+        engine
+            .apply(Role::Host, deck(DeckAction::SetVolume { level: 0. }))
+            .unwrap();
+        render(&mut mixer, 0.03);
+        let tail = render(&mut mixer, 0.1);
+        assert!(
+            tail.iter().any(|x| x.abs() > 0.001),
+            "{kind:?} must continue after closing the channel fader"
+        );
+    }
+}
+
+#[test]
+fn momentary_pad_fx_restores_the_previous_slot_for_every_bank() {
+    let (mut engine, mut mixer) = engine_with(sine(200., 3., RATE));
+    let original = engine.state().decks[0].effects[0];
+    for (pad, kind) in djcraft_protocol::PAD_EFFECTS.into_iter().enumerate() {
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::PadFx {
+                    pad: pad as u8,
+                    pressed: true,
+                }),
+            )
+            .unwrap();
+        let active = engine.state().decks[0].effects[0];
+        assert_eq!(active.kind, kind);
+        assert!(active.enabled);
+        engine
+            .apply(
+                Role::Host,
+                deck(DeckAction::PadFx {
+                    pad: pad as u8,
+                    pressed: false,
+                }),
+            )
+            .unwrap();
+        assert_eq!(engine.state().decks[0].effects[0], original);
+        render(&mut mixer, 0.01);
+    }
+    assert_eq!(
+        engine.apply(
+            Role::Host,
+            deck(DeckAction::PadFx {
+                pad: 16,
+                pressed: true
+            })
+        ),
+        Err(Rejection::InvalidValue)
+    );
 }
 
 #[test]

@@ -12,6 +12,67 @@ fn profile(mappings: Vec<Mapping>) -> Profile {
 }
 
 #[test]
+fn grv6_setup_buttons_use_scripts_on_all_four_decks() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState {
+        decks: vec![djcraft_protocol::DeckState::default(); 4],
+        ..Default::default()
+    };
+    state.monitor.cue_decks = Some(0);
+    for deck in 0..4u8 {
+        for (number, expected) in [
+            (
+                26,
+                Action::Deck {
+                    deck,
+                    action: DeckAction::SetKeyLock { on: true },
+                },
+            ),
+            (
+                64,
+                Action::Deck {
+                    deck,
+                    action: DeckAction::SetSlip { enabled: true },
+                },
+            ),
+            (
+                84,
+                Action::Mixer {
+                    action: MixerAction::SetMonitor {
+                        monitor: djcraft_protocol::MonitorState {
+                            cue_decks: Some(1 << deck),
+                            ..state.monitor
+                        },
+                    },
+                },
+            ),
+        ] {
+            let source = Source::Note {
+                channel: deck,
+                number,
+            };
+            assert_eq!(
+                bridge.process("DDJ-GRV6", Event { source, value: 127 }, &state),
+                vec![expected]
+            );
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 0 }, &state)
+                    .is_empty()
+            );
+            assert!(bridge.take_commands().is_empty());
+        }
+    }
+}
+
+#[test]
 fn grv6_jog_sources_share_deck_state_and_lamps_follow_session() {
     let profile =
         Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
@@ -531,7 +592,11 @@ fn grv6_pad_banks_follow_each_deck_and_shift_layer() {
                 ),
             ] {
                 let source = Source::Note { channel, number };
-                bridge.process("DDJ-GRV6", Event { source, value: 127 }, &state);
+                assert!(
+                    bridge
+                        .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                        .is_empty()
+                );
                 assert_eq!(bridge.take_commands(), vec![expected]);
                 assert_eq!(bridge.take_pad_modes()[usize::from(deck)], Some(mode));
                 bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
@@ -542,10 +607,145 @@ fn grv6_pad_banks_follow_each_deck_and_shift_layer() {
 }
 
 #[test]
+fn grv6_pad_fx_press_and_release_use_scripts_on_all_decks() {
+    use djcraft_controllers::PadMode;
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    for deck in 0..4u8 {
+        for shift in 0..2u8 {
+            for index in 0..8u8 {
+                let pad = index + 8 * shift;
+                let source = Source::Note {
+                    channel: 7 + deck * 2 + shift,
+                    number: 80 + index,
+                };
+                let press = bridge.process("DDJ-GRV6", Event { source, value: 127 }, &state);
+                assert_eq!(
+                    press,
+                    vec![Action::Deck {
+                        deck,
+                        action: DeckAction::PadFx { pad, pressed: true },
+                    }]
+                );
+                assert_eq!(bridge.take_pad_modes()[deck as usize], Some(PadMode::Fx));
+                let release = bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+                assert_eq!(
+                    release,
+                    vec![Action::Deck {
+                        deck,
+                        action: DeckAction::PadFx {
+                            pad,
+                            pressed: false
+                        },
+                    }]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn grv6_remaining_pad_modes_and_pads_follow_the_documented_notes() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    for deck in 0..4u8 {
+        for (mode_note, mode, pad_start) in [
+            (107, PadMode::Fx, None),
+            (109, PadMode::BeatLoop, Some(96)),
+            (111, PadMode::KeyShift, Some(112)),
+        ] {
+            let source = Source::Note {
+                channel: deck,
+                number: mode_note,
+            };
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            assert_eq!(bridge.take_pad_modes()[deck as usize], Some(mode));
+            bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+            if let Some(start) = pad_start {
+                for pad in 0..8u8 {
+                    let source = Source::Note {
+                        channel: 7 + 2 * deck,
+                        number: start + pad,
+                    };
+                    assert!(
+                        bridge
+                            .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                            .is_empty()
+                    );
+                    assert_eq!(
+                        bridge.take_commands(),
+                        vec![HostCommand::PerformancePad {
+                            deck,
+                            mode,
+                            pad,
+                            alternate: false
+                        }]
+                    );
+                    assert_eq!(bridge.take_pad_modes()[deck as usize], Some(mode));
+                    bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+                    assert!(bridge.take_commands().is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn grv6_shift_beat_loop_pads_hold_and_release_loop_roll() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    for deck in 0..4u8 {
+        for pad in 0..8u8 {
+            let source = Source::Note {
+                channel: 8 + 2 * deck,
+                number: 96 + pad,
+            };
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            assert_eq!(
+                bridge.take_pad_modes()[deck as usize],
+                Some(PadMode::LoopRoll)
+            );
+            assert_eq!(
+                bridge.take_commands(),
+                vec![HostCommand::PerformancePad {
+                    deck,
+                    mode: PadMode::LoopRoll,
+                    pad,
+                    alternate: false,
+                }]
+            );
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 0 }, &state)
+                    .is_empty()
+            );
+            assert_eq!(
+                bridge.take_commands(),
+                vec![HostCommand::ReleasePerformancePad { deck }]
+            );
+        }
+    }
+}
+
+#[test]
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 597);
+    assert_eq!(profile.mappings.len(), 770);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -754,11 +954,16 @@ fn grv6_master_cue_toggles_once_per_press() {
     let profile =
         Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
     let mut bridge = Bridge::new(profile).unwrap();
-    let state = SessionState::default();
+    let mut state = SessionState::default();
     let source = Source::Note {
         channel: 6,
         number: 99,
     };
+    assert!(
+        bridge
+            .state_feedback("DDJ-GRV6", &state, 0, &[])
+            .contains(&[0x96, 99, 0])
+    );
     for (value, pressed) in [(127, true), (127, false), (0, false), (127, true)] {
         let actions = bridge.process("DDJ-GRV6", Event { source, value }, &state);
         if pressed {
@@ -767,6 +972,12 @@ fn grv6_master_cue_toggles_once_per_press() {
                 vec![Action::Mixer {
                     action: MixerAction::ToggleMasterCue
                 }]
+            );
+            state.master_cue_enabled = !state.master_cue_enabled;
+            assert!(
+                bridge
+                    .state_feedback("DDJ-GRV6", &state, 0, &[])
+                    .contains(&[0x96, 99, if state.master_cue_enabled { 127 } else { 0 }])
             );
         } else {
             assert!(actions.is_empty());
@@ -1000,18 +1211,21 @@ fn grv6_slip_hot_cue_returns_on_release() {
             channel: deck,
             number: 64,
         };
-        bridge.process(
-            "DDJ-GRV6",
-            Event {
-                source: slip,
-                value: 127,
-            },
-            &state,
-        );
         assert_eq!(
-            bridge.take_commands(),
-            vec![HostCommand::ToggleSlip { deck }]
+            bridge.process(
+                "DDJ-GRV6",
+                Event {
+                    source: slip,
+                    value: 127,
+                },
+                &state,
+            ),
+            vec![Action::Deck {
+                deck,
+                action: DeckAction::SetSlip { enabled: true }
+            }]
         );
+        assert!(bridge.take_commands().is_empty());
         bridge.process(
             "DDJ-GRV6",
             Event {

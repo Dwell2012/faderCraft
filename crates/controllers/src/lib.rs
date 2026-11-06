@@ -72,16 +72,35 @@ pub enum HostCommand {
         pad: u8,
         alternate: bool,
     },
+    ReleasePerformancePad {
+        deck: u8,
+    },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LoopButton {
-    In,
-    Out,
-    FourBeat,
-    Reloop,
-    Half,
-    Double,
+pub use djcraft_protocol::LoopButton;
+
+fn script_host_command(deck: u8, action: djcraft_protocol::HostAction) -> Option<HostCommand> {
+    use djcraft_protocol::HostAction;
+    match action {
+        HostAction::PadMode { .. } => None,
+        HostAction::PerformancePad {
+            mode,
+            pad,
+            alternate,
+        } => Some(HostCommand::PerformancePad {
+            deck,
+            mode,
+            pad,
+            alternate,
+        }),
+        HostAction::ReleasePerformancePad => Some(HostCommand::ReleasePerformancePad { deck }),
+        HostAction::SamplePad { slot, stop } => Some(HostCommand::SamplePad { deck, slot, stop }),
+        HostAction::LoopButton { button } => Some(HostCommand::LoopButton { deck, button }),
+        HostAction::Cue { pressed } => Some(HostCommand::Cue { deck, pressed }),
+        HostAction::Sync => Some(HostCommand::Sync { deck }),
+        HostAction::SelectDeck => Some(HostCommand::SelectDeck { deck }),
+        HostAction::ToggleVinyl => Some(HostCommand::ToggleVinyl { deck }),
+        HostAction::LoadSelected => Some(HostCommand::LoadSelected { deck }),
+    }
 }
 
 impl HostCommand {
@@ -100,7 +119,8 @@ impl HostCommand {
             | Self::LoopButton { deck, .. }
             | Self::LoopPad { deck, .. }
             | Self::SamplePad { deck, .. }
-            | Self::PerformancePad { deck, .. } => deck,
+            | Self::PerformancePad { deck, .. }
+            | Self::ReleasePerformancePad { deck } => deck,
         }
     }
 }
@@ -454,6 +474,7 @@ pub enum LedFeedback {
     Slip { deck: u8 },
     Loaded { deck: u8 },
     HeadphoneCue { deck: u8 },
+    MasterCue,
     ColourFxMaster,
     ColourFx { deck: u8 },
     Pressed { deck: u8 },
@@ -630,7 +651,7 @@ impl Profile {
                         || matches!(command, HostCommand::AutoLoop { beats, .. } if ![1,2,4,16].contains(beats))
                         || matches!(command, HostCommand::SamplePad { slot, .. } if *slot >= 16)
                         || matches!(command, HostCommand::PerformancePad { mode, pad, .. }
-                            if *pad >= 8 || !matches!(mode, PadMode::Stems | PadMode::BeatJump | PadMode::Keyboard))
+                            if *pad >= 8 || !matches!(mode, PadMode::Stems | PadMode::BeatJump | PadMode::Keyboard | PadMode::BeatLoop | PadMode::KeyShift))
                     {
                         return Err(format!("{}: invalid pad index", m.id));
                     }
@@ -714,16 +735,7 @@ struct Memory {
     bend_at: Option<Instant>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PadMode {
-    Keyboard,
-    HotCues,
-    Loop,
-    Sampler,
-    Stems,
-    BeatJump,
-}
+pub use djcraft_protocol::PadMode;
 
 pub struct Bridge {
     pad_modes: [Option<PadMode>; djcraft_protocol::DECKS],
@@ -874,6 +886,13 @@ impl Bridge {
                     return None;
                 };
                 let (deck, slot) = match *feedback {
+                    LedFeedback::MasterCue => {
+                        return Some([
+                            0x90 | channel,
+                            number,
+                            if state.master_cue_enabled { 127 } else { 0 },
+                        ]);
+                    }
                     LedFeedback::ColourFxMaster => {
                         return Some([
                             0x90 | channel,
@@ -900,7 +919,7 @@ impl Bridge {
                     .decks
                     .get(usize::from(deck))
                     .is_some_and(|s| match feedback {
-                        LedFeedback::ColourFxMaster => unreachable!(),
+                        LedFeedback::MasterCue | LedFeedback::ColourFxMaster => unreachable!(),
                         LedFeedback::ColourFx { .. } => {
                             !state.colour_fx_bypassed && s.colour_fx.active()
                         }
@@ -976,12 +995,20 @@ impl Bridge {
         }
         for mapping in &self.profile.mappings {
             if mapping.port == port
-                && matches!(
+                && (matches!(
                     mapping.binding,
                     Binding::BeatFx {
                         control: BeatFxControl::Toggle
                     }
-                )
+                ) || self.scripts.get(&mapping.id).is_some_and(|(program, _)| {
+                    matches!(
+                        program,
+                        Program::DoAction {
+                            action: djcraft_protocol::script::ButtonAction::BeatFxToggle,
+                            ..
+                        }
+                    )
+                }))
                 && let Source::Note { channel, number } = mapping.source
             {
                 messages.push([
@@ -1268,6 +1295,34 @@ impl Bridge {
                         press: HostCommand::PerformancePad { deck, mode, .. },
                         ..
                     } => Some((*deck, *mode)),
+                    Binding::Script { .. } => {
+                        self.scripts.get(&mapping.id).and_then(|(program, _)| {
+                            if let Program::DoAction {
+                                target: djcraft_protocol::script::Target::Deck(deck),
+                                action,
+                            } = program
+                            {
+                                let mode = match action {
+                                    djcraft_protocol::script::ButtonAction::PadFxPress(_) => {
+                                        Some(PadMode::Fx)
+                                    }
+                                    djcraft_protocol::script::ButtonAction::SelectPadMode(mode)
+                                    | djcraft_protocol::script::ButtonAction::PerformancePad(
+                                        mode,
+                                        _,
+                                        _,
+                                    ) => Some(*mode),
+                                    djcraft_protocol::script::ButtonAction::Host(
+                                        djcraft_protocol::HostAction::SamplePad { .. },
+                                    ) => Some(PadMode::Sampler),
+                                    _ => None,
+                                };
+                                mode.map(|mode| (*deck, mode))
+                            } else {
+                                None
+                            }
+                        })
+                    }
                     _ => None,
                 };
                 if let Some((deck, mode)) = mode {
@@ -1346,14 +1401,74 @@ impl Bridge {
                     let selected = match event.source {
                         Source::Note { .. } if rising => Some(*press),
                         Source::Note { .. } if falling => *release,
+                        Source::Note { .. }
+                            if down
+                                && matches!(
+                                    press,
+                                    Program::DoAction {
+                                        action: djcraft_protocol::script::ButtonAction::BeatFxSelect(
+                                            _
+                                        )
+                                            | djcraft_protocol::script::ButtonAction::BeatFxTarget(
+                                                _
+                                            ),
+                                        ..
+                                    }
+                                ) =>
+                        {
+                            Some(*press)
+                        }
                         Source::Note { .. } => None,
                         Source::Cc { .. } | Source::Cc14 { .. } | Source::PitchBend { .. } => {
                             Some(*press)
                         }
                     };
-                    let Some(program) = selected else {
+                    let Some(mut program) = selected else {
                         continue;
                     };
+                    if let Program::DoAction { action, .. } = program {
+                        match action {
+                            djcraft_protocol::script::ButtonAction::BeatFxSelect(_) => {
+                                self.beat_fx_selector_seen.insert(port.to_owned());
+                            }
+                            djcraft_protocol::script::ButtonAction::BeatFxToggle
+                                if state.beat_fx.kind.is_none()
+                                    && self.beat_fx_selector_seen.contains(port) =>
+                            {
+                                program = Program::compile(
+                                    "do_action(\"mixer\", \"beat_fx_select_none\")",
+                                )
+                                .expect("valid Beat FX action");
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Program::DoAction {
+                        target: djcraft_protocol::script::Target::Deck(deck),
+                        action,
+                    } = program
+                    {
+                        match action {
+                            djcraft_protocol::script::ButtonAction::HotCue(slot)
+                                if self.delete_modes.contains(&(port.to_owned(), deck)) =>
+                            {
+                                program = Program::do_action(
+                                    usize::from(deck),
+                                    djcraft_protocol::script::ButtonAction::DeleteHotCue(slot),
+                                )
+                                .expect("valid mapped hot cue");
+                            }
+                            djcraft_protocol::script::ButtonAction::ReleaseHotCue
+                                if !state
+                                    .decks
+                                    .get(usize::from(deck))
+                                    .is_some_and(|deck| deck.slip_enabled) =>
+                            {
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     let maximum =
                         if matches!(event.source, Source::PitchBend { .. } | Source::Cc14 { .. }) {
                             16383.
@@ -1374,7 +1489,24 @@ impl Bridge {
                     program
                         .run_with_state(ControlSource::Controller, normalized, Some(state))
                         .ok()
-                        .map(|dispatch| dispatch.action)
+                        .and_then(|dispatch| match dispatch.action {
+                            Action::Host { deck, action } => {
+                                if let Some(command) = script_host_command(deck, action) {
+                                    if !matches!(
+                                        command,
+                                        HostCommand::SelectDeck { .. }
+                                            | HostCommand::Browse { .. }
+                                            | HostCommand::BrowseBack
+                                            | HostCommand::LoadSelected { .. }
+                                    ) {
+                                        takeovers.insert(command.deck());
+                                    }
+                                    self.commands.push(command);
+                                }
+                                None
+                            }
+                            action => Some(action),
+                        })
                 }
                 Binding::EffectBeats { deck, encoding } => {
                     let raw = i32::from(event.value);

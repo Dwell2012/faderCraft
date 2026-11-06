@@ -1491,16 +1491,31 @@ impl Shell {
         action: djcraft_protocol::script::ButtonAction,
         cx: &mut Context<Self>,
     ) -> bool {
-        use djcraft_protocol::script::{ControlSource, Program};
+        self.run_control_button(
+            deck,
+            action,
+            djcraft_protocol::script::ControlSource::Skin,
+            cx,
+        )
+    }
+
+    fn run_control_button(
+        &mut self,
+        deck: usize,
+        action: djcraft_protocol::script::ButtonAction,
+        source: djcraft_protocol::script::ControlSource,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use djcraft_protocol::script::Program;
         let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {
             return false;
         };
         match Program::do_action(deck, action)
-            .and_then(|program| program.run_with_state(ControlSource::Skin, 0.0, Some(&state)))
+            .and_then(|program| program.run_with_state(source, 0.0, Some(&state)))
         {
             Ok(dispatch) => self.apply_control_dispatch(dispatch, cx),
             Err(reason) => {
-                eprintln!("Skin button rejected: {reason}");
+                eprintln!("{source:?} button rejected: {reason}");
                 false
             }
         }
@@ -1528,6 +1543,27 @@ impl Shell {
             _ => None,
         };
         let applied = match action {
+            Action::Host { deck, action } if usize::from(deck) < self.deck_paths.len() => {
+                let deck = usize::from(deck);
+                match action {
+                    djcraft_protocol::HostAction::PadMode { mode } => {
+                        self.follow_controller_pad_mode(deck, mode, cx)
+                    }
+                    djcraft_protocol::HostAction::PerformancePad {
+                        mode,
+                        pad,
+                        alternate,
+                    } => {
+                        self.follow_controller_pad_mode(deck, mode, cx);
+                        self.controller_performance_pad(deck, mode, pad, alternate, cx);
+                    }
+                    djcraft_protocol::HostAction::ReleasePerformancePad => {
+                        self.release_pad(deck);
+                    }
+                    _ => return false,
+                }
+                true
+            }
             Action::Deck { deck, action } if usize::from(deck) < self.deck_paths.len() => {
                 if deck >= 2 && !self.settings.four_decks {
                     self.set_four_decks(true, cx);
@@ -1653,6 +1689,7 @@ impl Shell {
             } => {
                 self.controller_performance_pad(deck, mode, pad, alternate, cx);
             }
+            HostCommand::ReleasePerformancePad { .. } => self.release_pad(deck),
             HostCommand::Sync { .. } => self.sync_deck(deck, cx),
             HostCommand::Cue { pressed: true, .. } => self.begin_cue_preview(deck, cx),
             HostCommand::Cue { pressed: false, .. } => {
@@ -1664,12 +1701,16 @@ impl Shell {
                     self.end_cue_preview(cx);
                 }
             }
-            HostCommand::ToggleHeadphoneCue { .. } => {
-                self.toggle_headphone_cue(deck, djcraft_protocol::script::ControlSource::Controller)
-            }
-            HostCommand::ToggleSlip { .. } => {
-                self.toggle_slip(deck, djcraft_protocol::script::ControlSource::Controller)
-            }
+            HostCommand::ToggleHeadphoneCue { .. } => self.toggle_headphone_cue(
+                deck,
+                djcraft_protocol::script::ControlSource::Controller,
+                cx,
+            ),
+            HostCommand::ToggleSlip { .. } => self.toggle_slip(
+                deck,
+                djcraft_protocol::script::ControlSource::Controller,
+                cx,
+            ),
             HostCommand::ToggleVinyl { .. } => {
                 let enabled = self.flip_vinyl_setting(deck);
                 for action in controllers.set_vinyl_mode(deck as u8, enabled) {
@@ -1697,16 +1738,18 @@ impl Shell {
         cx.notify();
     }
 
-    fn toggle_slip(&mut self, deck: usize, source: djcraft_protocol::script::ControlSource) {
-        if let Some(engine) = &mut self.engine {
-            use djcraft_protocol::script::{ButtonAction, Program};
-            let state = engine.state();
-            if let Ok(dispatch) = Program::do_action(deck, ButtonAction::ToggleSlip)
-                .and_then(|program| program.run_with_state(source, 0., Some(&state)))
-            {
-                let _ = engine.apply(Role::Host, dispatch.action);
-            }
-        }
+    fn toggle_slip(
+        &mut self,
+        deck: usize,
+        source: djcraft_protocol::script::ControlSource,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_control_button(
+            deck,
+            djcraft_protocol::script::ButtonAction::ToggleSlip,
+            source,
+            cx,
+        );
     }
 
     fn flip_vinyl_setting(&mut self, deck: usize) -> bool {
@@ -1731,16 +1774,14 @@ impl Shell {
         &mut self,
         deck: usize,
         source: djcraft_protocol::script::ControlSource,
+        cx: &mut Context<Self>,
     ) {
-        if let Some(engine) = &mut self.engine {
-            use djcraft_protocol::script::{ButtonAction, Program};
-            let state = engine.state();
-            if let Ok(dispatch) = Program::do_action(deck, ButtonAction::ToggleHeadphoneCue)
-                .and_then(|program| program.run_with_state(source, 0., Some(&state)))
-            {
-                let _ = engine.apply(Role::Host, dispatch.action);
-            }
-        }
+        self.run_control_button(
+            deck,
+            djcraft_protocol::script::ButtonAction::ToggleHeadphoneCue,
+            source,
+            cx,
+        );
     }
 
     fn tool(&self, id: impl Into<ElementId>, icon: IconName, tooltip: &'static str) -> Button {
@@ -2117,8 +2158,7 @@ impl Shell {
             .when(headphone_cued, |button| button.bg(Hsla::from(deck_accent)).text_color(rgb(0x070b12)))
             .tooltip("Toggle this deck in headphones. Independent of deck activation; multiple decks can be cued.")
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.toggle_headphone_cue(index, djcraft_protocol::script::ControlSource::Skin);
-                cx.notify();
+                this.toggle_headphone_cue(index, djcraft_protocol::script::ControlSource::Skin, cx);
             }));
         let quantize_button = Button::new(("platter-quantize", index))
             .outline()

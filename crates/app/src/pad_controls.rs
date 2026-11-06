@@ -1,5 +1,5 @@
 use super::*;
-use djcraft_protocol::{EffectKind, EffectState, HOT_CUES, HotCue};
+use djcraft_protocol::{EffectState, HOT_CUES, HotCue};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{
     Icon, WindowExt,
@@ -81,8 +81,7 @@ enum Restore {
         seconds: f64,
     },
     Fx {
-        slot: usize,
-        effect: EffectState,
+        pad: u8,
     },
 }
 pub(super) struct Pads {
@@ -260,24 +259,6 @@ fn sample_capture_region(
         })
     })
 }
-const PAD_FX: [EffectKind; 16] = [
-    EffectKind::Echo,
-    EffectKind::Reverb,
-    EffectKind::Flanger,
-    EffectKind::Cut,
-    EffectKind::Spiral,
-    EffectKind::BeatRepeat,
-    EffectKind::Brake,
-    EffectKind::PitchShift,
-    EffectKind::Delay,
-    EffectKind::PingPong,
-    EffectKind::LowCutEcho,
-    EffectKind::EchoOut,
-    EffectKind::Phaser,
-    EffectKind::Chorus,
-    EffectKind::Tremolo,
-    EffectKind::Bitcrusher,
-];
 impl Shell {
     pub(super) fn follow_controller_pad_mode(
         &mut self,
@@ -292,12 +273,25 @@ impl Shell {
             djcraft_controllers::PadMode::Sampler => Page::Sampler,
             djcraft_controllers::PadMode::Stems => Page::Stems,
             djcraft_controllers::PadMode::BeatJump => Page::BeatJump,
+            djcraft_controllers::PadMode::Fx => Page::Fx,
+            djcraft_controllers::PadMode::BeatLoop => Page::Loop,
+            djcraft_controllers::PadMode::LoopRoll => Page::Roll,
+            djcraft_controllers::PadMode::Slicer => Page::Slicer,
+            djcraft_controllers::PadMode::KeyShift => Page::KeyShift,
         };
-        if self.pads[deck].page != page || self.pads[deck].split.is_some() {
+        let page_changed = self.pads[deck].page != page || self.pads[deck].split.is_some();
+        if page_changed {
             self.release_pad(deck);
             self.pads[deck].page = page;
             self.pads[deck].split = None;
             self.pads[deck].notice.clear();
+        }
+        let open_pads = self.settings.four_decks && self.deck_panel[deck] != 2;
+        if open_pads {
+            self.deck_panel[deck] = 2;
+            self.active_deck = deck;
+        }
+        if page_changed || open_pads {
             cx.notify();
         }
     }
@@ -324,6 +318,20 @@ impl Shell {
             }
             DeckAction::SlipReturn => {
                 let Ok(program) = Program::do_action(deck, ButtonAction::ReleaseHotCue) else {
+                    return false;
+                };
+                let Ok(dispatch) = program.run(ControlSource::Skin, 0.) else {
+                    return false;
+                };
+                dispatch.action
+            }
+            DeckAction::PadFx { pad, pressed } => {
+                let button = if pressed {
+                    ButtonAction::PadFxPress(pad)
+                } else {
+                    ButtonAction::PadFxRelease(pad)
+                };
+                let Ok(program) = Program::do_action(deck, button) else {
                     return false;
                 };
                 let Ok(dispatch) = program.run(ControlSource::Skin, 0.) else {
@@ -450,12 +458,12 @@ impl Shell {
                 self.pad_send(deck, DeckAction::Pause);
                 self.pad_send(deck, DeckAction::Seek { seconds });
             }
-            Restore::Fx { slot, effect } => {
+            Restore::Fx { pad } => {
                 self.pad_send(
                     deck,
-                    DeckAction::SetEffect {
-                        slot: slot as u8,
-                        effect,
+                    DeckAction::PadFx {
+                        pad,
+                        pressed: false,
                     },
                 );
             }
@@ -766,6 +774,10 @@ impl Shell {
             djcraft_controllers::PadMode::Stems => Page::Stems,
             djcraft_controllers::PadMode::BeatJump => Page::BeatJump,
             djcraft_controllers::PadMode::Keyboard => Page::Keyboard,
+            djcraft_controllers::PadMode::BeatLoop => Page::Loop,
+            djcraft_controllers::PadMode::LoopRoll => Page::Roll,
+            djcraft_controllers::PadMode::Slicer => Page::Slicer,
+            djcraft_controllers::PadMode::KeyShift => Page::KeyShift,
             _ => return,
         };
         self.press_pad(deck, page, usize::from(pad), alternate, cx);
@@ -1228,7 +1240,9 @@ impl Shell {
                     self.pads[deck].notice = "Prepare this track's stems first.".into();
                 } else {
                     let stem = self.pads[deck].stem_fx_target;
-                    let kind = PAD_FX[self.pads[deck].bank[page as usize].rem_euclid(4) as usize
+                    let kind = djcraft_protocol::PAD_EFFECTS[self.pads[deck].bank[page as usize]
+                        .rem_euclid(4)
+                        as usize
                         * 4
                         + index
                         - 4];
@@ -1258,32 +1272,15 @@ impl Shell {
                 }
             }
             Page::Fx => {
-                if let Some(slot) = state.effects.iter().position(|fx| !fx.enabled) {
-                    let old = state.effects[slot];
-                    let effect = EffectState {
-                        kind: PAD_FX[index],
-                        enabled: true,
-                        sync: grid.is_some(),
-                        beats: 0.5,
-                        amount: if matches!(
-                            PAD_FX[index],
-                            EffectKind::Brake | EffectKind::BeatRepeat
-                        ) {
-                            1.
-                        } else {
-                            0.5
-                        },
-                        ..EffectState::default()
-                    };
-                    if self.pad_send(
-                        deck,
-                        DeckAction::SetEffect {
-                            slot: slot as u8,
-                            effect,
-                        },
-                    ) {
-                        self.hold_pad(deck, page, index, Restore::Fx { slot, effect: old });
-                    }
+                if self.pad_send(
+                    deck,
+                    DeckAction::PadFx {
+                        pad: index as u8,
+                        pressed: true,
+                    },
+                ) {
+                    self.hold_pad(deck, page, index, Restore::Fx { pad: index as u8 });
+                    self.pads[deck].notice.clear();
                 } else {
                     self.pads[deck].notice =
                         "All six FX slots are active; free one to use Pad FX.".into();
@@ -1652,7 +1649,9 @@ impl Shell {
                         loaded,
                     )
                 } else {
-                    let kind = PAD_FX[self.pads[deck].bank[page as usize].rem_euclid(4) as usize
+                    let kind = djcraft_protocol::PAD_EFFECTS[self.pads[deck].bank[page as usize]
+                        .rem_euclid(4)
+                        as usize
                         * 4
                         + index
                         - 4];
@@ -1664,7 +1663,11 @@ impl Shell {
                     )
                 }
             }
-            Page::Fx => (PAD_FX[index].label().into(), held, loaded),
+            Page::Fx => (
+                djcraft_protocol::PAD_EFFECTS[index].label().into(),
+                held,
+                loaded,
+            ),
         }
     }
     pub(super) fn pad_page_options_menu(

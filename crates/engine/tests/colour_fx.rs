@@ -179,7 +179,9 @@ fn cfx_reset_kills_noise_and_all_echo_reverb_tails_immediately() {
 fn cfx_processors_match_reverse_menu_serial_rack_order() {
     use djcraft_protocol::{EffectKind, EffectState};
     let state = ColourFxState {
-        selected: 1 | 2 | 4 | 8 | 16,
+        // Echo and Reverb deck inserts now return after the channel fader;
+        // only processors sharing the CFX insert route can be compared here.
+        selected: 1 | 8 | 16,
         position: 0.2,
         enabled: true,
     };

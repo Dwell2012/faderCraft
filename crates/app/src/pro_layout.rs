@@ -97,8 +97,7 @@ impl Shell {
                 mode_button("SLIP", state.slip_enabled)
                     .tooltip("Slip: background playback continues through scratches, held Hot Cues, loops and pauses.")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_slip(deck, djcraft_protocol::script::ControlSource::Skin);
-                        cx.notify();
+                        this.toggle_slip(deck, djcraft_protocol::script::ControlSource::Skin, cx);
                     })),
             )
     }
