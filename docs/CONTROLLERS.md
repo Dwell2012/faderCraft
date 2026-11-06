@@ -26,7 +26,8 @@ quantize gate, and their LEDs report its state. Dedicated Hot Cue, Stems,
 Beat Jump and Sampler mode buttons switch the visible pad page for each deck.
 Shift + Hot Cue opens Keyboard. Pick a saved cue with its pad, then play the
 eight scale notes. Shift + pad selects a different cue. See [pad modes](PADS.md).
-Master Cue adds the master feed to the headphone cue bus. Headphones Mix
+Master Cue adds the master feed to the headphone cue bus. Its LED follows the
+app's master-cue state, including at controller connection. Headphones Mix
 blends that bus with the always-available master side.
 Loop In and Out set a manual loop. Hold In / 4 Beat to start a four-beat loop
 anchored to the initial press, using the track's beatgrid and loop options.
@@ -34,7 +35,7 @@ Reloop / Exit exits or recalls the last loop. While
 a loop is active, Cue/Loop Call left and right halve and double it. The In and
 Out lamps follow the loop marker and active loop. These buttons leave the
 current performance pad page selected.
-The profile has 597 entries. Each Sound Color FX knob drives its channel's
+The profile has 770 entries. Each Sound Color FX knob drives its channel's
 CFX amount, with the centre detent at neutral. Sound Color FX ON/OFF bypasses
 all four channels and lights when CFX is enabled. Turning the knobs while
 bypassed sets the amount that will be used on re-enable. Each deck's platter and rim
@@ -76,6 +77,28 @@ on channels 9/11/13/15 and delete the corresponding cue. Feedback uses the
 unshifted note address: a populated cue lights its pad, and deleting it clears
 the light. This is based on the supplied AlphaTheta MIDI message table and
 offline packet tests; LED behaviour has not yet been checked on the device.
+
+The GRV6 Pad FX bank sends notes 80–87 on the same per-deck pad channels;
+the Shift channels select effects 9–16. Each note runs an fcScript press action
+and its matching release action, so the effect is momentary and the previous
+slot settings return on release. Pressing a Pad FX note also opens that deck's
+Pad FX page. These addresses come from the supplied MIDI table and have
+offline packet tests; the hardware response still needs checking.
+The remaining shifted mode buttons now open Pad FX (note 107), Beat Loop
+(109), and Key Shift (111). Beat Loop notes 96–103 toggle the existing loop
+pad lengths; Key Shift notes 112–119 use the existing key-shift pad bank.
+Shift + Beat Loop pads (the documented shifted notes 96–103) now open Loop Roll
+and hold a momentary roll of the corresponding length; releasing the pad
+returns to the uninterrupted playhead. Normal Beat Loop pads keep their toggle
+behaviour. AlphaTheta's message list has no Slicer mode or Slicer pad address,
+so the bundled GRV6 profile does not claim a dedicated Slicer mapping. fcScript
+does expose `pad_mode_slicer`, `pad_press_slicer_N` and `pad_release` for a
+custom mapping once a suitable hardware gesture is chosen.
+The GRV6's Shift + Key Shift range choice remains unmapped until its exact
+range selection can be matched to the app's bank choices. Pad-mode selectors
+and these two pad banks now invoke fcScript. The script dispatcher passes
+host-owned pad and mode actions to the existing UI handler, which keeps page
+selection, loop behaviour, and controller feedback consistent.
 
 Hardware ownership is **not** a prerequisite for authoring a profile. For each
 device, derive MIDI addresses and value formats from the manufacturer's MIDI
@@ -422,3 +445,7 @@ Rapid catch-up follow-up: stopping/release fixes alone did not bound the audio f
 
 ## Single-controller automatic startup
 A single unambiguous input matching the loaded mapping now connects automatically at startup and on reconnect. The splash displays the mapping name and actual open input connection. Unrelated MIDI ports do not count as matching controllers. Multiple matching inputs still prompt, duplicate names are not guessed, and Disabled / an explicit Not now decision are honoured. This replaces the earlier requirement to approve every single-device connection.
+
+## GRV6 deck setup scripts
+
+Key Lock, Slip, and headphone Cue buttons on all four decks use fcScript `do_action` bindings. The button press reads current session state and dispatches the same protocol action as the matching skin control; repeated presses and note releases do not trigger a second toggle. Vinyl remains a host command because it changes controller scratch-mode settings rather than an engine parameter.

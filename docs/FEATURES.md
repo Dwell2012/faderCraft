@@ -512,6 +512,10 @@ Feature set modelled on Mixed In Key 10.
 - [~] MIDI Learn [Rust API and JSON profile import/export, Shift conditions,
       state-aware toggles, absolute/relative controls and fader soft takeover;
       graphical editor/Learn UI pending. Numark starter needs hardware validation.]
+- [~] DDJ-GRV6 mapping [770 documented bindings, including fcScript pad modes,
+      momentary Pad FX and Shift + Beat Loop rolls, Beat FX routing and stateful
+      LED feedback; physical acceptance and user-facing mapping editor pending.
+      See GRV6-REMAINING-WORK.md.]
 - [~] Bundled MixTrack Pro II profile based on official Numark MIDI addresses
       [40 bindings: transport/mixer/pitch/headphone/hot-cue controls with pickup,
       plus latched Scratch-mode buttons/LED feedback, scratching while playing

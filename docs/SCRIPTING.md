@@ -72,6 +72,14 @@ its complete adjustable curve through fcScript so the stored flags remain exact.
 `hot_cue_16` set an empty cue or play an existing one; `release_hot_cue` returns
 to the advancing hidden playhead when Slip is enabled. UI pads and MIDI Hot Cue
 bindings both execute these fcScript actions before dispatching to the engine.
+Momentary Pad FX uses `pad_fx_press_1` through `pad_fx_press_16` and matching
+`pad_fx_release_1` through `pad_fx_release_16`. The engine assigns a free
+effect slot on press and restores its previous settings on release. The skin
+and GRV6 Pad FX pads use these same actions; the Shift layer selects pads 9–16.
+For performance pages, `pad_mode_loop_roll` and `pad_mode_slicer` select the
+page, `pad_press_loop_roll_N` and `pad_press_slicer_N` press pad N (1–8), and
+`pad_release` ends the held roll or slice. The GRV6 bundles Shift + Beat Loop
+pads as Loop Roll; Slicer has no dedicated documented GRV6 mode assignment.
 Quantize is a master gate: turning it off bypasses feature
 quantize without changing Hot Cue or loop quantize preferences. Turning it on
 restores those preferences. The cycle advances Low → Medium → High → Wide → Low
@@ -80,6 +88,10 @@ without changing the current tempo. `toggle_play`, `toggle_key_lock` and
 invocation; a button binding must trigger on its press edge, not on every
 repeated MIDI packet. Momentary Hot Cues use `hot_cue_N` on press and
 `release_hot_cue` on release.
+
+The bundled GRV6 profile uses `do_action` for Key Lock, Slip, and headphone
+Cue on all four decks. The corresponding skin buttons use the same dispatcher
+as controller actions, so both paths apply their state changes consistently.
 
 The deck-focused Space shortcut uses
 `do_action("active", "toggle_play")`. It retains its existing toggle behaviour.
@@ -182,6 +194,18 @@ The returned dispatch carries this origin alongside its action. Origin is
 control-side metadata; the engine action itself stays independent of the UI.
 As fcScript grows, a common invocation context can carry the origin and any
 other gesture metadata so individual commands do not accumulate arguments.
+
+New GRV6 functional mappings should enter through fcScript. The bundled
+profile now scripts the pad-mode buttons and pads, hot-cue recall/delete,
+transport and loop buttons, mixer toggles, and Beat FX selection, routing,
+timing, toggle, and depth. `do_action` covers discrete controls while
+`set_param` covers normalized continuous values; host-owned operations still
+return a typed `HostAction` for the app to complete. MIDI message parsing,
+relative browse decoding, timestamped jog motion, and LED feedback remain
+controller-adapter responsibilities. When adding a control, extend fcScript
+and use its typed dispatch from UI and hardware rather than creating a new
+direct binding. The remaining direct UI handlers should be migrated as their
+controls are next changed.
 
 The authoritative session state is the feedback path. After an action is
 accepted, the active skin, custom controls and controller LEDs should observe
