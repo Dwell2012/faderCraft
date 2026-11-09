@@ -236,6 +236,16 @@ enum BrowserSection {
     OnlineSources,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ControllerItem {
+    AllTracks,
+    Source(i64),
+    Subfolder(i64, PathBuf),
+    PlaylistFolder(i64),
+    Playlist(i64),
+    Crate(i64),
+}
+
 impl BrowserSection {
     const ALL: [Self; 4] = [
         Self::Folders,
@@ -900,6 +910,7 @@ pub struct LibraryView {
     compact: bool,
     browser_section: BrowserSection,
     controller_folders: bool,
+    controller_item: Option<ControllerItem>,
     /// Whether a compact browser offers the Camelot wheel, from a button
     /// beside its track count.
     wheel_in_browser: bool,
@@ -959,6 +970,7 @@ pub struct LibraryView {
     /// suggestions are for, and whether they are being shown.
     reference: Option<(i64, SharedString)>,
     suggesting: bool,
+    suggestion_reference: Option<(i64, String)>,
     /// The duplicates dialog, while it is open, to refresh after a merge.
     duplicates: Option<Entity<DuplicatesView>>,
     /// The key picked on the Camelot wheel.
@@ -1061,6 +1073,7 @@ impl LibraryView {
             browser_section: BrowserSection::Folders,
             wheel_in_browser: false,
             controller_folders: false,
+            controller_item: None,
             wheel_open: false,
             wheel_dismissed: None,
             history_set: None,
@@ -1103,6 +1116,7 @@ impl LibraryView {
             collapsed_playlists: HashSet::new(),
             reference: None,
             suggesting: false,
+            suggestion_reference: None,
             duplicates: None,
             flow: (!compact).then(|| cx.new(|cx| crate::flow_view::FlowView::new(window, cx))),
             wheel_key: None,
@@ -1416,9 +1430,10 @@ impl LibraryView {
                 .filter(|_| !in_playlists && !self.compact),
         };
         let suggest_for = self
-            .reference
+            .suggestion_reference
             .as_ref()
             .map(|(id, _)| *id)
+            .or_else(|| self.reference.as_ref().map(|(id, _)| *id))
             .filter(|_| self.compact && self.suggesting);
         let loaded = (|| {
             let mut tracks: Vec<Track> = if let Some(reference) = suggest_for {
@@ -1502,7 +1517,7 @@ impl LibraryView {
 
     fn show_section(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
-        if self.compact {
+        if matches!(section, Section::Library | Section::Playlists) {
             self.browser_section = if section == Section::Playlists {
                 BrowserSection::Playlists
             } else {
@@ -2746,6 +2761,174 @@ impl LibraryView {
         self.controller_folders
     }
 
+    fn controller_items(&self) -> Vec<ControllerItem> {
+        let mut items = Vec::new();
+        let section = if !self.compact && self.section == Section::Playlists {
+            BrowserSection::Playlists
+        } else {
+            self.browser_section
+        };
+        match section {
+            BrowserSection::Folders => {
+                items.push(ControllerItem::AllTracks);
+                for source in &self.sources {
+                    items.push(ControllerItem::Source(source.id));
+                    for (id, path) in self
+                        .source_subfolders
+                        .iter()
+                        .filter(|(id, _)| *id == source.id)
+                    {
+                        let mut ancestor = path.parent();
+                        let mut visible = true;
+                        while let Some(parent) = ancestor.filter(|p| !p.as_os_str().is_empty()) {
+                            if !self
+                                .expanded_source_folders
+                                .contains(&(*id, parent.to_path_buf()))
+                            {
+                                visible = false;
+                                break;
+                            }
+                            ancestor = parent.parent();
+                        }
+                        if visible {
+                            items.push(ControllerItem::Subfolder(*id, path.clone()));
+                        }
+                    }
+                }
+            }
+            BrowserSection::Playlists => self.controller_playlist_items(None, &mut items),
+            BrowserSection::Crates => self.controller_crate_items(None, &mut items),
+            BrowserSection::OnlineSources => {}
+        }
+        items
+    }
+
+    fn controller_playlist_items(&self, parent: Option<i64>, items: &mut Vec<ControllerItem>) {
+        for folder in self.folders.iter().filter(|folder| folder.parent == parent) {
+            items.push(ControllerItem::PlaylistFolder(folder.id));
+            if !self.collapsed.contains(&folder.id) {
+                self.controller_playlist_items(Some(folder.id), items);
+            }
+        }
+        for playlist in self
+            .playlists
+            .iter()
+            .filter(|playlist| playlist.folder == parent)
+        {
+            items.push(ControllerItem::Playlist(playlist.id));
+        }
+    }
+
+    fn controller_crate_items(&self, parent: Option<i64>, items: &mut Vec<ControllerItem>) {
+        for crate_item in self.crates.iter().filter(|item| item.parent == parent) {
+            items.push(ControllerItem::Crate(crate_item.id));
+            if !self.collapsed_crates.contains(&crate_item.id) {
+                self.controller_crate_items(Some(crate_item.id), items);
+            }
+        }
+    }
+
+    fn controller_select_item(&mut self, item: ControllerItem, cx: &mut Context<Self>) {
+        self.controller_item = Some(item.clone());
+        match item {
+            ControllerItem::AllTracks => self.select(None, cx),
+            ControllerItem::Source(id) => self.select(Some(id), cx),
+            ControllerItem::Subfolder(id, path) => self.select_subfolder(id, path, cx),
+            ControllerItem::PlaylistFolder(_) => cx.notify(),
+            ControllerItem::Playlist(id) => self.open_playlist(id, cx),
+            ControllerItem::Crate(id) => {
+                self.browser_section = BrowserSection::Crates;
+                self.crate_id = Some(id);
+                self.reload(cx);
+            }
+        }
+    }
+
+    fn controller_open(&mut self, cx: &mut Context<Self>) {
+        if !self.controller_folders {
+            return;
+        }
+        match self.controller_item.clone() {
+            Some(ControllerItem::Subfolder(id, path))
+                if self.source_folder_parents.contains(&(id, path.clone())) =>
+            {
+                self.expanded_source_folders.insert((id, path));
+            }
+            Some(ControllerItem::PlaylistFolder(id)) => {
+                self.collapsed.remove(&id);
+            }
+            Some(ControllerItem::Crate(id))
+                if self.crates.iter().any(|item| item.parent == Some(id)) =>
+            {
+                self.collapsed_crates.remove(&id);
+            }
+            _ => self.controller_folders = false,
+        }
+        cx.notify();
+    }
+
+    fn controller_close(&mut self, cx: &mut Context<Self>) {
+        if !self.controller_folders {
+            self.controller_folders = true;
+        } else {
+            match self.controller_item.clone() {
+                Some(ControllerItem::Subfolder(id, path))
+                    if self.expanded_source_folders.remove(&(id, path.clone())) => {}
+                Some(ControllerItem::Subfolder(id, path)) => {
+                    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                        self.controller_select_item(
+                            ControllerItem::Subfolder(id, parent.to_path_buf()),
+                            cx,
+                        );
+                    } else {
+                        self.controller_select_item(ControllerItem::Source(id), cx);
+                    }
+                }
+                Some(ControllerItem::PlaylistFolder(id)) if !self.collapsed.contains(&id) => {
+                    self.collapsed.insert(id);
+                }
+                Some(ControllerItem::PlaylistFolder(id)) => {
+                    if let Some(parent) = self
+                        .folders
+                        .iter()
+                        .find(|item| item.id == id)
+                        .and_then(|item| item.parent)
+                    {
+                        self.controller_select_item(ControllerItem::PlaylistFolder(parent), cx);
+                    }
+                }
+                Some(ControllerItem::Playlist(id)) => {
+                    if let Some(parent) = self
+                        .playlists
+                        .iter()
+                        .find(|item| item.id == id)
+                        .and_then(|item| item.folder)
+                    {
+                        self.controller_select_item(ControllerItem::PlaylistFolder(parent), cx);
+                    }
+                }
+                Some(ControllerItem::Crate(id))
+                    if !self.collapsed_crates.contains(&id)
+                        && self.crates.iter().any(|item| item.parent == Some(id)) =>
+                {
+                    self.collapsed_crates.insert(id);
+                }
+                Some(ControllerItem::Crate(id)) => {
+                    if let Some(parent) = self
+                        .crates
+                        .iter()
+                        .find(|item| item.id == id)
+                        .and_then(|item| item.parent)
+                    {
+                        self.controller_select_item(ControllerItem::Crate(parent), cx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        cx.notify();
+    }
+
     pub fn controller_back(&mut self, cx: &mut Context<Self>) {
         self.controller_folders = !self.controller_folders;
         self.notice = Some(
@@ -2768,42 +2951,51 @@ impl LibraryView {
         match action {
             BrowserAction::Previous => self.controller_browse(-1, cx),
             BrowserAction::Next => self.controller_browse(1, cx),
-            BrowserAction::Top | BrowserAction::Bottom => {
-                if self.controller_folders {
-                    self.controller_browse(
-                        if action == BrowserAction::Top {
-                            i32::MIN
-                        } else {
-                            i32::MAX
-                        },
-                        cx,
-                    );
+            BrowserAction::Top | BrowserAction::Bottom => self.controller_browse(
+                if action == BrowserAction::Top {
+                    i32::MIN
                 } else {
-                    let len = self.table.read(cx).delegate().tracks.len();
-                    if len > 0 {
-                        self.table.update(cx, |table, cx| {
-                            table.set_selected_row(
-                                if action == BrowserAction::Top {
-                                    0
-                                } else {
-                                    len - 1
-                                },
-                                cx,
-                            )
-                        });
-                    }
-                }
-            }
-            BrowserAction::Folders | BrowserAction::Close => self.controller_folders = true,
-            BrowserAction::Tracks | BrowserAction::Open => self.controller_folders = false,
+                    i32::MAX
+                },
+                cx,
+            ),
+            BrowserAction::Folders => self.controller_folders = true,
+            BrowserAction::Tracks => self.controller_folders = false,
+            BrowserAction::Open => self.controller_open(cx),
+            BrowserAction::Close => self.controller_close(cx),
             BrowserAction::ToggleArea => self.controller_folders = !self.controller_folders,
-            BrowserAction::Suggestions | BrowserAction::Related => {
-                self.suggesting = action == BrowserAction::Related || !self.suggesting;
+            BrowserAction::Suggestions => {
+                let selected = {
+                    let table = self.table.read(cx);
+                    table
+                        .selected_row()
+                        .and_then(|row| table.delegate().tracks.get(row))
+                        .map(|track| (track.id, track.title.clone()))
+                };
+                self.suggestion_reference = selected;
+                self.suggesting = self.suggestion_reference.is_some() || self.reference.is_some();
+                self.reload(cx);
+            }
+            BrowserAction::Related => {
+                self.suggestion_reference = None;
+                self.suggesting = self.reference.is_some();
                 self.reload(cx);
             }
             BrowserAction::Playlists => {
                 self.controller_folders = true;
-                self.show_section(Section::Playlists, cx);
+                if self.browser_section == BrowserSection::Playlists {
+                    self.show_browser_section(BrowserSection::Folders, cx);
+                    self.controller_item = self
+                        .selected_subfolder
+                        .clone()
+                        .zip(self.selected)
+                        .map(|(path, id)| ControllerItem::Subfolder(id, path))
+                        .or_else(|| self.selected.map(ControllerItem::Source))
+                        .or(Some(ControllerItem::AllTracks));
+                } else {
+                    self.show_browser_section(BrowserSection::Playlists, cx);
+                    self.controller_item = self.playlist.map(ControllerItem::Playlist);
+                }
             }
             BrowserAction::FullView => {}
             BrowserAction::PreviewToggle | BrowserAction::PreviewSkip => {}
@@ -2817,25 +3009,36 @@ impl LibraryView {
             self.show_section(Section::Library, cx);
         }
         if self.controller_folders {
-            let mut choices = vec![(false, None)];
-            choices.extend(self.sources.iter().map(|s| (false, Some(s.id))));
-            choices.extend(self.playlists.iter().map(|p| (true, Some(p.id))));
-            let current = choices.iter().position(|(playlist, id)| {
-                if *playlist {
-                    self.section == Section::Playlists && self.playlist == *id
-                } else {
-                    self.section != Section::Playlists && self.selected == *id
-                }
-            });
+            let choices = self.controller_items();
+            let current = choices
+                .iter()
+                .position(|item| self.controller_item.as_ref() == Some(item))
+                .or_else(|| {
+                    choices.iter().position(|item| match item {
+                        ControllerItem::AllTracks => {
+                            self.section == Section::Library
+                                && self.selected.is_none()
+                                && self.crate_id.is_none()
+                        }
+                        ControllerItem::Source(id) => {
+                            self.section == Section::Library
+                                && self.selected == Some(*id)
+                                && self.selected_subfolder.is_none()
+                        }
+                        ControllerItem::Subfolder(id, path) => {
+                            self.selected == Some(*id)
+                                && self.selected_subfolder.as_ref() == Some(path)
+                        }
+                        ControllerItem::Playlist(id) => {
+                            self.section == Section::Playlists && self.playlist == Some(*id)
+                        }
+                        ControllerItem::Crate(id) => self.crate_id == Some(*id),
+                        ControllerItem::PlaylistFolder(_) => false,
+                    })
+                });
             if let Some(index) = controller_row(current, choices.len(), steps) {
-                let (playlist, id) = choices[index];
                 self.table.update(cx, |table, cx| table.clear_selection(cx));
-                if playlist {
-                    self.playlist = id;
-                    self.show_section(Section::Playlists, cx);
-                } else {
-                    self.select(id, cx);
-                }
+                self.controller_select_item(choices[index].clone(), cx);
             }
         } else {
             let table = self.table.read(cx);
@@ -4350,6 +4553,10 @@ impl LibraryView {
                     .pr_1()
                     .rounded_md()
                     .text_sm()
+                    .when(
+                        self.controller_item == Some(ControllerItem::PlaylistFolder(id)),
+                        |row| row.bg(hover),
+                    )
                     .hover(|style| style.bg(hover))
                     .child(
                         Icon::new(if open {
@@ -5008,7 +5215,8 @@ impl LibraryView {
                                     .small()
                                     .icon(IconName::Sparkles)
                                     .label(if self.suggesting {
-                                        format!("Mixes with {title}")
+                                        format!("Mixes with {}", self.suggestion_reference.as_ref()
+                                            .map(|(_, name)| name.as_str()).unwrap_or(&title))
                                     } else {
                                         "Suggest next".to_string()
                                     })
@@ -5016,6 +5224,7 @@ impl LibraryView {
                                     .selected(self.suggesting)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.suggesting = !this.suggesting;
+                                        this.suggestion_reference = None;
                                         this.reload(cx);
                                     })),
                             )

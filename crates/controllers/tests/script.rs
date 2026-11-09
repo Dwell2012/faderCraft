@@ -769,13 +769,28 @@ fn grv6_stem_lamps_follow_ready_and_unmuted_sources() {
 }
 
 #[test]
-fn grv6_preview_and_tag_buttons_dispatch_browser_actions() {
+fn grv6_selector_and_shortcut_buttons_dispatch_browser_actions() {
     use djcraft_protocol::BrowserAction;
     let profile =
         Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
     let mut bridge = Bridge::new(profile).unwrap();
     let state = SessionState::default();
     for (number, action) in [
+        (56, BrowserAction::Previous),
+        (58, BrowserAction::Next),
+        (57, BrowserAction::Top),
+        (59, BrowserAction::Bottom),
+        (60, BrowserAction::Folders),
+        (46, BrowserAction::Tracks),
+        (61, BrowserAction::Folders),
+        (63, BrowserAction::Tracks),
+        (65, BrowserAction::ToggleArea),
+        (66, BrowserAction::Open),
+        (53, BrowserAction::Suggestions),
+        (104, BrowserAction::Related),
+        (101, BrowserAction::Close),
+        (102, BrowserAction::Playlists),
+        (122, BrowserAction::FullView),
         (54, BrowserAction::PreviewToggle),
         (55, BrowserAction::PreviewSkip),
         (103, BrowserAction::TagTrack),
