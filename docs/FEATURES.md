@@ -524,7 +524,8 @@ release; Shift-clicking Hot Cues retains its existing delete behavior.
       graphical editor/Learn UI pending. Numark starter needs hardware validation.]
 - [~] DDJ-GRV6 mapping [849 documented bindings, including fcScript transport
       and timing controls, Dual Deck transport, pad modes, momentary Pad FX,
-      Shift + Beat Loop rolls, Beat FX routing and stateful
+      Shift + Beat Loop rolls, Beat FX routing, hierarchical browser navigation,
+      selector shortcuts, and stateful
       LED feedback; physical acceptance and user-facing mapping editor pending.
       See GRV6-REMAINING-WORK.md.]
 - [~] Bundled MixTrack Pro II profile based on official Numark MIDI addresses

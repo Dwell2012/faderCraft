@@ -43,7 +43,9 @@ Use this with a current faderCraft build and the bundled DDJ-GRV6 mapping. For e
 
 - [ ] Turn the browse encoder through the visible, sorted/filtered track list. Switch between tracks and sources, then load the highlighted track. Check that the selection and loaded deck match the controller input.
 - [ ] Tilt the Smart Rotary Selector in all four directions, with and without Shift. Check area changes and top/bottom jumps; press it to switch areas, then Shift+press to open a folder.
+- [ ] Browse into a source subfolder, nested playlist folder and sub-crate. Shift+press should expand the selected tree node; Back should collapse it or return to its parent without changing the loaded decks.
 - [ ] Use Discover, Back, and View with and without Shift. Check suggestions, related tracks, playlists, full Library, and Tag List membership.
+- [ ] With a highlighted track different from the deck track, check Discover suggests from the highlight and Shift+Discover suggests from the loaded deck. Shift+Back should switch between folders and playlists.
 - [ ] Turn Shift+Browse and confirm the main waveforms zoom in/out. Press Preview and confirm the selected track is heard only in headphones, with the deck and master unaffected. Shift+Preview should jump 30 seconds; a second Preview press should stop.
 
 ## Failure notes

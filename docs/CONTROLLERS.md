@@ -40,7 +40,11 @@ navigate the browser through fcScript. Shifted browsing jumps to list ends,
 opens folders or playlists, and zooms the main waveforms. Preview auditions the
 selected file on the headphone cue bus without loading a deck; Shift+Preview
 jumps forward 30 seconds. Shift+View adds the highlighted track to a persistent
-Tag List crate. These newly mapped gestures need hardware verification.
+Tag List crate. The selector now traverses visible subfolders, nested playlist
+folders and crates. Shift+press opens a selected folder; Back collapses it or
+returns to the tree. Discover suggests from the highlighted track, while
+Shift+Discover suggests from the loaded deck. Shift+Back toggles the playlist
+tree. These gestures still need hardware verification.
 Each Sound Color FX knob drives its channel's
 CFX amount, with the centre detent at neutral. Sound Color FX ON/OFF bypasses
 all four channels and lights when CFX is enabled. Turning the knobs while
