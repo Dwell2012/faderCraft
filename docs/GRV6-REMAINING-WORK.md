@@ -1,6 +1,6 @@
 # GRV6 mapping: remaining work
 
-The bundled profile contains 770 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
+The bundled profile contains 802 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
 
 ## Next implementation work
 

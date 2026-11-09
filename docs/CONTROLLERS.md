@@ -35,7 +35,7 @@ Reloop / Exit exits or recalls the last loop. While
 a loop is active, Cue/Loop Call left and right halve and double it. The In and
 Out lamps follow the loop marker and active loop. These buttons leave the
 current performance pad page selected.
-The profile has 770 entries. Each Sound Color FX knob drives its channel's
+The profile has 802 entries. Each Sound Color FX knob drives its channel's
 CFX amount, with the centre detent at neutral. Sound Color FX ON/OFF bypasses
 all four channels and lights when CFX is enabled. Turning the knobs while
 bypassed sets the amount that will be used on re-enable. Each deck's platter and rim
@@ -68,7 +68,9 @@ In Sampler mode the left pads trigger slots 1–8 of the selected sample bank
 and the right pads trigger slots 9–16. Shift stops the corresponding sample.
 The lamps show populated and playing slots.
 Stems and Beat Jump pads mirror the corresponding faderCraft pad pages.
-Shift solos a source on the first four Stems pads. Beat Jump uses the
+Shift solos a source on the first four Stems pads. Those pads light for
+unmuted sources once stems are ready, including while Shift is held.
+Beat Jump uses the
 selected page's beat bank and requires a beat grid.
 
 The GRV6 Hot Cue page uses note 0–7 on MIDI channels 8/10/12/14 for decks

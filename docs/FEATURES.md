@@ -1,5 +1,9 @@
 # djcraft feature list
 
+- [~] The first four DDJ-GRV6 Stems pad lamps follow source mute and solo
+      state after stem preparation, including on the Shift layer.
+      [Physical controller check pending.]
+
 - [x] On Windows, DJCraft keeps the display on and prevents automatic idle
       sleep while the app is open. Closing the app releases both requests.
 
@@ -512,7 +516,7 @@ Feature set modelled on Mixed In Key 10.
 - [~] MIDI Learn [Rust API and JSON profile import/export, Shift conditions,
       state-aware toggles, absolute/relative controls and fader soft takeover;
       graphical editor/Learn UI pending. Numark starter needs hardware validation.]
-- [~] DDJ-GRV6 mapping [770 documented bindings, including fcScript pad modes,
+- [~] DDJ-GRV6 mapping [802 documented bindings, including fcScript pad modes,
       momentary Pad FX and Shift + Beat Loop rolls, Beat FX routing and stateful
       LED feedback; physical acceptance and user-facing mapping editor pending.
       See GRV6-REMAINING-WORK.md.]

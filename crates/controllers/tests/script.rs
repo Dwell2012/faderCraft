@@ -742,10 +742,34 @@ fn grv6_shift_beat_loop_pads_hold_and_release_loop_roll() {
 }
 
 #[test]
+fn grv6_stem_lamps_follow_ready_and_unmuted_sources() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); 4];
+    for ready in [false, true, false] {
+        for (deck, channel) in state.decks.iter_mut().enumerate() {
+            channel.stems_ready = ready;
+            channel.stem_gains = std::array::from_fn(|slot| if slot == deck { 0.5 } else { 0. });
+        }
+        let messages = bridge.state_feedback("DDJ-GRV6", &state, 0, &[]);
+        for deck in 0..4u8 {
+            for channel in [7 + 2 * deck, 8 + 2 * deck] {
+                for slot in 0..4u8 {
+                    let velocity = if ready && slot == deck { 127 } else { 0 };
+                    assert!(messages.contains(&[0x90 | channel, 16 + slot, velocity]));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 770);
+    assert_eq!(profile.mappings.len(), 802);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];

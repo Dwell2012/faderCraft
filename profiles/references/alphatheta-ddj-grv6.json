@@ -34,6 +34,7 @@
   "hot_cue_slots": 8,
   "sampler_pad_notes": [48, 49, 50, 51, 52, 53, 54, 55],
   "pad_fx_notes": [80, 81, 82, 83, 84, 85, 86, 87],
+  "stem_led_notes": [16, 17, 18, 19],
   "performance_pad_notes": {
     "keyboard": [64, 65, 66, 67, 68, 69, 70, 71],
     "stems": [16, 17, 18, 19, 20, 21, 22, 23],

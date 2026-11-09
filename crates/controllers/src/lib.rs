@@ -484,6 +484,7 @@ pub enum LedFeedback {
     PitchCenter { deck: u8 },
     Loop { deck: u8 },
     Quantize { deck: u8 },
+    Stem { deck: u8, slot: u8 },
     HotCue { deck: u8, slot: u8 },
     Sample { deck: u8, slot: u8 },
     Effect { deck: u8, slot: u8 },
@@ -574,6 +575,9 @@ impl Profile {
                 let valid_slot = match feedback {
                     LedFeedback::HotCue { slot, .. } => {
                         usize::from(*slot) < djcraft_protocol::HOT_CUES
+                    }
+                    LedFeedback::Stem { deck, slot } => {
+                        usize::from(*deck) < djcraft_protocol::DECKS && *slot < 4
                     }
                     LedFeedback::Sample { slot, .. } => *slot < 16,
                     LedFeedback::Effect { slot, .. } => {
@@ -912,6 +916,7 @@ impl Bridge {
                     | LedFeedback::Loop { deck } => (deck, 0),
                     LedFeedback::Quantize { deck } => (deck, 0),
                     LedFeedback::HotCue { deck, slot }
+                    | LedFeedback::Stem { deck, slot }
                     | LedFeedback::Sample { deck, slot }
                     | LedFeedback::Effect { deck, slot } => (deck, usize::from(slot)),
                 };
@@ -958,6 +963,7 @@ impl Bridge {
                                 populated
                             }
                         }
+                        LedFeedback::Stem { .. } => s.stems_ready && s.stem_gains[slot] > 0.,
                         LedFeedback::Sample { .. } => match s.samples.get(slot) {
                             Some(2) => blink,
                             Some(1) => true,
