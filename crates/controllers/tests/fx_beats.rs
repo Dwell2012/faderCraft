@@ -26,10 +26,11 @@ fn beats_encoders_step_shared_timing_independently_and_clamp() {
             (127, 0.25),
             (127, 0.125),
             (127, 0.125),
-            (3, 1.),
-            (3, 8.),
-            (1, 8.),
-            (127, 4.),
+            (3, 0.75),
+            (3, 4.),
+            (3, 32.),
+            (1, 32.),
+            (127, 16.),
         ] {
             let actions = bridge.process(
                 "MixTrack Pro II",
@@ -54,10 +55,13 @@ fn beats_encoders_step_shared_timing_independently_and_clamp() {
                     .all(|fx| fx.beats == expected)
             );
             let other = &state.decks[usize::from(deck ^ 1)];
-            assert_eq!(other.effect_beats, if deck == 0 { 0.5 } else { 4. });
+            assert_eq!(other.effect_beats, if deck == 0 { 0.5 } else { 16. });
         }
     }
-    assert_eq!(EFFECT_BEATS, [0.125, 0.25, 0.5, 1., 2., 4., 8.]);
+    assert_eq!(
+        EFFECT_BEATS,
+        [0.125, 0.25, 0.5, 0.75, 1., 2., 4., 8., 16., 32.]
+    );
     assert!(
         bridge
             .process(

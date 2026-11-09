@@ -232,6 +232,7 @@ impl Shell {
                                             track.clone(),
                                             state.position_seconds,
                                             state.tempo,
+                                            self.waveform_visible_seconds,
                                             grid,
                                             self.waveform_areas[index].clone(),
                                             cx.theme().foreground,
@@ -456,7 +457,7 @@ impl Shell {
                 cog.dropdown_menu(move |mut menu, _, _| {
                     for (value, label) in djcraft_protocol::EFFECT_BEATS
                         .into_iter()
-                        .zip(["1/8", "1/4", "1/2", "1", "2", "4", "8"])
+                        .zip(["1/8", "1/4", "1/2", "3/4", "1", "2", "4", "8", "16", "32"])
                     {
                         let weak = weak.clone();
                         menu = menu.item(
@@ -739,7 +740,7 @@ impl Shell {
             .px_0()
             .text_xs()
             .font_weight(FontWeight::BOLD)
-            .label("Q")
+            .label(if self.keyboard_shift { "T" } else { "Q" })
             .selected(!state.quantize_disabled)
             .border_color(if state.quantize_disabled { cx.theme().border } else { Hsla::from(colour) })
             .bg(if state.quantize_disabled {
@@ -748,13 +749,21 @@ impl Shell {
                 Hsla::from(colour)
             })
             .text_color(if state.quantize_disabled { cx.theme().muted_foreground } else { Hsla::from(rgb(0x070b12)) })
-            .tooltip("Deck quantize: bypass or restore Hot Cue, loop and scratch quantize without changing their settings.")
+            .tooltip(if self.keyboard_shift {
+                "Tap BPM: estimate a temporary tempo without changing library analysis."
+            } else {
+                "Deck quantize: bypass or restore Hot Cue, loop and scratch quantize without changing their settings."
+            })
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.run_skin_button(
-                    index,
-                    djcraft_protocol::script::ButtonAction::ToggleQuantize,
-                    cx,
-                );
+                if this.keyboard_shift {
+                    this.tap_bpm(index, cx);
+                } else {
+                    this.run_skin_button(
+                        index,
+                        djcraft_protocol::script::ButtonAction::ToggleQuantize,
+                        cx,
+                    );
+                }
             }));
 
         if self.settings.four_decks {
@@ -989,7 +998,7 @@ impl Shell {
 
 impl Shell {
     pub(super) fn begin_cue_preview(&mut self, deck: usize, cx: &mut Context<Self>) {
-        self.end_cue_preview(cx);
+        self.end_deck_cue_preview(deck, cx);
         let Some(state) = self.engine.as_mut().map(|e| e.state().decks[deck].clone()) else {
             return;
         };
@@ -1011,7 +1020,7 @@ impl Shell {
             );
         self.cue_anchor[deck] = Some((seconds, state.path.clone()));
         if !state.playing {
-            self.cue_preview = Some((deck, seconds, state.path));
+            self.cue_preview[deck] = Some((seconds, state.path));
         }
         self.send(
             deck,
@@ -1023,7 +1032,12 @@ impl Shell {
         cx.notify();
     }
     pub(super) fn end_cue_preview(&mut self, cx: &mut Context<Self>) {
-        if let Some((deck, seconds, path)) = self.cue_preview.take() {
+        for deck in 0..DECKS {
+            self.end_deck_cue_preview(deck, cx);
+        }
+    }
+    pub(super) fn end_deck_cue_preview(&mut self, deck: usize, cx: &mut Context<Self>) {
+        if let Some((seconds, path)) = self.cue_preview[deck].take() {
             let same = self
                 .engine
                 .as_mut()
@@ -1041,7 +1055,7 @@ impl Shell {
         }
     }
     pub(super) fn toggle_active_deck(&mut self, cx: &mut Context<Self>) {
-        if self.cue_preview.is_some() {
+        if self.cue_preview.iter().any(Option::is_some) {
             return;
         }
         let Some(state) = self.engine.as_mut().map(|engine| engine.state()) else {

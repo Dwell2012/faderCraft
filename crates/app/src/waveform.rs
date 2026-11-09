@@ -442,6 +442,7 @@ pub fn waveform(
     track: Arc<Track>,
     position_seconds: f64,
     tempo: f64,
+    window_seconds: f64,
     grid: Option<TempoResult>,
     area: Rc<Cell<Bounds<Pixels>>>,
     playhead: Hsla,
@@ -461,8 +462,8 @@ pub fn waveform(
         hot_cues,
         &cue_styles,
         deck,
-        position_seconds - VISIBLE_SECONDS * tempo / 2.,
-        VISIBLE_SECONDS * tempo,
+        position_seconds - window_seconds * tempo / 2.,
+        window_seconds * tempo,
         true,
     );
     div()
@@ -477,7 +478,7 @@ pub fn waveform(
                     if cached.attacks_started && cached.attacks.get().is_none() {
                         window.request_animation_frame();
                     }
-                    let visible_seconds = VISIBLE_SECONDS * tempo;
+                    let visible_seconds = window_seconds * tempo;
                     let width = bounds.size.width.as_f32();
                     let height = bounds.size.height.as_f32();
                     // Peaks arrive as the track decodes, so the waveform fills in.
@@ -590,7 +591,7 @@ pub fn waveform(
                         ));
                         // Paint grid ticks last so bright waveform peaks cannot hide them.
                         for (line_x, bar_line) in
-                            grid_lines(grid, position_seconds, width, x, tempo)
+                            grid_lines_zoom(grid, position_seconds, width, x, tempo, window_seconds)
                         {
                             paint_grid_ticks(window, bounds, line_x, height, bar_line);
                         }
@@ -645,12 +646,30 @@ fn grid_lines(
     playhead_x: f32,
     tempo: f64,
 ) -> Vec<(f32, bool)> {
+    grid_lines_zoom(
+        grid,
+        position_seconds,
+        width,
+        playhead_x,
+        tempo,
+        VISIBLE_SECONDS,
+    )
+}
+
+fn grid_lines_zoom(
+    grid: Option<TempoResult>,
+    position_seconds: f64,
+    width: f32,
+    playhead_x: f32,
+    tempo: f64,
+    window_seconds: f64,
+) -> Vec<(f32, bool)> {
     let Some(grid) = grid.filter(|grid| grid.bpm > 0.) else {
         return Vec::new();
     };
-    let pixels_per_second = width as f64 / (VISIBLE_SECONDS * tempo);
+    let pixels_per_second = width as f64 / (window_seconds * tempo);
     let beat = grid.beat_seconds();
-    let half = VISIBLE_SECONDS * tempo / 2.;
+    let half = window_seconds * tempo / 2.;
     let first = ((position_seconds - half - grid.first_beat_seconds) / beat).ceil() as i64;
     let last = ((position_seconds + half - grid.first_beat_seconds) / beat).floor() as i64;
     (first..=last)

@@ -11,6 +11,27 @@ const RATE: u32 = 48_000;
 const CALLBACK: usize = 480;
 
 #[test]
+fn preview_plays_only_in_headphones_and_skips_without_loading_deck() {
+    let (mut engine, mut mixer) = Engine::headless(RATE);
+    let track = Arc::new(Track::from_samples(
+        "Preview",
+        RATE,
+        vec![0.4; RATE as usize * 4 * 2],
+    ));
+    engine.preview(Some(track)).unwrap();
+    let mut master = vec![0.; CALLBACK * 2];
+    let mut cue = vec![0.; CALLBACK * 2];
+    mixer.render_with_monitor(&mut master, Some(&mut cue));
+    assert!(master.iter().all(|sample| *sample == 0.));
+    assert!(cue.iter().any(|sample| *sample > 0.1));
+    assert!(engine.track(0).is_none());
+    engine.preview_skip(30.).unwrap();
+    mixer.render_with_monitor(&mut master, Some(&mut cue));
+    assert!(cue.iter().all(|sample| *sample == 0.));
+    engine.preview(None).unwrap();
+}
+
+#[test]
 fn slow_continuous_jog_packets_do_not_modulate_volume() {
     let (mut engine, mut mixer) = engine_with(vec![0.4; RATE as usize * 4]);
     engine
@@ -1662,7 +1683,7 @@ fn shared_effect_beats_are_deck_local_preserved_by_slot_edits_and_reach_audio() 
         assert!(!deck.effects[0].enabled);
         assert!(deck.effects[1..].iter().all(|fx| !fx.enabled));
     }
-    for beats in [0., 0.0625, 8.01, f32::NAN, f32::INFINITY] {
+    for beats in [0., 0.0625, 32.01, f32::NAN, f32::INFINITY] {
         assert_eq!(
             engine.apply(Role::Host, deck(DeckAction::SetEffectBeats { beats })),
             Err(Rejection::InvalidValue)

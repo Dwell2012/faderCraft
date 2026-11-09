@@ -1,13 +1,13 @@
 # GRV6 mapping: remaining work
 
-The bundled profile contains 802 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
+The goal is for every GRV6 control and shifted function to do useful work in faderCraft. faderCraft features without a corresponding GRV6 control do not need a factory GRV6 assignment. The bundled profile contains 849 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
 
 ## Next implementation work
 
-- Expose pad-page parameter steps through fcScript, including Beat Jump and Loop Roll banks, loop mode, Slicer length/step, Key Shift layout, and the other implemented page options. Route the existing UI parameter buttons through the same action path.
-- Add MIDI Learn and a mapping editor so a user can assign those actions without editing JSON. Profiles already support held-note modifiers, and the GRV6 reports Shift as a press/release note; some shifted controls also send separate channel/note addresses. Preserve both forms.
-- Add a custom assignment for Slicer if desired. AlphaTheta's GRV6 MIDI list does not identify a dedicated Slicer mode or pad address, so the factory profile deliberately leaves it unassigned. fcScript already accepts its mode, pad press and release actions.
-- Map CueLoop, Saved Loops and other pad pages through fcScript after choosing hardware gestures. The GRV6 has no documented dedicated mode buttons for those pages.
+- Audit every GRV6 control and Shift function against the manufacturer's MIDI list and software diagrams. Mark each as working, awaiting hardware verification, requiring a faderCraft feature, or unavailable through MIDI. Smart Rotary Selector directions, browsing shortcuts, waveform zoom, headphone Preview and Tag List now have offline mappings; verify their MIDI messages and feel on hardware. Prioritize remaining Rhythm Shift and unresolved shifted functions.
+- Expose pad-page parameter steps through fcScript where a documented GRV6 control needs them. Route the corresponding UI controls through the same action path.
+- Add MIDI Learn and a mapping editor so a user can assign optional actions without editing JSON. Profiles already support held-note modifiers, and the GRV6 reports Shift as a press/release note; some shifted controls also send separate channel/note addresses. Preserve both forms.
+- Leave Slicer, CueLoop, Saved Loops and other faderCraft-only pages off the factory GRV6 checklist unless an actual GRV6 gesture is deliberately assigned to them.
 - Finish migrating any remaining direct skin handlers as their controls are touched. Keep MIDI decoding and LED output in the controller adapter, with functional actions dispatched through fcScript.
 
 ## Hardware verification

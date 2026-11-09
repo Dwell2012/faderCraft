@@ -93,6 +93,8 @@ pub(crate) struct Effect {
     allpass: [[f32; 2]; 6],
     previous: [f32; 2],
     phase: f32,
+    shepard_phases: [f32; 8],
+    shepard_glide: f32,
     grain: f32,
     wet: f32,
     amount: f32,
@@ -135,6 +137,8 @@ impl Effect {
             allpass: [[0.; 2]; 6],
             previous: [0.; 2],
             phase: 0.,
+            shepard_phases: [0.; 8],
+            shepard_glide: 0.,
             grain: 0.,
             wet: 0.,
             amount: 0.5,
@@ -165,6 +169,8 @@ impl Effect {
         self.allpass = [[0.; 2]; 6];
         self.previous = [0.; 2];
         self.phase = 0.;
+        self.shepard_phases = [0.; 8];
+        self.shepard_glide = 0.;
         self.grain = 0.;
         self.elapsed = 0.;
         self.captured = false;
@@ -481,6 +487,46 @@ impl Effect {
                     effected = [0.; 2];
                 }
             }
+            Kind::ShepardToneSaw | Kind::ShepardToneTri => {
+                // Eight octave-spaced voices trade places at the inaudible
+                // edges of a bell-shaped spectrum. Each travels one octave
+                // per selected beat period, creating an endless pitch glide.
+                let travel = self.shepard_glide;
+                let octave = travel.floor() as usize;
+                let fraction = travel.fract();
+                let pitch = 2f32.powf(fraction);
+                const WEIGHTS: [f32; 8] = [0.014, 0.114, 0.458, 0.917, 0.917, 0.458, 0.114, 0.014];
+                let mut tone = 0.;
+                for voice in 0..8 {
+                    let band = (voice + octave) % 8;
+                    let gain = WEIGHTS[band] * (1. - fraction) + WEIGHTS[(band + 1) % 8] * fraction;
+                    let frequency = 55. * (1u32 << band) as f32 * pitch;
+                    if frequency < self.rate * 0.4 {
+                        let step = frequency / self.rate;
+                        let phase = self.shepard_phases[voice];
+                        let wave = if kind == Kind::ShepardToneSaw {
+                            let edge = |t: f32| {
+                                if t < step {
+                                    let x = t / step;
+                                    x + x - x * x - 1.
+                                } else if t > 1. - step {
+                                    let x = (t - 1.) / step;
+                                    x * x + x + x + 1.
+                                } else {
+                                    0.
+                                }
+                            };
+                            2. * phase - 1. - edge(phase)
+                        } else {
+                            1. - 4. * (phase - 0.5).abs()
+                        };
+                        tone += wave * gain;
+                        self.shepard_phases[voice] = (phase + step).fract();
+                    }
+                }
+                self.shepard_glide = (travel + 1. / (self.period.max(0.01) * self.rate)) % 8.;
+                effected = [tone * 0.25; 2];
+            }
         }
         self.phase = (self.phase + TAU / (self.period.max(0.01) * self.rate)) % TAU;
         let mix = self.wet * self.amount;
@@ -501,6 +547,8 @@ impl Effect {
                 | Kind::LowCutEcho
                 | Kind::Spiral
                 | Kind::Reverb
+                | Kind::ShepardToneSaw
+                | Kind::ShepardToneTri
         ) {
             return std::array::from_fn(|c| input[c] + effected[c] * mix);
         }
@@ -512,6 +560,43 @@ impl Effect {
 mod tests {
     use super::*;
     const RATE: u32 = 8000;
+    #[test]
+    fn shepard_tone_generates_tone_without_input_and_keeps_dry_audio() {
+        for kind in [Kind::ShepardToneSaw, Kind::ShepardToneTri] {
+            let mut fx = Effect::new(RATE);
+            fx.set(EffectState {
+                kind,
+                enabled: true,
+                amount: 1.,
+                beats: 1.,
+                ..EffectState::default()
+            });
+            fx.clock(Some(120.), false);
+            let mut energy = 0.;
+            for _ in 0..RATE {
+                let sample = fx.process([0.; 2]);
+                assert!(
+                    sample
+                        .iter()
+                        .all(|value| value.is_finite() && value.abs() < 1.)
+                );
+                energy += sample[0] * sample[0];
+            }
+            assert!(energy > 1., "{kind:?} should sound over silence");
+            let dry = fx.process([0.1; 2]);
+            assert!((dry[0] - 0.1).abs() > 0.0001);
+            fx.set(EffectState {
+                kind,
+                enabled: false,
+                amount: 1.,
+                ..EffectState::default()
+            });
+            for _ in 0..RATE {
+                fx.process([0.; 2]);
+            }
+            assert_eq!(fx.process([0.1; 2]), [0.1; 2]);
+        }
+    }
     #[test]
     fn resonance_emphasizes_cutoff_on_both_sides_and_keeps_stereo_separate() {
         for rate in [8000, 44100, 48000, 96000] {

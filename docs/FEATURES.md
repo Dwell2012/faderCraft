@@ -31,7 +31,7 @@
       steps and LED feedback are mapped.
       Sampler pads trigger or stop the selected bank's 16 slots.
       Stems and Beat Jump pads mirror the app's existing pad pages.
-      [Helix uses Beat Repeat, Mobius positions bypass, startup dial position is unavailable through the tested requests.]
+      [Helix uses Beat Repeat, Shepard Tone Saw/Tri generate tones; their sound needs hardware listening tests. Startup dial position is unavailable through the tested requests.]
 
 - [x] Measured jog scratching eases into each incoming position so brief MIDI
       delivery gaps during steady motion cause fewer audible dropouts. Large
@@ -509,6 +509,12 @@ Feature set modelled on Mixed In Key 10.
 
 ### Controllers
 
+Holding computer-keyboard Shift reveals alternate deck controls in both deck
+layouts: Sync selects the sync master, Cue returns to track start, Quantize
+becomes Tap BPM, the key-lock button cycles tempo range, and Shift-clicking a
+deck letter toggles Dual Deck transport for that side. The labels return on
+release; Shift-clicking Hot Cues retains its existing delete behavior.
+
 - [~] MIDI input and LED output [native input transport, mapping bridge and
       profile-owned Scratch LEDs implemented; other feedback pending. See CONTROLLERS.md.]
 - [ ] djcraft mapping format: declarative file plus optional plugin script
@@ -516,8 +522,9 @@ Feature set modelled on Mixed In Key 10.
 - [~] MIDI Learn [Rust API and JSON profile import/export, Shift conditions,
       state-aware toggles, absolute/relative controls and fader soft takeover;
       graphical editor/Learn UI pending. Numark starter needs hardware validation.]
-- [~] DDJ-GRV6 mapping [802 documented bindings, including fcScript pad modes,
-      momentary Pad FX and Shift + Beat Loop rolls, Beat FX routing and stateful
+- [~] DDJ-GRV6 mapping [849 documented bindings, including fcScript transport
+      and timing controls, Dual Deck transport, pad modes, momentary Pad FX,
+      Shift + Beat Loop rolls, Beat FX routing and stateful
       LED feedback; physical acceptance and user-facing mapping editor pending.
       See GRV6-REMAINING-WORK.md.]
 - [~] Bundled MixTrack Pro II profile based on official Numark MIDI addresses
@@ -902,7 +909,7 @@ lookahead and device/output buffering still apply. No device latency is removed.
 
 - [x] One shared FX beat division per deck, with a single panel selector driving every synced slot; default slots are Filter, Echo and Cut.
 
-- [x] Mixtrack per-deck Beats encoders control shared FX timing across 1/8–8 beats; UI/protocol range extended and delay storage supports 8 beats at 20 effective BPM [hardware knob retest pending].
+- [~] Mixtrack per-deck Beats encoders and the Effects cog share 1/8–32 beat choices, including 3/4. Long delay-based effects can exceed the current 25-second audio buffer at low BPM; hardware knob retest pending.
 
 - [x] Mixtrack startup requests all physical absolute control values and adopts them while stopped; playback reconnects retain pickup. Hardware readback verified for all 14 absolute CCs.
 - [x] Coalesce batched jog motion to latest per-deck measured velocity/position, preserving transport barriers so redundant scratch updates do not backlog the engine.
@@ -918,6 +925,8 @@ lookahead and device/output buffering still apply. No device latency is removed.
 - [x] Library load menus and live-track replacement warnings use the shared A/B/C/D deck labels, matching the mixer and deck headers.
 
 - [x] Beat analysis anchors a clear kick entrance after quiet pre-roll before extending the grid backwards; kick references reject large strength jumps and comparable-strength sub-beat rolls while accepting one- and two-beat cadences. These are heuristics; syncopated/ambiguous music still needs grid review.
+- [x] When a late low-frequency run yields a weak projected phase, opening attack evidence can override it. This helps avoid anchoring the grid to a sustained bass pattern instead of the opening percussion.
+- [x] The Library track-info panel shows a zoomed waveform with beat markers. Drag the grid to correct the first-beat alignment for that track; release saves the manual offset in the library. The 10 ms buttons remain for fine adjustment.
 
 - [x] Two-deck headers group artwork and library title/artist on the left, prominent tempo and key/master-tempo controls on the right, with elapsed/remaining time beside the seekable overview. Artwork loads off the UI thread and stale results are discarded.
 

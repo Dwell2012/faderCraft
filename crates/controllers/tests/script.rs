@@ -532,8 +532,11 @@ fn grv6_beat_fx_remembers_selection_routes_depth_and_drives_lamps() {
     assert!(lamps.contains(&[0x94, 0x47, 127]));
     assert!(lamps.contains(&[0xb4, 0x64, 0x21]));
     assert_eq!(send(&mut bridge, &mut state, note(44), 127), 1);
-    assert_eq!(state.beat_fx.kind, None);
-    assert!(!state.beat_fx.enabled);
+    assert_eq!(state.beat_fx.kind, Some(EffectKind::ShepardToneSaw));
+    assert!(state.beat_fx.enabled);
+    assert_eq!(send(&mut bridge, &mut state, note(45), 127), 1);
+    assert_eq!(state.beat_fx.kind, Some(EffectKind::ShepardToneTri));
+    assert!(state.beat_fx.enabled);
     send(&mut bridge, &mut state, note(71), 127);
     assert!(!state.beat_fx.enabled);
     assert_eq!(send(&mut bridge, &mut state, note(33), 127), 1);
@@ -766,10 +769,33 @@ fn grv6_stem_lamps_follow_ready_and_unmuted_sources() {
 }
 
 #[test]
+fn grv6_preview_and_tag_buttons_dispatch_browser_actions() {
+    use djcraft_protocol::BrowserAction;
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let state = SessionState::default();
+    for (number, action) in [
+        (54, BrowserAction::PreviewToggle),
+        (55, BrowserAction::PreviewSkip),
+        (103, BrowserAction::TagTrack),
+    ] {
+        let source = Source::Note { channel: 6, number };
+        let result = bridge.process("DDJ-GRV6", Event { source, value: 127 }, &state);
+        assert!(result.is_empty());
+        assert_eq!(
+            bridge.take_commands(),
+            vec![HostCommand::Browser { action }]
+        );
+        bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+    }
+}
+
+#[test]
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 802);
+    assert_eq!(profile.mappings.len(), 849);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -839,7 +865,32 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
                 .process("DDJ-GRV6", Event { source, value: 0 }, &state)
                 .is_empty()
         );
-        assert!(bridge.take_commands().is_empty());
+        assert_eq!(
+            bridge.take_commands(),
+            vec![HostCommand::ReleaseDeckSelect { deck }]
+        );
+    }
+    for deck in 0..4 {
+        for (number, expected) in [
+            (72, HostCommand::TrackStart { deck }),
+            (28, HostCommand::SetSyncMaster { deck }),
+            (100, HostCommand::KeySync { deck }),
+            (101, HostCommand::KeyReset { deck }),
+            (104, HostCommand::TapBpm { deck }),
+        ] {
+            let source = Source::Note {
+                channel: deck,
+                number,
+            };
+            assert!(
+                bridge
+                    .process("DDJ-GRV6", Event { source, value: 127 }, &state)
+                    .is_empty()
+            );
+            assert_eq!(bridge.take_commands(), vec![expected]);
+            bridge.process("DDJ-GRV6", Event { source, value: 0 }, &state);
+            assert!(bridge.take_commands().is_empty());
+        }
     }
     for deck in 0..4 {
         bridge.process(
@@ -873,6 +924,21 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
         bridge.take_commands(),
         vec![HostCommand::Browse { steps: -1 }]
     );
+}
+
+#[test]
+fn grv6_sync_led_tracks_the_host_latch_on_every_deck() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
+    let off = bridge.state_feedback_with_sync("DDJ-GRV6", &state, 0, &[None; 4], &[false; 4]);
+    let on = bridge.state_feedback_with_sync("DDJ-GRV6", &state, 0, &[None; 4], &[true; 4]);
+    for deck in 0..4 {
+        assert!(off.contains(&[0x90 | deck, 88, 0]));
+        assert!(on.contains(&[0x90 | deck, 88, 127]));
+    }
 }
 
 #[test]

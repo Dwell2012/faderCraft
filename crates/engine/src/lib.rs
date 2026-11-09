@@ -116,6 +116,7 @@ struct Loaded {
 /// The control side of the engine. Lives on the UI thread; the matching
 /// [`Mixer`] runs on the audio thread.
 pub struct Engine {
+    preview_track: Option<Arc<Track>>,
     preparations: std::collections::BTreeMap<String, djcraft_protocol::TrackPreparation>,
     automix: automix::Automix,
     sample_worker: Option<sampler::Worker>,
@@ -263,6 +264,7 @@ impl Engine {
         let mixer = Mixer::new(sample_rate, command_rx, garbage_tx, shared.clone());
         let (loaded_tx, loaded_rx) = mpsc::channel();
         let engine = Self {
+            preview_track: None,
             preparations: Default::default(),
             automix: automix::Automix::default(),
             sample_worker: None,
@@ -466,6 +468,24 @@ impl Engine {
         self.install_track(deck, track, None)
     }
 
+    /// Audition a track on the headphone cue bus without loading a deck.
+    pub fn preview(&mut self, track: Option<Arc<Track>>) -> Result<(), Rejection> {
+        self.send(Command::Preview {
+            track: track.clone(),
+        })?;
+        self.preview_track = track;
+        Ok(())
+    }
+
+    pub fn preview_skip(&mut self, seconds: f64) -> Result<(), Rejection> {
+        if self.preview_track.is_some() {
+            self.send(Command::PreviewSeek {
+                frames: (seconds.max(0.) * self.sample_rate as f64) as usize,
+            })?;
+        }
+        Ok(())
+    }
+
     fn install_track(
         &mut self,
         deck: usize,
@@ -618,13 +638,7 @@ impl Engine {
                     return Err(Rejection::UnknownDeck);
                 }
                 unit_level(state.amount)?;
-                let max_beats = if matches!(state.target, djcraft_protocol::BeatFxTarget::Deck(_)) {
-                    8.
-                } else {
-                    32.
-                };
-                if !(0.125..=max_beats).contains(&state.beats)
-                    || (state.enabled && state.kind.is_none())
+                if !(0.125..=32.).contains(&state.beats) || (state.enabled && state.kind.is_none())
                 {
                     return Err(Rejection::InvalidValue);
                 }
@@ -1187,7 +1201,7 @@ impl Engine {
                 self.send(Command::EffectTempo { deck, bpm })
             }
             DeckAction::SetEffectBeats { beats } => {
-                if !beats.is_finite() || !(0.125..=8.).contains(&beats) {
+                if !beats.is_finite() || !(0.125..=32.).contains(&beats) {
                     return Err(Rejection::InvalidValue);
                 }
                 self.send(Command::EffectBeats { deck, beats })?;
@@ -1230,7 +1244,7 @@ impl Engine {
                     || !effect.resonance.is_finite()
                     || !(0.0..=1.0).contains(&effect.resonance)
                     || !effect.beats.is_finite()
-                    || !(0.125..=8.).contains(&effect.beats)
+                    || !(0.125..=32.).contains(&effect.beats)
                     || !effect.amount.is_finite()
                     || !(0.0..=1.).contains(&effect.amount)
                     || !effect.parameter.is_finite()
@@ -1254,7 +1268,7 @@ impl Engine {
                     || !effect.resonance.is_finite()
                     || !(0.0..=1.0).contains(&effect.resonance)
                     || !effect.beats.is_finite()
-                    || !(0.125..=8.0).contains(&effect.beats)
+                    || !(0.125..=32.0).contains(&effect.beats)
                     || !effect.amount.is_finite()
                     || !effect.parameter.is_finite()
                     || !(0.0..=1.0).contains(&effect.amount)

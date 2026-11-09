@@ -55,9 +55,14 @@ target, and bus parameters require `mixer`. Master, sampler and headphone
 gain retain the existing squared knob curve.
 
 `do_action(target, action)` is for discrete commands. The currently accepted
-transport actions are `play`, `pause`, `toggle_play`, and `unload`. Deck setup
-actions are `key_lock_on`, `key_lock_off`, `toggle_key_lock`, and
-`cycle_tempo_range`. Per-deck quantize uses `quantize_on`, `quantize_off`,
+transport actions are `play`, `pause`, `toggle_play`, `unload`, `track_start`,
+`cue_press`, `cue_release`, `sync`, `set_sync_master`, `select_deck`,
+`release_deck_select`, and `dual_deck_toggle`. Two deck-select presses on one
+side enter Dual Deck mode; a single press exits it. Deck setup actions are
+`key_lock_on`, `key_lock_off`, `toggle_key_lock`, `cycle_tempo_range`,
+`key_sync`, `key_reset`, and `tap_bpm`. Tap BPM briefly displays a temporary
+estimate in the deck header and does not overwrite library analysis.
+Per-deck quantize uses `quantize_on`, `quantize_off`,
 and `toggle_quantize`. Mixer choices use `eq_classic`, `eq_ezremix`,
 `eq_modern`, `eq_stems`, `toggle_cfx_1` through `toggle_cfx_7`,
 `toggle_crossfader_left`, `toggle_crossfader_right`, and
@@ -95,6 +100,15 @@ as controller actions, so both paths apply their state changes consistently.
 
 The deck-focused Space shortcut uses
 `do_action("active", "toggle_play")`. It retains its existing toggle behaviour.
+
+Browser commands use `do_action("browser", "browse_next")` and its companion
+actions `browse_previous`, `browse_top`, `browse_bottom`, `browse_folders`,
+`browse_tracks`, `browse_toggle_area`, `browse_open`, `browse_close`,
+`browse_suggestions`, `browse_related`, `browse_playlists`, `browse_full_view`,
+`browse_preview`, `browse_preview_skip`, and `browse_tag_track`. Preview plays
+only through headphone cue. Tag Track adds the selected library entry to the
+persistent Tag List crate. The GRV6 adapter decodes relative encoder values for
+browser movement and waveform zoom before dispatch.
 
 The two-deck pitch fader, four-deck tempo knob and tempo scroll gestures use
 `set_param` with `tempo`. Each gesture supplies a bipolar value; fcScript reads

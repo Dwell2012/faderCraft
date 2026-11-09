@@ -171,16 +171,25 @@ impl Shell {
                         .h(px(30.))
                         .min_w_0()
                         .p_0()
-                        .icon(IconName::Lock)
+                        .when(!self.keyboard_shift, |button| button.icon(IconName::Lock))
+                        .when(self.keyboard_shift, |button| button.label("RNG"))
                         .selected(state.key_lock)
                         .when(state.key_lock, |button| {
                             button.bg(Hsla::from(accent)).text_color(rgb(0x070b12))
                         })
-                        .tooltip("Master tempo: preserve musical key when changing speed.")
+                        .tooltip(if self.keyboard_shift {
+                            "Cycle the pitch/tempo range."
+                        } else {
+                            "Master tempo: preserve musical key when changing speed."
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.run_skin_button(
                                 deck,
-                                djcraft_protocol::script::ButtonAction::ToggleKeyLock,
+                                if this.keyboard_shift {
+                                    djcraft_protocol::script::ButtonAction::CycleTempoRange
+                                } else {
+                                    djcraft_protocol::script::ButtonAction::ToggleKeyLock
+                                },
                                 cx,
                             );
                         })),
@@ -213,6 +222,10 @@ impl Shell {
                 }
             });
         let accent = deck_colour(deck);
+        let tapped_bpm = self.tap_history[deck]
+            .last()
+            .filter(|last| last.elapsed().as_secs_f64() < 3.)
+            .and(self.tap_bpm[deck]);
         let bpm = if state.track.is_some() && !state.loading && state.error.is_none() {
             metadata.map_or(self.deck_file_bpm[deck], |metadata| metadata.bpm)
         } else {
@@ -221,6 +234,7 @@ impl Shell {
         .filter(|bpm| bpm.is_finite() && *bpm > 0.)
         .map(|bpm| format!("{:.2}", bpm * state.tempo))
         .unwrap_or_else(|| "—".into());
+        let bpm = tapped_bpm.map_or(bpm, |value| format!("{value:.2} TAP"));
         div()
             .flex()
             .gap(px(4.))
@@ -329,7 +343,7 @@ impl Shell {
                             .text_center()
                             .bg(cx.theme().secondary.opacity(0.5))
                             .py(px(4.))
-                            .text_size(px(26.))
+                            .text_size(px(if tapped_bpm.is_some() { 17. } else { 26. }))
                             .line_height(px(26.))
                             .font_weight(FontWeight::BOLD)
                             .text_color(accent)

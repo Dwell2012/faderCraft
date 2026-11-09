@@ -75,6 +75,9 @@ pub enum PadMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum HostAction {
+    Browser {
+        action: BrowserAction,
+    },
     PadMode {
         mode: PadMode,
     },
@@ -96,8 +99,36 @@ pub enum HostAction {
     },
     Sync,
     SelectDeck,
+    ReleaseDeckSelect,
+    SetSyncMaster,
+    KeySync,
+    KeyReset,
+    TapBpm,
+    TrackStart,
+    DualDeckToggle,
     ToggleVinyl,
     LoadSelected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAction {
+    Previous,
+    Next,
+    Top,
+    Bottom,
+    Folders,
+    Tracks,
+    ToggleArea,
+    Open,
+    Close,
+    Suggestions,
+    Related,
+    Playlists,
+    FullView,
+    PreviewToggle,
+    PreviewSkip,
+    TagTrack,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,9 +213,11 @@ pub enum EffectKind {
     Spiral,
     BeatRepeat,
     Brake,
+    ShepardToneSaw,
+    ShepardToneTri,
 }
 impl EffectKind {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::Filter,
         Self::Echo,
         Self::Flanger,
@@ -205,6 +238,8 @@ impl EffectKind {
         Self::Spiral,
         Self::BeatRepeat,
         Self::Brake,
+        Self::ShepardToneSaw,
+        Self::ShepardToneTri,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -228,6 +263,8 @@ impl EffectKind {
             Self::Spiral => "Spiral",
             Self::BeatRepeat => "Beat Repeat",
             Self::Brake => "Brake",
+            Self::ShepardToneSaw => "Shepard Tone Saw",
+            Self::ShepardToneTri => "Shepard Tone Tri",
         }
     }
     pub fn has_tail(self) -> bool {
@@ -259,6 +296,8 @@ impl EffectKind {
                 | Self::Spiral
                 | Self::BeatRepeat
                 | Self::Brake
+                | Self::ShepardToneSaw
+                | Self::ShepardToneTri
         )
     }
     pub fn feedback_control(self) -> bool {
@@ -378,7 +417,7 @@ impl ColourFxState {
     }
 }
 
-pub const EFFECT_BEATS: [f32; 7] = [0.125, 0.25, 0.5, 1., 2., 4., 8.];
+pub const EFFECT_BEATS: [f32; 10] = [0.125, 0.25, 0.5, 0.75, 1., 2., 4., 8., 16., 32.];
 
 pub const HOT_CUES: usize = 16;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

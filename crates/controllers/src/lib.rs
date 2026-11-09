@@ -19,6 +19,12 @@ pub const PROFILE_VERSION: u32 = 1;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum HostCommand {
+    Browser {
+        action: djcraft_protocol::BrowserAction,
+    },
+    BrowserZoom {
+        steps: i32,
+    },
     Browse {
         steps: i32,
     },
@@ -34,6 +40,27 @@ pub enum HostCommand {
         pressed: bool,
     },
     SelectDeck {
+        deck: u8,
+    },
+    ReleaseDeckSelect {
+        deck: u8,
+    },
+    SetSyncMaster {
+        deck: u8,
+    },
+    KeySync {
+        deck: u8,
+    },
+    KeyReset {
+        deck: u8,
+    },
+    TapBpm {
+        deck: u8,
+    },
+    TrackStart {
+        deck: u8,
+    },
+    DualDeckToggle {
         deck: u8,
     },
     ToggleHeadphoneCue {
@@ -81,6 +108,7 @@ pub use djcraft_protocol::LoopButton;
 fn script_host_command(deck: u8, action: djcraft_protocol::HostAction) -> Option<HostCommand> {
     use djcraft_protocol::HostAction;
     match action {
+        HostAction::Browser { action } => Some(HostCommand::Browser { action }),
         HostAction::PadMode { .. } => None,
         HostAction::PerformancePad {
             mode,
@@ -98,6 +126,13 @@ fn script_host_command(deck: u8, action: djcraft_protocol::HostAction) -> Option
         HostAction::Cue { pressed } => Some(HostCommand::Cue { deck, pressed }),
         HostAction::Sync => Some(HostCommand::Sync { deck }),
         HostAction::SelectDeck => Some(HostCommand::SelectDeck { deck }),
+        HostAction::ReleaseDeckSelect => Some(HostCommand::ReleaseDeckSelect { deck }),
+        HostAction::SetSyncMaster => Some(HostCommand::SetSyncMaster { deck }),
+        HostAction::KeySync => Some(HostCommand::KeySync { deck }),
+        HostAction::KeyReset => Some(HostCommand::KeyReset { deck }),
+        HostAction::TapBpm => Some(HostCommand::TapBpm { deck }),
+        HostAction::TrackStart => Some(HostCommand::TrackStart { deck }),
+        HostAction::DualDeckToggle => Some(HostCommand::DualDeckToggle { deck }),
         HostAction::ToggleVinyl => Some(HostCommand::ToggleVinyl { deck }),
         HostAction::LoadSelected => Some(HostCommand::LoadSelected { deck }),
     }
@@ -106,11 +141,21 @@ fn script_host_command(deck: u8, action: djcraft_protocol::HostAction) -> Option
 impl HostCommand {
     pub fn deck(&self) -> u8 {
         match *self {
-            Self::Browse { .. } | Self::BrowseBack => 0,
+            Self::Browse { .. }
+            | Self::BrowseBack
+            | Self::Browser { .. }
+            | Self::BrowserZoom { .. } => 0,
             Self::LoadSelected { deck } => deck,
             Self::Sync { deck }
             | Self::Cue { deck, .. }
             | Self::SelectDeck { deck }
+            | Self::ReleaseDeckSelect { deck }
+            | Self::SetSyncMaster { deck }
+            | Self::KeySync { deck }
+            | Self::KeyReset { deck }
+            | Self::TapBpm { deck }
+            | Self::TrackStart { deck }
+            | Self::DualDeckToggle { deck }
             | Self::ToggleHeadphoneCue { deck }
             | Self::ToggleSlip { deck }
             | Self::ToggleVinyl { deck }
@@ -351,6 +396,9 @@ pub enum Binding {
     Browse {
         encoding: Encoding,
     },
+    BrowserZoom {
+        encoding: Encoding,
+    },
     BrowserLed {
         folders: bool,
     },
@@ -471,6 +519,7 @@ pub struct Modifier {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LedFeedback {
+    Sync { deck: u8 },
     Slip { deck: u8 },
     Loaded { deck: u8 },
     HeadphoneCue { deck: u8 },
@@ -563,9 +612,13 @@ impl Profile {
                 m.binding,
                 Binding::Browse {
                     encoding: Encoding::Absolute
+                } | Binding::BrowserZoom {
+                    encoding: Encoding::Absolute
                 }
-            ) || matches!(m.binding, Binding::Browse { .. })
-                && !matches!(m.source, Source::Cc { .. })
+            ) || matches!(
+                m.binding,
+                Binding::Browse { .. } | Binding::BrowserZoom { .. }
+            ) && !matches!(m.source, Source::Cc { .. })
                 || matches!(m.binding, Binding::BrowserLed { .. })
                     && !matches!(m.source, Source::Note { .. })
             {
@@ -874,6 +927,18 @@ impl Bridge {
         elapsed_ms: u64,
         loop_in: &[Option<f64>],
     ) -> Vec<[u8; 3]> {
+        self.state_feedback_with_sync(port, state, elapsed_ms, loop_in, &[])
+    }
+
+    /// Host-owned Sync latch is supplied separately from audio-engine state.
+    pub fn state_feedback_with_sync(
+        &self,
+        port: &str,
+        state: &SessionState,
+        elapsed_ms: u64,
+        loop_in: &[Option<f64>],
+        sync_enabled: &[bool],
+    ) -> Vec<[u8; 3]> {
         let blink = elapsed_ms / 250 % 2 == 0;
         let mut messages: Vec<_> = self
             .profile
@@ -904,7 +969,8 @@ impl Bridge {
                             if state.colour_fx_bypassed { 0 } else { 127 },
                         ]);
                     }
-                    LedFeedback::ColourFx { deck }
+                    LedFeedback::Sync { deck }
+                    | LedFeedback::ColourFx { deck }
                     | LedFeedback::Pressed { deck }
                     | LedFeedback::LoopIn { deck }
                     | LedFeedback::Playing { deck }
@@ -925,6 +991,10 @@ impl Bridge {
                     .get(usize::from(deck))
                     .is_some_and(|s| match feedback {
                         LedFeedback::MasterCue | LedFeedback::ColourFxMaster => unreachable!(),
+                        LedFeedback::Sync { .. } => sync_enabled
+                            .get(usize::from(deck))
+                            .copied()
+                            .unwrap_or(false),
                         LedFeedback::ColourFx { .. } => {
                             !state.colour_fx_bypassed && s.colour_fx.active()
                         }
@@ -1384,12 +1454,7 @@ impl Bridge {
                         BeatFxControl::Step { forward } => {
                             let current = beat_fx_division(fx.beats);
                             let next = if forward {
-                                let last = if matches!(fx.target, BeatFxTarget::Deck(_)) {
-                                    beat_fx_division(8.)
-                                } else {
-                                    BEAT_FX_DIVISIONS.len() - 1
-                                };
-                                (current + 1).min(last)
+                                (current + 1).min(BEAT_FX_DIVISIONS.len() - 1)
                             } else {
                                 current.saturating_sub(1)
                             };
@@ -1501,6 +1566,8 @@ impl Bridge {
                                     if !matches!(
                                         command,
                                         HostCommand::SelectDeck { .. }
+                                            | HostCommand::Browser { .. }
+                                            | HostCommand::BrowserZoom { .. }
                                             | HostCommand::Browse { .. }
                                             | HostCommand::BrowseBack
                                             | HostCommand::LoadSelected { .. }
@@ -1549,7 +1616,7 @@ impl Bridge {
                         },
                     })
                 }
-                Binding::Browse { encoding } => {
+                Binding::Browse { encoding } | Binding::BrowserZoom { encoding } => {
                     let raw = i32::from(event.value);
                     let steps = match encoding {
                         Encoding::TwosComplement if raw == 64 => 0,
@@ -1559,7 +1626,13 @@ impl Bridge {
                         Encoding::Absolute => 0,
                     };
                     if steps != 0 {
-                        self.commands.push(HostCommand::Browse { steps });
+                        self.commands.push(
+                            if matches!(mapping.binding, Binding::BrowserZoom { .. }) {
+                                HostCommand::BrowserZoom { steps }
+                            } else {
+                                HostCommand::Browse { steps }
+                            },
+                        );
                     }
                     None
                 }
@@ -1615,6 +1688,8 @@ impl Bridge {
                         if !matches!(
                             command,
                             HostCommand::SelectDeck { .. }
+                                | HostCommand::Browser { .. }
+                                | HostCommand::BrowserZoom { .. }
                                 | HostCommand::ToggleHeadphoneCue { .. }
                                 | HostCommand::Browse { .. }
                                 | HostCommand::BrowseBack

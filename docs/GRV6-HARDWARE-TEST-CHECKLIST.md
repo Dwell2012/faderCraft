@@ -12,7 +12,9 @@ Use this with a current faderCraft build and the bundled DDJ-GRV6 mapping. For e
 ## Deck controls — repeat on A, B, C and D
 
 - [ ] Load a selected track using that deck's Load button; check the correct deck receives it.
-- [ ] Test Play, held Cue and Cue release, and Sync. Check the app's transport state and audible result.
+- [ ] Test Play, held Cue and Cue release, and Sync. Check the app's transport state, audible result, and that the Sync lamp stays lit while Sync is enabled, including when toggled in the app.
+- [ ] Shift + Cue returns to track start. Sync stays enabled until toggled off; Shift + Sync selects the reference deck. Key Sync follows that deck's key, and Shift + Key Sync resets pitch shift. Shift + Master Tempo cycles tempo range. Tap Shift + Quantize at a steady rhythm and check the temporary TAP BPM display without changing the saved library BPM.
+- [ ] Hold both deck-select buttons on the same side to enter Dual Deck. Check Play, Cue, Sync, jog, pad modes and tempo fader affect the pair while the two channel faders remain independent. A single deck-select press should exit Dual Deck.
 - [ ] Test headphone Cue, Key Lock, Slip, Vinyl and Quantize. Check both the app state and the related hardware lamp.
 - [ ] Test deck selection, tempo fader, trim, high/mid/low EQ, channel volume and Sound Color FX. Confirm that each control affects only its intended deck.
 - [ ] In Vinyl mode, scratch the platter in both directions, release it while moving, and release it while stationary. Try the rim while playing and stopped. Listen for jumps, lag or motion after the wheel stops.
@@ -35,11 +37,14 @@ Use this with a current faderCraft build and the bundled DDJ-GRV6 mapping. For e
 
 - [ ] Test Loop In/Out, four-beat loop, Reloop/Exit and loop halve/double. Confirm that these buttons leave the current pad page selected and that loop lamps follow the loop state.
 - [ ] Turn the Beat FX selector, route the effect to CH 1–4, Master and Sampler, and toggle On/Off. Check the audible target and app state.
-- [ ] Sweep Level/Depth and step Beat −/+ through its range. Check the hardware division indicator. Try an unsupported Mobius selection; it should not activate an unrelated effect.
+- [ ] Sweep Level/Depth and step Beat −/+ through its range. Check the hardware division indicator. Select both Mobius positions and listen to the Shepard Tone Saw/Tri effects over a track and silence.
 
 ## Browser
 
 - [ ] Turn the browse encoder through the visible, sorted/filtered track list. Switch between tracks and sources, then load the highlighted track. Check that the selection and loaded deck match the controller input.
+- [ ] Tilt the Smart Rotary Selector in all four directions, with and without Shift. Check area changes and top/bottom jumps; press it to switch areas, then Shift+press to open a folder.
+- [ ] Use Discover, Back, and View with and without Shift. Check suggestions, related tracks, playlists, full Library, and Tag List membership.
+- [ ] Turn Shift+Browse and confirm the main waveforms zoom in/out. Press Preview and confirm the selected track is heard only in headphones, with the deck and master unaffected. Shift+Preview should jump 30 seconds; a second Preview press should stop.
 
 ## Failure notes
 

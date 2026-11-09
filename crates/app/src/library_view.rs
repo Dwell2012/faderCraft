@@ -1,7 +1,9 @@
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
@@ -929,6 +931,11 @@ pub struct LibraryView {
     /// One text box per [`EditField`], in that order.
     fields: [Entity<InputState>; 6],
     artwork: Option<Arc<Image>>,
+    grid_preview: Option<Arc<djcraft_engine::Track>>,
+    grid_preview_center: f64,
+    grid_preview_bounds: Rc<Cell<Bounds<Pixels>>>,
+    grid_drag: Option<(i64, f32, f64)>,
+    grid_drag_seconds: Option<f64>,
     provider: Provider,
     /// Whether the info panel's details can be changed. Off until asked.
     editing: bool,
@@ -1077,6 +1084,11 @@ impl LibraryView {
             inspected: None,
             fields,
             artwork: None,
+            grid_preview: None,
+            grid_preview_center: 0.,
+            grid_preview_bounds: Rc::new(Cell::new(Bounds::default())),
+            grid_drag: None,
+            grid_drag_seconds: None,
             provider: Provider::default(),
             editing: false,
             running_scans: 0,
@@ -1763,6 +1775,15 @@ impl LibraryView {
             self.set_field(field, text, window, cx);
         }
         self.artwork = None;
+        self.grid_preview = None;
+        self.grid_preview_center = self
+            .library
+            .as_ref()
+            .and_then(|library| library.beat_grid(track.id).ok().flatten())
+            .map(|grid| grid.first_beat_seconds + 0.65)
+            .unwrap_or(0.65);
+        self.grid_drag = None;
+        self.grid_drag_seconds = None;
         self.notice = None;
         self.editing = false;
 
@@ -1776,6 +1797,22 @@ impl LibraryView {
                 djcraft_library::artwork::cached_path(&crate::settings::data_dir(), &relative)
             });
         self.inspected = Some(track);
+        let preview_path = path.clone();
+        cx.spawn(async move |this, cx| {
+            let preview = cx
+                .background_spawn(async move {
+                    djcraft_engine::Track::decode(&preview_path, 11_025).ok()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if this.inspected.as_ref().map(|track| track.id) == Some(id) {
+                    this.grid_preview = preview;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let artwork = cx
                 .background_spawn(async move {
@@ -2245,6 +2282,141 @@ impl LibraryView {
         );
     }
 
+    fn move_grid_drag(&mut self, x: f32, cx: &mut Context<Self>) {
+        let Some((id, start_x, first)) = self.grid_drag else {
+            return;
+        };
+        if self.inspected.as_ref().map(|track| track.id) != Some(id) {
+            return;
+        }
+        let width = self.grid_preview_bounds.get().size.width.as_f32();
+        if width <= 0. {
+            return;
+        }
+        self.grid_drag_seconds = Some((first + (x - start_x) as f64 * 2. / width as f64).max(0.));
+        cx.notify();
+    }
+
+    fn end_grid_drag(&mut self, cx: &mut Context<Self>) {
+        let id = self.grid_drag.take().map(|drag| drag.0);
+        let first = self.grid_drag_seconds.take();
+        if let (Some(id), Some(first), Some(grid)) = (
+            id,
+            first,
+            self.library
+                .as_ref()
+                .and_then(|library| id.and_then(|id| library.beat_grid(id).ok().flatten())),
+        ) {
+            self.change_library(
+                |library| library.set_beat_grid_anchor(id, first, grid.downbeat),
+                cx,
+            );
+        }
+    }
+
+    fn grid_waveform(
+        &self,
+        id: i64,
+        grid: TempoResult,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let preview = self.grid_preview.clone();
+        let bounds_cell = self.grid_preview_bounds.clone();
+        let first = self.grid_drag_seconds.unwrap_or(grid.first_beat_seconds);
+        let beat = grid.beat_seconds();
+        // Keep the audio fixed while dragging the grid, so its alignment is visible.
+        let centre = self.grid_preview_center;
+        div()
+            .id("library-grid-waveform")
+            .w_full()
+            .h(px(76.))
+            .bg(rgb(0x0d0e0f))
+            .cursor(CursorStyle::PointingHand)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    this.grid_drag = Some((id, event.position.x.as_f32(), grid.first_beat_seconds));
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if event.pressed_button == Some(MouseButton::Left) {
+                    this.move_grid_drag(event.position.x.as_f32(), cx);
+                } else if this.grid_drag.is_some() {
+                    this.end_grid_drag(cx);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_grid_drag(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.end_grid_drag(cx)),
+            )
+            .child(
+                canvas(
+                    move |bounds, _, _| bounds_cell.set(bounds),
+                    move |bounds, _, window, _| {
+                        let width = bounds.size.width.as_f32();
+                        let height = bounds.size.height.as_f32();
+                        if width <= 0. {
+                            return;
+                        }
+                        let left = centre - 1.;
+                        if let Some(track) = &preview {
+                            let peaks_per_second =
+                                track.sample_rate as f64 / track.frames_per_peak() as f64;
+                            let count = track.peak_count();
+                            for column in 0..width.ceil() as usize {
+                                let start = ((left + column as f64 * 2. / width as f64)
+                                    * peaks_per_second)
+                                    .max(0.) as usize;
+                                let end = ((left + (column + 1) as f64 * 2. / width as f64)
+                                    * peaks_per_second)
+                                    .max(0.) as usize;
+                                let amplitude = (start..end.max(start + 1).min(count))
+                                    .map(|i| track.peak(i))
+                                    .fold(0f32, f32::max);
+                                let half = (amplitude.sqrt() * (height - 6.) * 0.5).max(0.5);
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        bounds.origin
+                                            + point(px(column as f32), px(height * 0.5 - half)),
+                                        size(px(1.), px(half * 2.)),
+                                    ),
+                                    rgb(0x8cb36a),
+                                ));
+                            }
+                        }
+                        if beat > 0. {
+                            let start = ((left - first) / beat).floor() as i64;
+                            let end = ((left + 2. - first) / beat).ceil() as i64;
+                            for n in start..=end {
+                                let x =
+                                    ((first + n as f64 * beat - left) / 2. * width as f64) as f32;
+                                if (0. ..width).contains(&x) {
+                                    let color = if n.rem_euclid(4) == grid.downbeat as i64 {
+                                        rgb(0xffffff)
+                                    } else {
+                                        rgb(0xb3b3b3)
+                                    };
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            bounds.origin + point(px(x), px(0.)),
+                                            size(px(1.5), px(height)),
+                                        ),
+                                        color,
+                                    ));
+                                }
+                            }
+                        }
+                    },
+                )
+                .size_full(),
+            )
+    }
+
     /// The panel on the right: the selected track's details, editable.
     fn info_panel(&self, track: &Track, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -2322,6 +2494,9 @@ impl LibraryView {
                             .icon(IconName::X)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.inspected = None;
+                                this.grid_preview = None;
+                                this.grid_drag = None;
+                                this.grid_drag_seconds = None;
                                 cx.notify();
                             })),
                     ),
@@ -2376,7 +2551,9 @@ impl LibraryView {
             .when_some(grid, |this, grid| {
                 this.child(div().flex().flex_col().gap_1().p_2().rounded_md().bg(tile)
                     .child(div().text_xs().text_color(muted).child(if manual_grid { "Beatgrid · manual" } else { "Beatgrid · analysed" }))
-                    .child(format!("First beat {:.3}s", grid.first_beat_seconds))
+                    .child(self.grid_waveform(track_id, grid, cx))
+                    .child(div().text_xs().text_color(muted).child("Drag the grid to align its first beat; release to save."))
+                    .child(format!("First beat {:.3}s", self.grid_drag_seconds.unwrap_or(grid.first_beat_seconds)))
                     .child(div().flex().gap_1()
                         .child(Button::new("first-beat-back").xsmall().outline().label("−10 ms")
                             .on_click(cx.listener(move |this, _, _, cx| this.nudge_first_beat(track_id, grid, -0.010, cx))))
@@ -2582,6 +2759,59 @@ impl LibraryView {
         cx.notify();
     }
 
+    pub fn controller_action(
+        &mut self,
+        action: djcraft_protocol::BrowserAction,
+        cx: &mut Context<Self>,
+    ) {
+        use djcraft_protocol::BrowserAction;
+        match action {
+            BrowserAction::Previous => self.controller_browse(-1, cx),
+            BrowserAction::Next => self.controller_browse(1, cx),
+            BrowserAction::Top | BrowserAction::Bottom => {
+                if self.controller_folders {
+                    self.controller_browse(
+                        if action == BrowserAction::Top {
+                            i32::MIN
+                        } else {
+                            i32::MAX
+                        },
+                        cx,
+                    );
+                } else {
+                    let len = self.table.read(cx).delegate().tracks.len();
+                    if len > 0 {
+                        self.table.update(cx, |table, cx| {
+                            table.set_selected_row(
+                                if action == BrowserAction::Top {
+                                    0
+                                } else {
+                                    len - 1
+                                },
+                                cx,
+                            )
+                        });
+                    }
+                }
+            }
+            BrowserAction::Folders | BrowserAction::Close => self.controller_folders = true,
+            BrowserAction::Tracks | BrowserAction::Open => self.controller_folders = false,
+            BrowserAction::ToggleArea => self.controller_folders = !self.controller_folders,
+            BrowserAction::Suggestions | BrowserAction::Related => {
+                self.suggesting = action == BrowserAction::Related || !self.suggesting;
+                self.reload(cx);
+            }
+            BrowserAction::Playlists => {
+                self.controller_folders = true;
+                self.show_section(Section::Playlists, cx);
+            }
+            BrowserAction::FullView => {}
+            BrowserAction::PreviewToggle | BrowserAction::PreviewSkip => {}
+            BrowserAction::TagTrack => self.controller_tag_track(cx),
+        }
+        cx.notify();
+    }
+
     pub fn controller_browse(&mut self, steps: i32, cx: &mut Context<Self>) {
         if !matches!(self.section, Section::Library | Section::Playlists) {
             self.show_section(Section::Library, cx);
@@ -2616,6 +2846,46 @@ impl LibraryView {
             }
         }
         cx.notify();
+    }
+
+    pub fn controller_selected_path(&self, cx: &App) -> Option<PathBuf> {
+        let table = self.table.read(cx);
+        table
+            .selected_row()
+            .and_then(|row| table.delegate().tracks.get(row))
+            .map(|track| track.path.clone())
+    }
+
+    fn controller_tag_track(&mut self, cx: &mut Context<Self>) {
+        let id = {
+            let table = self.table.read(cx);
+            table
+                .selected_row()
+                .and_then(|row| table.delegate().tracks.get(row))
+                .map(|track| track.id)
+        };
+        let (Some(id), Some(library)) = (id, self.library.as_mut()) else {
+            return;
+        };
+        let crate_id =
+            if let Some(tag_list) = self.crates.iter().find(|entry| entry.name == "Tag List") {
+                tag_list.id
+            } else {
+                match library.create_crate("Tag List", None) {
+                    Ok(tag_list) => tag_list.id,
+                    Err(error) => {
+                        self.error = Some(error.to_string().into());
+                        return;
+                    }
+                }
+            };
+        if let Err(error) = library.add_to_crate(crate_id, &[id]) {
+            self.error = Some(error.to_string().into());
+        } else {
+            self.notice = Some("Added to Tag List".into());
+            self.reload(cx);
+            cx.emit(LibraryEvent::Changed);
+        }
     }
 
     pub fn controller_load(&mut self, deck: usize, cx: &mut Context<Self>) {

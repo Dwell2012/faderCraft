@@ -179,6 +179,37 @@ fn select_sync_reference(
         .find(|&other| other < visible && other != deck && grids[other].is_some())
 }
 
+fn camelot_tonic(key: djcraft_library::Camelot) -> i32 {
+    let relative = (i32::from(key.number) - 8).rem_euclid(12) * 7 % 12;
+    (relative - if key.major { 0 } else { 3 }).rem_euclid(12)
+}
+
+fn shortest_key_shift(from: djcraft_library::Camelot, to: djcraft_library::Camelot) -> f32 {
+    let delta = (camelot_tonic(to) - camelot_tonic(from)).rem_euclid(12);
+    (if delta > 6 { delta - 12 } else { delta }) as f32
+}
+
+fn mirrors_dual_deck(action: &DeckAction) -> bool {
+    matches!(
+        action,
+        DeckAction::Play
+            | DeckAction::Pause
+            | DeckAction::SetTempo { .. }
+            | DeckAction::Seek { .. }
+            | DeckAction::SetKeyLock { .. }
+            | DeckAction::SetQuantize { .. }
+            | DeckAction::SetSlip { .. }
+            | DeckAction::SetKeyShift { .. }
+            | DeckAction::SetTempoRange { .. }
+            | DeckAction::ScratchTo { .. }
+            | DeckAction::JogScratch { .. }
+            | DeckAction::HoldJog
+            | DeckAction::Scratch { .. }
+            | DeckAction::PitchBend { .. }
+            | DeckAction::EndNudge
+    )
+}
+
 /// Accumulate listening time, never seek distance or pitch-adjusted time.
 #[derive(Default)]
 struct HistoryTracker {
@@ -213,11 +244,23 @@ pub struct Shell {
     stems_starting: bool,
     play_history: [HistoryTracker; DECKS],
     sync_playback: [SyncPlayback; DECKS],
+    sync_enabled: [bool; DECKS],
+    key_sync_enabled: [bool; DECKS],
+    sync_master: Option<usize>,
+    sync_refresh: Instant,
+    tap_history: [Vec<Instant>; DECKS],
+    tap_bpm: [Option<f64>; DECKS],
+    dual_deck: [bool; 2],
+    deck_select_held: [bool; DECKS],
+    keyboard_shift: bool,
+    waveform_visible_seconds: f64,
+    preview_path: Option<std::path::PathBuf>,
+    preview_revision: u64,
     deck_focus: FocusHandle,
     active_deck: usize,
     monitor: djcraft_protocol::MonitorState,
     focus_loaded_deck: bool,
-    cue_preview: Option<(usize, f64, Option<String>)>,
+    cue_preview: [Option<(f64, Option<String>)>; DECKS],
     cue_anchor: [Option<(f64, Option<String>)>; DECKS],
     pitch_drag: Option<usize>,
     pitch_knob_start: Option<(f32, f64)>,
@@ -261,6 +304,7 @@ pub struct Shell {
     last_frame: Instant,
     overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; DECKS],
     pending_seeks: [Option<(f64, Instant)>; DECKS],
+    startup_seek: Option<f64>,
     mixer_values: [f32; mixer_controls::CONTROL_COUNT],
     mixer_last_change: [Option<Instant>; mixer_controls::CONTROL_COUNT],
     mixer_areas: Vec<Rc<Cell<Bounds<Pixels>>>>,
@@ -376,6 +420,12 @@ impl Shell {
 
     /// Four decks follow the longest-running eligible transport; idle decks use pairing.
     fn sync_reference(&self, deck: usize) -> Option<usize> {
+        if let Some(master) = self.sync_master
+            && master != deck
+            && self.grids.get(master).is_some_and(Option::is_some)
+        {
+            return Some(master);
+        }
         select_sync_reference(deck, self.visible_decks(), &self.grids, &self.sync_playback)
     }
 
@@ -564,7 +614,7 @@ impl Shell {
             active_deck: 0,
             monitor: Default::default(),
             focus_loaded_deck: false,
-            cue_preview: None,
+            cue_preview: std::array::from_fn(|_| None),
             cue_anchor: std::array::from_fn(|_| None),
             pitch_drag: None,
             pitch_knob_start: None,
@@ -586,8 +636,24 @@ impl Shell {
             last_frame: Instant::now(),
             play_history: Default::default(),
             sync_playback: Default::default(),
+            sync_enabled: [false; DECKS],
+            key_sync_enabled: [false; DECKS],
+            sync_master: None,
+            sync_refresh: Instant::now(),
+            tap_history: std::array::from_fn(|_| Vec::new()),
+            tap_bpm: [None; DECKS],
+            dual_deck: [false; 2],
+            deck_select_held: [false; DECKS],
+            keyboard_shift: false,
+            waveform_visible_seconds: VISIBLE_SECONDS,
+            preview_path: None,
+            preview_revision: 0,
             overview_cache: std::array::from_fn(|_| Rc::default()),
             pending_seeks: [None; DECKS],
+            startup_seek: std::env::var("DJCRAFT_START_SEEK_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|seconds| seconds.is_finite() && *seconds >= 0.),
             mixer_values: mixer_controls::initial_values(),
             mixer_last_change: [None; mixer_controls::CONTROL_COUNT],
             mixer_areas: (0..mixer_controls::CONTROL_COUNT)
@@ -1092,6 +1158,79 @@ impl Shell {
         }
     }
 
+    fn toggle_sync(&mut self, deck: usize, cx: &mut Context<Self>) {
+        if self.sync_enabled[deck] {
+            self.sync_enabled[deck] = false;
+        } else if self.sync_reference(deck).is_some() && self.grids[deck].is_some() {
+            self.sync_enabled[deck] = true;
+            self.sync_deck(deck, cx);
+        }
+        cx.notify();
+    }
+
+    fn set_sync_master(&mut self, deck: usize, cx: &mut Context<Self>) {
+        self.sync_master = Some(deck);
+        for other in 0..DECKS {
+            if other != deck && self.sync_enabled[other] {
+                self.sync_deck(other, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn track_start(&mut self, deck: usize, cx: &mut Context<Self>) {
+        self.end_cue_preview(cx);
+        self.send(deck, DeckAction::Seek { seconds: 0. });
+        cx.notify();
+    }
+
+    fn key_sync(&mut self, deck: usize, cx: &mut Context<Self>) {
+        if self.key_sync_enabled[deck] {
+            self.key_sync_enabled[deck] = false;
+            self.send(deck, DeckAction::SetKeyShift { semitones: 0. });
+            return;
+        }
+        let Some(reference) = self.sync_reference(deck) else {
+            return;
+        };
+        let (Some(from), Some(to)) = (self.deck_keys[deck], self.deck_keys[reference]) else {
+            return;
+        };
+        let semitones = shortest_key_shift(from, to);
+        self.send(deck, DeckAction::SetKeyShift { semitones });
+        self.key_sync_enabled[deck] = true;
+        cx.notify();
+    }
+
+    fn tap_bpm(&mut self, deck: usize, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let taps = &mut self.tap_history[deck];
+        if taps
+            .last()
+            .is_some_and(|last| now.duration_since(*last).as_secs_f64() > 2.)
+        {
+            taps.clear();
+        }
+        taps.push(now);
+        if taps.len() > 6 {
+            taps.remove(0);
+        }
+        let intervals: Vec<f64> = taps
+            .windows(2)
+            .map(|pair| pair[1].duration_since(pair[0]).as_secs_f64())
+            .collect();
+        if intervals.len() < 2
+            || intervals
+                .iter()
+                .any(|interval| !(0.25..=2.).contains(interval))
+        {
+            return;
+        }
+        let average = intervals.iter().sum::<f64>() / intervals.len() as f64;
+        self.tap_bpm[deck] = Some(60. / average);
+        cx.notify();
+    }
+
     fn wheel_tempo(&mut self, deck: usize, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         if let Some(state) = self
             .engine
@@ -1144,7 +1283,7 @@ impl Shell {
             seconds_per_pixel: if overview {
                 track.duration_seconds / width as f64
             } else {
-                -VISIBLE_SECONDS * state.tempo / width as f64
+                -self.waveform_visible_seconds * state.tempo / width as f64
             },
             minimum: if overview {
                 0.
@@ -1434,6 +1573,9 @@ impl Shell {
                 for (deck, mode) in controllers.take_pad_modes().into_iter().enumerate() {
                     if let Some(mode) = mode {
                         self.follow_controller_pad_mode(deck, mode, cx);
+                        if self.dual_deck[deck % 2] {
+                            self.follow_controller_pad_mode(deck ^ 2, mode, cx);
+                        }
                     }
                 }
                 for action in actions {
@@ -1463,7 +1605,7 @@ impl Shell {
                 &self.browser
             };
             controllers.set_browser_folders(view.read(cx).controller_folders());
-            for action in controllers.tick(&state, &self.loop_in) {
+            for action in controllers.tick(&state, &self.loop_in, &self.sync_enabled) {
                 self.controller_action(action, cx);
             }
         }
@@ -1476,6 +1618,56 @@ impl Shell {
     }
 
     fn controller_action(&mut self, action: Action, cx: &mut Context<Self>) {
+        if let Action::Deck {
+            deck,
+            action: deck_action,
+        } = &action
+        {
+            let index = usize::from(*deck);
+            if index < DECKS && self.dual_deck[index % 2] && mirrors_dual_deck(deck_action) {
+                let mirrored_action = match deck_action {
+                    DeckAction::ScratchTo { seconds } => {
+                        if let Some(state) = self.engine.as_mut().map(|engine| engine.state()) {
+                            DeckAction::ScratchTo {
+                                seconds: (state.decks[index ^ 2].position_seconds + seconds
+                                    - state.decks[index].position_seconds)
+                                    .max(0.),
+                            }
+                        } else {
+                            deck_action.clone()
+                        }
+                    }
+                    DeckAction::JogScratch {
+                        seconds,
+                        speed,
+                        interval_seconds,
+                    } => {
+                        if let Some(state) = self.engine.as_mut().map(|engine| engine.state()) {
+                            DeckAction::JogScratch {
+                                seconds: (state.decks[index ^ 2].position_seconds + seconds
+                                    - state.decks[index].position_seconds)
+                                    .max(0.),
+                                speed: *speed,
+                                interval_seconds: *interval_seconds,
+                            }
+                        } else {
+                            deck_action.clone()
+                        }
+                    }
+                    _ => deck_action.clone(),
+                };
+                self.apply_control_dispatch(
+                    djcraft_protocol::script::Dispatch {
+                        source: djcraft_protocol::script::ControlSource::Controller,
+                        action: Action::Deck {
+                            deck: *deck ^ 2,
+                            action: mirrored_action,
+                        },
+                    },
+                    cx,
+                );
+            }
+        }
         self.apply_control_dispatch(
             djcraft_protocol::script::Dispatch {
                 source: djcraft_protocol::script::ControlSource::Controller,
@@ -1628,6 +1820,63 @@ impl Shell {
     ) {
         use djcraft_controllers::HostCommand;
         let deck = usize::from(command.deck());
+        if deck < DECKS && self.dual_deck[deck % 2] {
+            let partner = (deck ^ 2) as u8;
+            let mirrored = match command {
+                HostCommand::Sync { .. } => Some(HostCommand::Sync { deck: partner }),
+                HostCommand::Cue { pressed, .. } => Some(HostCommand::Cue {
+                    deck: partner,
+                    pressed,
+                }),
+                HostCommand::LoopButton { button, .. } => Some(HostCommand::LoopButton {
+                    deck: partner,
+                    button,
+                }),
+                HostCommand::LoopPad { pad, alternate, .. } => Some(HostCommand::LoopPad {
+                    deck: partner,
+                    pad,
+                    alternate,
+                }),
+                HostCommand::PerformancePad {
+                    mode,
+                    pad,
+                    alternate,
+                    ..
+                } => Some(HostCommand::PerformancePad {
+                    deck: partner,
+                    mode,
+                    pad,
+                    alternate,
+                }),
+                HostCommand::ReleasePerformancePad { .. } => {
+                    Some(HostCommand::ReleasePerformancePad { deck: partner })
+                }
+                HostCommand::TrackStart { .. } => Some(HostCommand::TrackStart { deck: partner }),
+                HostCommand::ToggleVinyl { .. } => Some(HostCommand::ToggleVinyl { deck: partner }),
+                HostCommand::ToggleSlip { .. } => Some(HostCommand::ToggleSlip { deck: partner }),
+                HostCommand::KeySync { .. } => Some(HostCommand::KeySync { deck: partner }),
+                HostCommand::KeyReset { .. } => Some(HostCommand::KeyReset { deck: partner }),
+                HostCommand::AutoLoop { beats, .. } => Some(HostCommand::AutoLoop {
+                    deck: partner,
+                    beats,
+                }),
+                _ => None,
+            };
+            if let Some(mirrored) = mirrored {
+                self.controller_command_single(controllers, mirrored, cx);
+            }
+        }
+        self.controller_command_single(controllers, command, cx);
+    }
+
+    fn controller_command_single(
+        &mut self,
+        controllers: &mut crate::controllers::Controllers,
+        command: djcraft_controllers::HostCommand,
+        cx: &mut Context<Self>,
+    ) {
+        use djcraft_controllers::HostCommand;
+        let deck = usize::from(command.deck());
         if deck >= self.deck_paths.len() {
             return;
         }
@@ -1635,6 +1884,80 @@ impl Shell {
             self.set_four_decks(true, cx);
         }
         match command {
+            HostCommand::BrowserZoom { steps } => {
+                self.waveform_visible_seconds = (self.waveform_visible_seconds
+                    * 1.1f64.powi(-steps.clamp(-30, 30)))
+                .clamp(2., 32.);
+                cx.notify();
+            }
+            HostCommand::Browser { action } => {
+                if action == djcraft_protocol::BrowserAction::PreviewToggle {
+                    let view = if self.tab == Tab::Library {
+                        &self.library
+                    } else {
+                        &self.browser
+                    };
+                    let path = view.read(cx).controller_selected_path(cx);
+                    if let Some(path) = path {
+                        if self.preview_path.as_ref() == Some(&path) {
+                            self.preview_revision = self.preview_revision.wrapping_add(1);
+                            if let Some(engine) = &mut self.engine {
+                                let _ = engine.preview(None);
+                            }
+                            self.preview_path = None;
+                        } else if let Some(engine) = &self.engine {
+                            self.preview_revision = self.preview_revision.wrapping_add(1);
+                            let revision = self.preview_revision;
+                            let sample_rate = engine.sample_rate();
+                            self.preview_path = Some(path.clone());
+                            let decoded = cx
+                                .background_executor()
+                                .spawn(async move { Track::decode(&path, sample_rate) });
+                            cx.spawn(async move |this, cx| {
+                                let result = decoded.await;
+                                let _ = this.update(cx, |this, _| {
+                                    if this.preview_revision == revision {
+                                        match result {
+                                            Ok(track) => {
+                                                if let Some(engine) = &mut this.engine {
+                                                    let _ = engine.preview(Some(track));
+                                                }
+                                            }
+                                            Err(error) => {
+                                                eprintln!("Preview decode: {error}");
+                                                this.preview_path = None;
+                                            }
+                                        }
+                                    }
+                                });
+                            })
+                            .detach();
+                        }
+                    }
+                } else if action == djcraft_protocol::BrowserAction::PreviewSkip {
+                    if let Some(engine) = &mut self.engine {
+                        let _ = engine.preview_skip(30.);
+                    }
+                } else if action == djcraft_protocol::BrowserAction::FullView {
+                    self.show(if self.tab == Tab::Library { Tab::Live } else { Tab::Library }, cx);
+                } else {
+                    if matches!(
+                        action,
+                        djcraft_protocol::BrowserAction::Suggestions
+                            | djcraft_protocol::BrowserAction::Related
+                    ) {
+                        self.show(Tab::Live, cx);
+                    } else if self.tab != Tab::Library && self.tab != Tab::Live {
+                        self.show(Tab::Live, cx);
+                    }
+                    let view = if self.tab == Tab::Library {
+                        &self.library
+                    } else {
+                        &self.browser
+                    };
+                    view.update(cx, |view, cx| view.controller_action(action, cx));
+                }
+            }
             HostCommand::Browse { .. }
             | HostCommand::BrowseBack
             | HostCommand::LoadSelected { .. } => {
@@ -1690,16 +2013,10 @@ impl Shell {
                 self.controller_performance_pad(deck, mode, pad, alternate, cx);
             }
             HostCommand::ReleasePerformancePad { .. } => self.release_pad(deck),
-            HostCommand::Sync { .. } => self.sync_deck(deck, cx),
+            HostCommand::Sync { .. } => self.toggle_sync(deck, cx),
             HostCommand::Cue { pressed: true, .. } => self.begin_cue_preview(deck, cx),
             HostCommand::Cue { pressed: false, .. } => {
-                if self
-                    .cue_preview
-                    .as_ref()
-                    .is_some_and(|(active, _, _)| *active == deck)
-                {
-                    self.end_cue_preview(cx);
-                }
+                self.end_deck_cue_preview(deck, cx);
             }
             HostCommand::ToggleHeadphoneCue { .. } => self.toggle_headphone_cue(
                 deck,
@@ -1719,8 +2036,29 @@ impl Shell {
                 cx.notify();
             }
             HostCommand::SelectDeck { .. } => {
-                self.active_deck = deck;
+                let partner = deck ^ 2;
+                if self.deck_select_held[partner] {
+                    self.dual_deck[deck % 2] = true;
+                } else if self.dual_deck[deck % 2] {
+                    self.dual_deck[deck % 2] = false;
+                    self.active_deck = deck;
+                } else {
+                    self.active_deck = deck;
+                }
+                self.deck_select_held[deck] = true;
             }
+            HostCommand::ReleaseDeckSelect { .. } => self.deck_select_held[deck] = false,
+            HostCommand::DualDeckToggle { .. } => {
+                self.dual_deck[deck % 2] = !self.dual_deck[deck % 2]
+            }
+            HostCommand::SetSyncMaster { .. } => self.set_sync_master(deck, cx),
+            HostCommand::KeySync { .. } => self.key_sync(deck, cx),
+            HostCommand::KeyReset { .. } => {
+                self.key_sync_enabled[deck] = false;
+                self.send(deck, DeckAction::SetKeyShift { semitones: 0. });
+            }
+            HostCommand::TapBpm { .. } => self.tap_bpm(deck, cx),
+            HostCommand::TrackStart { .. } => self.track_start(deck, cx),
             HostCommand::Stutter { .. } => {
                 if let Some(state) = self.engine.as_mut().map(|e| e.state().decks[deck].clone())
                     && state.track.is_some()
@@ -1975,6 +2313,11 @@ impl Shell {
 
         let deck_accent = deck_colour(index);
         let deck_selected = self.active_deck == index;
+        let deck_button_selected = if self.keyboard_shift {
+            self.dual_deck[index % 2]
+        } else {
+            deck_selected
+        };
         let headphone_cued = self.monitor.cue_enabled(index);
         let load_button = Button::new(("load", index))
             .tooltip("Choose an audio file for this deck.")
@@ -2068,7 +2411,8 @@ impl Shell {
         let sync_button = Button::new(("sync", index))
             .outline()
             .small()
-            .label("Sync")
+            .label(if self.keyboard_shift { "MASTER" } else { "SYNC" })
+            .selected(self.sync_enabled[index])
             .when(self.settings.four_decks, |button| {
                 button.rounded(ButtonRounded::None).w_full().h(px(30.))
             })
@@ -2085,14 +2429,24 @@ impl Shell {
                     || self.grids[index].is_none()
                     || self.sync_reference(index).is_none(),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.sync_deck(index, cx)));
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.keyboard_shift {
+                    this.set_sync_master(index, cx);
+                } else {
+                    this.toggle_sync(index, cx);
+                }
+            }));
         let cue_button = div()
             .id(("cue-hold", index))
             .w_full()
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
-                    this.begin_cue_preview(index, cx);
+                    if this.keyboard_shift {
+                        this.track_start(index, cx);
+                    } else {
+                        this.begin_cue_preview(index, cx);
+                    }
                     window.focus(&this.deck_focus, cx);
                     cx.stop_propagation();
                 }),
@@ -2101,7 +2455,7 @@ impl Shell {
                 Button::new(("cue", index))
                     .outline()
                     .small()
-                    .label("Cue")
+                    .label(if self.keyboard_shift { "START" } else { "CUE" })
                     .w_full()
                     .when(self.settings.four_decks, |button| {
                         button
@@ -2130,22 +2484,30 @@ impl Shell {
             })
             .text_xs()
             .font_weight(FontWeight::BOLD)
-            .label(deck_label(index))
-            .selected(deck_selected)
+            .label(if self.keyboard_shift { "D" } else { deck_label(index) })
+            .selected(deck_button_selected)
             .border_color(deck_accent)
-            .bg(if deck_selected {
+            .bg(if deck_button_selected {
                 Hsla::from(deck_accent)
             } else {
                 Hsla::from(deck_accent).opacity(0.12)
             })
-            .text_color(if deck_selected {
+            .text_color(if deck_button_selected {
                 rgb(0x070b12)
             } else {
                 deck_accent
             })
-            .tooltip("Activate this deck for keyboard controls. Does not change headphone cue.")
+            .tooltip(if self.keyboard_shift {
+                "Toggle Dual Deck transport for this deck and its paired deck. Mixer controls remain separate."
+            } else {
+                "Activate this deck for keyboard controls. Does not change headphone cue."
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.active_deck = index;
+                if this.keyboard_shift {
+                    this.dual_deck[index % 2] = !this.dual_deck[index % 2];
+                } else {
+                    this.active_deck = index;
+                }
                 window.focus(&this.deck_focus, cx);
                 cx.notify();
             }));
@@ -2167,7 +2529,7 @@ impl Shell {
             .h(px(13.))
             .min_w_0()
             .p_0()
-            .child(div().text_size(px(9.)).line_height(px(9.)).font_weight(FontWeight::NORMAL).child("QUANTIZE"))
+            .child(div().text_size(px(9.)).line_height(px(9.)).font_weight(FontWeight::NORMAL).child(if self.keyboard_shift { "TAP BPM" } else { "QUANTIZE" }))
             .selected(!state.quantize_disabled)
             .border_color(if state.quantize_disabled { cx.theme().border } else { Hsla::from(deck_accent) })
             .bg(if state.quantize_disabled {
@@ -2178,11 +2540,15 @@ impl Shell {
             .text_color(if state.quantize_disabled { cx.theme().muted_foreground } else { Hsla::from(rgb(0x070b12)) })
             .tooltip("Deck quantize: bypass or restore Hot Cue, loop and scratch quantize without changing their settings.")
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.run_skin_button(
-                    index,
-                    djcraft_protocol::script::ButtonAction::ToggleQuantize,
-                    cx,
-                );
+                if this.keyboard_shift {
+                    this.tap_bpm(index, cx);
+                } else {
+                    this.run_skin_button(
+                        index,
+                        djcraft_protocol::script::ButtonAction::ToggleQuantize,
+                        cx,
+                    );
+                }
             }));
         let (controls, display_identity, display_sync) = if self.settings.four_decks {
             let controls = div()
@@ -2668,6 +3034,15 @@ impl Render for Shell {
                 )
                 .into_any_element();
         }
+        if let Some(seconds) = self.startup_seek
+            && self.engine.as_mut().is_some_and(|engine| {
+                let state = engine.state();
+                state.decks[0].track.is_some() && !state.decks[0].loading
+            })
+        {
+            self.startup_seek = None;
+            self.send(0, DeckAction::Seek { seconds });
+        }
         for deck in 0..DECKS {
             if let Some((start, began)) = self.tempo_returns[deck] {
                 let elapsed = began.elapsed().as_secs_f64();
@@ -2772,17 +3147,10 @@ impl Render for Shell {
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
         for (index, deck) in decks.iter().enumerate() {
-            let transport_playing = deck.playing
-                && self
-                    .cue_preview
-                    .as_ref()
-                    .is_none_or(|(preview, _, _)| *preview != index);
+            let transport_playing = deck.playing && self.cue_preview[index].is_none();
             self.sync_playback[index].update(deck.path.as_deref(), transport_playing, now);
             let audible = deck.playing
-                && self
-                    .cue_preview
-                    .as_ref()
-                    .is_none_or(|(preview, _, _)| *preview != index)
+                && self.cue_preview[index].is_none()
                 && self.drag.is_none_or(|drag| drag.deck != index)
                 && self
                     .wheel_scrub
@@ -2804,6 +3172,53 @@ impl Render for Shell {
                 if saved {
                     self.play_history[index].recorded = true;
                     self.browser.update(cx, |view, cx| view.refresh(cx));
+                }
+            }
+        }
+
+        if now.duration_since(self.sync_refresh).as_millis() >= 250 {
+            self.sync_refresh = now;
+            for deck in 0..DECKS {
+                if self.key_sync_enabled[deck] {
+                    if let Some(reference) = self.sync_reference(deck)
+                        && let (Some(from), Some(to)) =
+                            (self.deck_keys[deck], self.deck_keys[reference])
+                    {
+                        let desired = shortest_key_shift(from, to);
+                        if (decks[deck].key_shift - desired).abs() > 0.01 {
+                            self.send(deck, DeckAction::SetKeyShift { semitones: desired });
+                        }
+                    }
+                }
+                if !self.sync_enabled[deck] {
+                    continue;
+                }
+                let Some(reference) = self.sync_reference(deck) else {
+                    continue;
+                };
+                let (Some(local_grid), Some(master_grid)) =
+                    (self.grids[deck], self.grids[reference])
+                else {
+                    continue;
+                };
+                let (local, master) = (&decks[deck], &decks[reference]);
+                if local.track.is_none() || master.track.is_none() {
+                    self.sync_enabled[deck] = false;
+                    continue;
+                }
+                if !local.playing || !master.playing {
+                    continue;
+                }
+                let desired = master_grid.bpm * master.tempo / local_grid.bpm;
+                let drift = nearest_beat_offset(
+                    local.position_seconds,
+                    local_grid,
+                    master.position_seconds,
+                    master_grid,
+                )
+                .abs();
+                if (local.tempo - desired).abs() > 0.0002 || drift > 0.025 {
+                    self.sync_deck(deck, cx);
                 }
             }
         }
@@ -2924,6 +3339,12 @@ impl Render for Shell {
                 },
             )
             .track_focus(&self.deck_focus)
+            .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _, cx| {
+                if this.keyboard_shift != event.shift {
+                    this.keyboard_shift = event.shift;
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if this.deck_focus.is_focused(window)
                     && event.keystroke.key == "space"
@@ -3078,7 +3499,16 @@ mod tests {
         assert_eq!(select_sync_reference(0, 4, &grids, &playback), None);
     }
 
-    use super::{DisplayPosition, HistoryTracker, WaveformDrag, nearest_beat_offset};
+    use super::{
+        DisplayPosition, HistoryTracker, WaveformDrag, mirrors_dual_deck, nearest_beat_offset,
+    };
+    use djcraft_protocol::DeckAction;
+
+    #[test]
+    fn dual_deck_mirrors_tempo_but_keeps_mixer_levels_independent() {
+        assert!(mirrors_dual_deck(&DeckAction::SetTempo { ratio: 1.08 }));
+        assert!(!mirrors_dual_deck(&DeckAction::SetVolume { level: 0.5 }));
+    }
     use djcraft_library::TempoResult;
     #[test]
     fn tempo_return_eases_to_unity_without_overshoot() {

@@ -687,18 +687,24 @@ impl Controllers {
         actions
     }
 
-    pub fn tick(&mut self, state: &SessionState, loop_in: &[Option<f64>]) -> Vec<Action> {
+    pub fn tick(
+        &mut self,
+        state: &SessionState,
+        loop_in: &[Option<f64>],
+        sync_enabled: &[bool],
+    ) -> Vec<Action> {
         let actions = self.bridge.tick(state);
         self.monitor = state.monitor;
         let ports: Vec<_> = self.outputs.keys().cloned().collect();
         for port in ports {
             self.state_leds.insert(
                 port.clone(),
-                self.bridge.state_feedback(
+                self.bridge.state_feedback_with_sync(
                     &port,
                     state,
                     self.started.elapsed().as_millis() as u64,
                     loop_in,
+                    sync_enabled,
                 ),
             );
             self.sync_feedback(&port);

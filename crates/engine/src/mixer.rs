@@ -36,6 +36,12 @@ const SLIP_CUE: u8 = 4;
 const SLIP_PAUSE: u8 = 8;
 
 pub(crate) enum Command {
+    Preview {
+        track: Option<Arc<Track>>,
+    },
+    PreviewSeek {
+        frames: usize,
+    },
     RhythmPack {
         pack: crate::rhythm_shift::Pack,
     },
@@ -1306,6 +1312,8 @@ mod rhythm_shift_tests {
 }
 
 pub struct Mixer {
+    preview: Option<Arc<Track>>,
+    preview_frame: usize,
     rhythm_pack: Option<crate::rhythm_shift::Pack>,
     deck_guards: [crate::peak_guard::PeakGuard; DECKS],
     sampler_gain: f32,
@@ -1346,6 +1354,8 @@ impl Mixer {
         shared: Arc<Shared>,
     ) -> Self {
         Self {
+            preview: None,
+            preview_frame: 0,
             rhythm_pack: None,
             monitor: Default::default(),
             deck_guards: std::array::from_fn(|_| crate::peak_guard::PeakGuard::new(sample_rate)),
@@ -1433,6 +1443,20 @@ impl Mixer {
             self.decks[deck].prepared_at = None;
         }
         match command {
+            Command::Preview { track } => {
+                if let Some(old) = std::mem::replace(&mut self.preview, track) {
+                    let _ = self.garbage.push(old);
+                }
+                self.preview_frame = 0;
+            }
+            Command::PreviewSeek { frames } => {
+                if let Some(track) = &self.preview {
+                    self.preview_frame = self
+                        .preview_frame
+                        .saturating_add(frames)
+                        .min(track.frames());
+                }
+            }
             Command::RhythmPack { pack } => {
                 if let Some(old) = self.rhythm_pack.replace(pack) {
                     let _ = self.garbage.push(old.loop_audio);
@@ -2451,6 +2475,19 @@ impl Mixer {
             }
             self.current_master = self.master_gain;
             let master_cue_target = if self.master_cue_enabled { 1. } else { 0. };
+            if let Some(track) = &self.preview {
+                let available = track.decoded_frames();
+                for cue in self.monitor_buffer[..block.len()].chunks_exact_mut(CHANNELS) {
+                    if self.preview_frame >= available {
+                        break;
+                    }
+                    let offset = self.preview_frame * CHANNELS;
+                    for c in 0..CHANNELS {
+                        cue[c] += track.sample(offset + c);
+                    }
+                    self.preview_frame += 1;
+                }
+            }
             if let Some(cue_out) = headphones.as_deref_mut() {
                 let start = block_index * BLOCK * CHANNELS;
                 let gain_step = (self.monitor.gain - self.monitor_gain) / frames as f32;

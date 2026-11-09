@@ -2,8 +2,8 @@ use super::*;
 use djcraft_protocol::{EFFECT_SLOTS, EffectKind as Kind, EffectState};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 pub(super) const VIEWS: [&str; 5] = ["FX x3", "FX x1", "FX x3 Full", "FX x6", "Pads 16"];
-const BEATS: [f32; 7] = djcraft_protocol::EFFECT_BEATS;
-const BEAT_LABELS: [&str; 7] = ["1/8", "1/4", "1/2", "1", "2", "4", "8"];
+const BEATS: [f32; 10] = djcraft_protocol::EFFECT_BEATS;
+const BEAT_LABELS: [&str; 10] = ["1/8", "1/4", "1/2", "3/4", "1", "2", "4", "8", "16", "32"];
 fn value(fx: EffectState, parameter: u8) -> f32 {
     let parameter = if fx.kind == Kind::Filter && parameter < 2 {
         1 - parameter
@@ -79,6 +79,7 @@ fn parameter_label(fx: EffectState, parameter: u8) -> String {
         Kind::PitchShift => format!("Pitch {:+.1} st", (p - 0.5) * 24.),
         Kind::BeatRepeat => format!("Slice {:.0} ms", 30. + p * 1970.),
         Kind::Brake => format!("Stop {:.2} s", 0.2 + p * 3.8),
+        Kind::ShepardToneSaw | Kind::ShepardToneTri => format!("Cycle {:.2} s", 0.05 + p * 0.95),
     }
 }
 fn detail_help(kind: Kind) -> &'static str {
@@ -91,6 +92,9 @@ fn detail_help(kind: Kind) -> &'static str {
         }
         Kind::Brake => {
             "Slows the sound to a stop while the deck timeline continues. Toggle to retrigger; 100% Mix gives a complete stop."
+        }
+        Kind::ShepardToneSaw | Kind::ShepardToneTri => {
+            "Generated Shepard tone. Beat sets the octave glide cycle; Mix sets tone level."
         }
         Kind::Noise => {
             "Filtered noise follows the incoming audio level; silent input stays silent."

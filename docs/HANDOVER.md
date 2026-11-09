@@ -4,7 +4,7 @@ DDJ-GRV6 Beat FX (5 November 2026): the shared protocol state controls the
 selected deck's FX1 or an independent processor for master/booth and sampler.
 On/Off can use the visible FX1 before the selector sends its position.
 The bundled profile maps the documented selector notes, six target buttons,
-On/Off, Beat −/+ and Level/Depth. Helix uses Beat Repeat, Mobius bypasses.
+On/Off, Beat −/+ and Level/Depth. Helix uses Beat Repeat; the controller's Mobius positions select faderCraft's Shepard Tone Saw/Tri.
 Sampler pads use slots 1–8 on the left and 9–16 on the right, with Shift stop.
 See CONTROLLERS.md for the performance workflow and limits.
 

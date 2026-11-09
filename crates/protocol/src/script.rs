@@ -21,6 +21,7 @@ pub enum Target {
     Active,
     Inactive,
     Mixer,
+    Browser,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,6 +199,7 @@ fn deck_id(name: &str) -> Result<Target, &'static str> {
         "active" => Ok(Target::Active),
         "inactive" => Ok(Target::Inactive),
         "mixer" => Ok(Target::Mixer),
+        "browser" => Ok(Target::Browser),
         _ => Err("unknown deck target"),
     }
 }
@@ -234,6 +236,8 @@ fn parse_beat_fx_kind(name: &str) -> Result<Option<crate::EffectKind>, &'static 
         "filter" => Some(EffectKind::Filter),
         "cut" => Some(EffectKind::Cut),
         "pitch_shift" => Some(EffectKind::PitchShift),
+        "shepard_tone_saw" => Some(EffectKind::ShepardToneSaw),
+        "shepard_tone_tri" => Some(EffectKind::ShepardToneTri),
         _ => return Err("unknown Beat FX kind"),
     })
 }
@@ -284,7 +288,7 @@ impl Program {
                 "beat_fx_depth" => Param::BeatFxDepth,
                 _ => return Err("unknown parameter"),
             };
-            if (target == Target::Mixer) != param.is_mixer() {
+            if target == Target::Browser || (target == Target::Mixer) != param.is_mixer() {
                 return Err("parameter target does not match its scope");
             }
             let value = if parts[2] == "$value" {
@@ -318,6 +322,13 @@ impl Program {
                 "cue_release" => ButtonAction::Host(crate::HostAction::Cue { pressed: false }),
                 "sync" => ButtonAction::Host(crate::HostAction::Sync),
                 "select_deck" => ButtonAction::Host(crate::HostAction::SelectDeck),
+                "release_deck_select" => ButtonAction::Host(crate::HostAction::ReleaseDeckSelect),
+                "set_sync_master" => ButtonAction::Host(crate::HostAction::SetSyncMaster),
+                "key_sync" => ButtonAction::Host(crate::HostAction::KeySync),
+                "key_reset" => ButtonAction::Host(crate::HostAction::KeyReset),
+                "tap_bpm" => ButtonAction::Host(crate::HostAction::TapBpm),
+                "track_start" => ButtonAction::Host(crate::HostAction::TrackStart),
+                "dual_deck_toggle" => ButtonAction::Host(crate::HostAction::DualDeckToggle),
                 "toggle_vinyl" => ButtonAction::Host(crate::HostAction::ToggleVinyl),
                 "toggle_master_cue" => ButtonAction::ToggleMasterCue,
                 "toggle_colour_fx_bypass" => ButtonAction::ToggleColourFxBypass,
@@ -325,6 +336,54 @@ impl Program {
                 "beat_fx_step_up" => ButtonAction::BeatFxStep(true),
                 "beat_fx_step_down" => ButtonAction::BeatFxStep(false),
                 "load_selected" => ButtonAction::Host(crate::HostAction::LoadSelected),
+                "browse_previous" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Previous,
+                }),
+                "browse_next" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Next,
+                }),
+                "browse_top" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Top,
+                }),
+                "browse_bottom" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Bottom,
+                }),
+                "browse_folders" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Folders,
+                }),
+                "browse_tracks" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Tracks,
+                }),
+                "browse_toggle_area" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::ToggleArea,
+                }),
+                "browse_open" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Open,
+                }),
+                "browse_close" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Close,
+                }),
+                "browse_suggestions" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Suggestions,
+                }),
+                "browse_related" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Related,
+                }),
+                "browse_playlists" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::Playlists,
+                }),
+                "browse_full_view" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::FullView,
+                }),
+                "browse_preview" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::PreviewToggle,
+                }),
+                "browse_preview_skip" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::PreviewSkip,
+                }),
+                "browse_tag_track" => ButtonAction::Host(crate::HostAction::Browser {
+                    action: crate::BrowserAction::TagTrack,
+                }),
                 "loop_in" => ButtonAction::Host(crate::HostAction::LoopButton {
                     button: crate::LoopButton::In,
                 }),
@@ -457,7 +516,13 @@ impl Program {
                     | ButtonAction::BeatFxToggle
                     | ButtonAction::BeatFxStep(_)
             );
-            if (target == Target::Mixer) != mixer_action {
+            let browser_action = matches!(
+                action,
+                ButtonAction::Host(crate::HostAction::Browser { .. })
+            );
+            if (target == Target::Mixer) != mixer_action
+                || (target == Target::Browser) != browser_action
+            {
                 return Err("deck action requires a deck target");
             }
             return Ok(Self::DoAction { target, action });
@@ -573,7 +638,7 @@ impl Program {
                 .filter(|deck| Some(*deck) != active)
                 .map(|deck| deck as u8)
                 .collect(),
-            Target::Mixer => {
+            Target::Mixer | Target::Browser => {
                 return Ok(vec![self.run_with_state(
                     context.source,
                     input,
@@ -641,20 +706,29 @@ impl Program {
         }
         let target = self.target();
         match self {
-            Self::SetParam { param, .. } if (target == Target::Mixer) != param.is_mixer() => {
+            Self::SetParam { param, .. }
+                if target == Target::Browser || (target == Target::Mixer) != param.is_mixer() =>
+            {
                 return Err("parameter target does not match its scope");
             }
-            Self::LegacyEq { .. } if target == Target::Mixer => {
+            Self::LegacyEq { .. } if matches!(target, Target::Mixer | Target::Browser) => {
                 return Err("deck action requires a deck target");
             }
-            Self::DoAction { action, .. } if (target == Target::Mixer) != action.is_mixer() => {
+            Self::DoAction { action, .. }
+                if (target == Target::Mixer) != action.is_mixer()
+                    || (target == Target::Browser)
+                        != matches!(
+                            action,
+                            ButtonAction::Host(crate::HostAction::Browser { .. })
+                        ) =>
+            {
                 return Err("action target does not match its scope");
             }
             _ => {}
         }
         let deck = match target {
             Target::Deck(deck) => deck,
-            Target::Mixer => 0,
+            Target::Mixer | Target::Browser => 0,
             Target::Active | Target::Inactive => {
                 return Err("relative target requires invocation context");
             }
@@ -676,9 +750,6 @@ impl Program {
                         .ok_or("Beat FX target requires session state")?
                         .beat_fx;
                     fx.target = target;
-                    if matches!(target, crate::BeatFxTarget::Deck(_)) {
-                        fx.beats = fx.beats.min(8.);
-                    }
                     Some(MixerAction::SetBeatFx { state: fx })
                 }
                 ButtonAction::BeatFxToggle => {
@@ -712,11 +783,7 @@ impl Program {
                         .position(|value| *value >= fx.beats)
                         .unwrap_or(beats.len() - 1);
                     let next = if forward {
-                        (current + 1).min(if matches!(fx.target, crate::BeatFxTarget::Deck(_)) {
-                            6
-                        } else {
-                            beats.len() - 1
-                        })
+                        (current + 1).min(beats.len() - 1)
                     } else {
                         current.saturating_sub(1)
                     };

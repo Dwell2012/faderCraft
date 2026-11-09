@@ -35,7 +35,13 @@ Reloop / Exit exits or recalls the last loop. While
 a loop is active, Cue/Loop Call left and right halve and double it. The In and
 Out lamps follow the loop marker and active loop. These buttons leave the
 current performance pad page selected.
-The profile has 802 entries. Each Sound Color FX knob drives its channel's
+The profile has 849 entries. The Smart Rotary Selector tilt and press gestures
+navigate the browser through fcScript. Shifted browsing jumps to list ends,
+opens folders or playlists, and zooms the main waveforms. Preview auditions the
+selected file on the headphone cue bus without loading a deck; Shift+Preview
+jumps forward 30 seconds. Shift+View adds the highlighted track to a persistent
+Tag List crate. These newly mapped gestures need hardware verification.
+Each Sound Color FX knob drives its channel's
 CFX amount, with the centre detent at neutral. Sound Color FX ON/OFF bypasses
 all four channels and lights when CFX is enabled. Turning the knobs while
 bypassed sets the amount that will be used on re-enable. Each deck's platter and rim
@@ -49,8 +55,8 @@ behaviour still need a hardware check.
 
 For Beat FX, turn the selector to choose an effect, press CH 1–4, MST
 (Master), or SP (Sampler) to route it, then press On/Off. Level/Depth sets the
-effect amount. Beat −/+ steps from ¼ to 8 beats on decks and up to 32 beats
-on Master and Sampler. The hardware indicator follows the division.
+effect amount. Beat −/+ steps from ¼ to 32 beats on decks, Master and Sampler.
+The hardware indicator follows the division.
 Deck routing uses the selected deck's first FX slot. On startup, On/Off uses
 that slot until the GRV6 reports a selector change. The tested startup requests
 did not return a resting selector position.
@@ -59,8 +65,9 @@ first playing deck with a beat grid, with 120 BPM as a fallback.
 
 The selector uses faderCraft's Delay, Echo, Low-cut Echo, Spiral, Reverb,
 Flanger, Phaser, Filter, Cut (Trans), Pitch Shift, and Beat Repeat (Roll).
-Helix uses Beat Repeat as an approximation. Mobius Saw and Mobius Tri bypass
-the processor. Changing the target switches off the previous deck's first
+Helix uses Beat Repeat as an approximation. Shepard Tone Saw and Shepard Tone Tri generate
+an octave-cycling tone over the selected source, including silence; Beat sets
+the glide cycle and Level/Depth sets tone volume. Changing the target switches off the previous deck's first
 FX slot. Master processing feeds both Master and
 Booth, and Sampler processing affects only sample playback.
 
@@ -330,8 +337,16 @@ is subject to the existing transport limitation below.
 
 ### Newly mapped buttons
 
-- Sync invokes the same effective-BPM/beat-phase match as the UI; both tracks
-  need analysed grids. It does not invent BPM for unanalysed audio.
+- Sync latches effective-BPM/beat-phase matching and can be toggled off from
+  either the controller or UI. Both tracks need analysed grids. Shift + Sync
+  selects the reference deck. Shift + Cue returns to track start. Shift +
+  Master Tempo cycles pitch range; Key Sync matches the reference key and
+  Shift + Key Sync resets the key shift. Shift + Quantize taps a temporary BPM
+  estimate shown briefly in the deck header without overwriting library BPM.
+  Pressing both deck-select buttons on one side enables Dual Deck transport;
+  a single deck-select press exits it. The tempo fader moves both paired decks
+  to the same pitch ratio; mixer levels remain independent. The GRV6 Sync lamp
+  follows the latched Sync state, including changes made in the app.
 - Transport Cue holds an anchored preview; releasing stops and returns to it.
   Disconnect also releases the preview. This is separate from headphone Cue.
 - Headphone Cue toggles that deck in the headphone bus, independently of the
@@ -430,7 +445,7 @@ Native MIDI input now preserves the driver’s microsecond timestamps through a 
 
 Ranged hardware tempo faders snap their nearest MIDI position to the opposite deck's exact effective BPM (A/B and C/D pairs). Both analysed BPMs must be known and the target must fit the selected range. Soft takeover still applies; the next fader step leaves the snap. This matches tempo only, without changing beat phase or enabling Sync.
 
-Mixtrack Beats encoders (CC 21/22 hexadecimal, two's-complement relative) now step the shared FX division independently per deck: 1/8, 1/4, 1/2, 1, 2, 4, 8 beats. Steps clamp at the endpoints and neutral packets do nothing. The bundled and development profiles now contain 144 mappings. The app selector uses the same divisions.
+Mixtrack Beats encoders (CC 21/22 hexadecimal, two's-complement relative) step the shared FX division independently per deck: 1/8, 1/4, 1/2, 3/4, 1, 2, 4, 8, 16, 32 beats. Steps clamp at the endpoints and neutral packets do nothing. The bundled and development profiles now contain 144 mappings. The app selector uses the same divisions.
 
 On Mixtrack Pro II output connection, the app sends the manufacturer's verified startup request after opening input. One absolute reading per mapped control may adopt the physical position within one second, while every deck is stopped. Active playback, expired snapshots and later software changes retain soft takeover. Relative encoders/buttons are not restored as absolute positions. A drained MIDI batch now forwards only the latest JogScratch per deck, retaining timestamp-derived velocity and cumulative physical position. Non-jog actions and host commands flush pending motion first so touch/transport ordering remains intact.
 
