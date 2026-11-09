@@ -254,11 +254,46 @@ pub fn detect_tempo(samples: &[f32], sample_rate: u32, range: TempoRange) -> Opt
         // Keep the actual attack as origin; renderers can count backwards
         // from it instead of treating quiet pre-roll as the first beat.
         kick_entrance = quiet_before_kick(samples, sample_rate, refined, period);
-        let first = if kick_entrance {
+        let mut first = if kick_entrance {
             refined
         } else {
             project_kick_back(samples, sample_rate, refined, period)
         };
+        // The low-frequency pitch-sweep heuristic can mistake a repeated
+        // synth bass in a breakdown for kicks. Before projecting a late
+        // anchor across the intro, compare its phase with the opening's own
+        // repeated attacks. A bass pattern may share the beat period while
+        // landing halfway between the actual kicks.
+        if anchor > 16. * period {
+            let kick_fold = self::fold(&kicks, rate, bpm);
+            let candidate_phase = kick_fold.phase * period + window_centre + ONSET_LAG_SECONDS;
+            if let Some(candidate) = opening_attack(samples, sample_rate, candidate_phase, period) {
+                let support = |start: f64| {
+                    (0..24)
+                        .map(|beat| {
+                            let at = ((start + beat as f64 * period) * rate) as usize;
+                            if at >= kicks.len() {
+                                return 0.;
+                            }
+                            let from = at.saturating_sub(4);
+                            let to = (at + 8).min(kicks.len());
+                            kicks[from..to].iter().copied().fold(0., f32::max)
+                        })
+                        .sum::<f32>()
+                };
+                let opening_support = support(candidate);
+                let projected_support = support(first);
+                let peak = kicks.iter().copied().fold(0., f32::max);
+                if candidate < 4. * period
+                    && (candidate - first).abs() > 0.06
+                    && opening_support > projected_support * 3.
+                    && opening_support > peak * 4.
+                {
+                    first = candidate;
+                    kick_entrance = quiet_before_kick(samples, sample_rate, first, period);
+                }
+            }
+        }
         (
             first,
             (refined - first <= 2. * period + 0.025).then_some(refined),
