@@ -1,5 +1,8 @@
 # djcraft feature list
 
+- [x] The Colour FX Filter sweeps faster just off centre while retaining its
+      neutral detent and 20 Hz–20 kHz nominal endpoints.
+
 - [~] The first four DDJ-GRV6 Stems pad lamps follow source mute and solo
       state after stem preparation, including on the Shift layer.
       [Physical controller check pending.]

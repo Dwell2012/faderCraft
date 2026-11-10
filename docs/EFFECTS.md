@@ -67,7 +67,7 @@ Master effects, post-fader routing, stem-specific routing, floating detail windo
 custom effect lists remain outside this bank. Pads 16 is now available from the FX view selector; see PADS.md.
 Loop Record continues to export original source audio without effects.
 
-The Filter's first knob is its sweep: 0–49% moves low-pass cutoff from 20 Hz to 20 kHz; 50% is neutral; 51–100% moves high-pass cutoff from 20 Hz to 20 kHz. Turning the sweep applies full filtering; the expanded Mix control can blend dry audio back in. Cutoff is limited below Nyquist at low sample rates.
+The Filter's first knob is its sweep: 0–49% moves low-pass cutoff from 20 Hz to 20 kHz; 50% is neutral; 51–100% moves high-pass cutoff from 20 Hz to 20 kHz. The mixer CFX Filter reaches further into the sweep just off centre, with the same cutoff endpoints. Turning the sweep applies full filtering; the expanded deck Filter Mix control can blend dry audio back in. Cutoff is limited below Nyquist at low sample rates.
 
 Echo, Delay, Ping Pong, Low Cut Echo, Spiral and Reverb add their return to the unchanged dry track. Their amount controls the return level rather than fading the dry track away. Echo Out, Brake and rhythmic gating retain their intentional fades/cuts.
 

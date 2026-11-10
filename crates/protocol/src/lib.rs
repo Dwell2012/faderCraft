@@ -403,12 +403,21 @@ impl ColourFxState {
     }
     pub fn effects(self) -> [EffectState; 5] {
         let travel = ((self.position - 0.5).abs() * 2.).clamp(0., 1.);
+        // Give the CFX filter more sweep just outside the centre transition.
+        // The deck rack still uses the unmodified filter parameter.
+        let offset = self.position - 0.5;
+        let filter_position = if offset.abs() <= 0.01 {
+            self.position
+        } else {
+            let sweep = ((offset.abs() - 0.01) / 0.49).clamp(0., 1.);
+            0.5 + (0.01 + 0.49 * sweep.powf(0.65)).copysign(offset)
+        };
         std::array::from_fn(|index| EffectState {
             kind: COLOUR_FX_KINDS[index],
             enabled: self.enabled && self.selected & (1 << index) != 0 && travel > 0.0001,
             amount: if index == 0 { 1. } else { travel * 0.65 },
             parameter: if index == 0 {
-                self.position
+                filter_position
             } else {
                 0.25 + travel * 0.5
             },
@@ -1360,6 +1369,24 @@ mod tempo_range_tests {
 #[cfg(test)]
 mod resonance_compatibility_tests {
     use super::*;
+    #[test]
+    fn colour_filter_sweeps_faster_off_centre_with_the_same_endpoints() {
+        let parameter = |position| {
+            ColourFxState {
+                position,
+                ..Default::default()
+            }
+            .effects()[0]
+                .parameter
+        };
+        let cutoff = EffectState::filter_cutoff;
+        for position in [0., 0.495, 0.5, 0.505, 1.] {
+            assert_eq!(parameter(position), position);
+        }
+        assert!(cutoff(parameter(0.45)) < cutoff(0.45) * 0.8);
+        assert!(cutoff(parameter(0.55)) > cutoff(0.55) * 1.4);
+    }
+
     #[test]
     fn shaped_sweeps_have_expected_endpoints_and_monotonic_travel() {
         let cutoff = EffectState::filter_cutoff;
