@@ -159,24 +159,25 @@ impl SyncPlayback {
     }
 }
 
-fn select_sync_reference(
-    deck: usize,
+fn select_sync_master(
+    preferred: Option<usize>,
     visible: usize,
     grids: &[Option<TempoResult>],
     playback: &[SyncPlayback; DECKS],
 ) -> Option<usize> {
-    if visible > 2
-        && let Some(other) = (0..visible)
-            .filter(|&other| other != deck && grids[other].is_some())
-            .filter_map(|other| playback[other].started.map(|started| (other, started)))
-            .min_by_key(|&(other, started)| (started, other))
-            .map(|(other, _)| other)
-    {
-        return Some(other);
-    }
-    std::iter::once(deck ^ 1)
-        .chain(0..visible)
-        .find(|&other| other < visible && other != deck && grids[other].is_some())
+    let eligible = |deck: usize| deck < visible && grids.get(deck).is_some_and(Option::is_some);
+    preferred.filter(|&deck| eligible(deck)).or_else(|| {
+        (0..visible)
+            .filter(|&deck| eligible(deck))
+            // A playing deck wins over an idle one; break ties by deck number.
+            .min_by_key(|&deck| {
+                (
+                    playback[deck].started.is_none(),
+                    playback[deck].started,
+                    deck,
+                )
+            })
+    })
 }
 
 fn camelot_tonic(key: djcraft_library::Camelot) -> i32 {
@@ -419,15 +420,17 @@ impl Shell {
         if self.settings.four_decks { DECKS } else { 2 }
     }
 
-    /// Four decks follow the longest-running eligible transport; idle decks use pairing.
+    fn active_sync_master(&self) -> Option<usize> {
+        select_sync_master(
+            self.sync_master,
+            self.visible_decks(),
+            &self.grids,
+            &self.sync_playback,
+        )
+    }
+
     fn sync_reference(&self, deck: usize) -> Option<usize> {
-        if let Some(master) = self.sync_master
-            && master != deck
-            && self.grids.get(master).is_some_and(Option::is_some)
-        {
-            return Some(master);
-        }
-        select_sync_reference(deck, self.visible_decks(), &self.grids, &self.sync_playback)
+        self.active_sync_master().filter(|&master| master != deck)
     }
 
     fn set_four_decks(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1163,6 +1166,7 @@ impl Shell {
     fn toggle_sync(&mut self, deck: usize, cx: &mut Context<Self>) {
         if self.sync_enabled[deck] {
             self.sync_enabled[deck] = false;
+            self.send(deck, DeckAction::EndNudge);
         } else if self.sync_reference(deck).is_some() && self.grids[deck].is_some() {
             self.sync_enabled[deck] = true;
             self.sync_deck(deck, cx);
@@ -1171,7 +1175,15 @@ impl Shell {
     }
 
     fn set_sync_master(&mut self, deck: usize, cx: &mut Context<Self>) {
+        if deck >= self.visible_decks() || self.grids[deck].is_none() {
+            return;
+        }
         self.sync_master = Some(deck);
+        if self.sync_enabled[deck] {
+            self.send(deck, DeckAction::EndNudge);
+        }
+        self.sync_enabled[deck] = false;
+        self.key_sync_enabled[deck] = false;
         for other in 0..DECKS {
             if other != deck && self.sync_enabled[other] {
                 self.sync_deck(other, cx);
@@ -1462,6 +1474,9 @@ impl Shell {
         }
         if matches!(action, DeckAction::Load { .. } | DeckAction::Unload) {
             self.release_pad(deck);
+            if self.sync_master == Some(deck) {
+                self.sync_master = None;
+            }
             self.loop_in[deck] = None;
             self.controller_loop_press[deck] = None;
             self.loop_last[deck] = None;
@@ -1628,7 +1643,11 @@ impl Shell {
                 &self.browser
             };
             controllers.set_browser_folders(view.read(cx).controller_folders());
-            for action in controllers.tick(&state, &self.loop_in, &self.sync_enabled) {
+            let master = self.active_sync_master();
+            let following = std::array::from_fn::<_, DECKS, _>(|deck| {
+                master.is_some_and(|master| master != deck) && self.sync_enabled[deck]
+            });
+            for action in controllers.tick(&state, &self.loop_in, &following) {
                 self.controller_action(action, cx);
             }
         }
@@ -2438,26 +2457,37 @@ impl Shell {
                     cx,
                 );
             }));
+        let sync_master = self.active_sync_master();
         let sync_button = Button::new(("sync", index))
             .outline()
             .small()
-            .label(if self.keyboard_shift { "MASTER" } else { "SYNC" })
-            .selected(self.sync_enabled[index])
+            .label(if self.keyboard_shift {
+                "MASTER"
+            } else {
+                "SYNC"
+            })
+            .selected(if self.keyboard_shift {
+                sync_master == Some(index)
+            } else {
+                self.sync_enabled[index] && self.sync_reference(index).is_some()
+            })
             .when(self.settings.four_decks, |button| {
                 button.rounded(ButtonRounded::None).w_full().h(px(30.))
             })
             .when(!self.settings.four_decks, |button| {
                 button.rounded(ButtonRounded::None).w_full().h(px(30.))
             })
-            .tooltip(if self.settings.four_decks {
-                "Match the longest-playing other deck with a beat grid; align the nearest beat when both play. If none is playing, prefer the paired deck."
+            .tooltip(if self.keyboard_shift {
+                "Choose this deck as the sync master"
+            } else if sync_master == Some(index) {
+                "This deck is the sync master"
             } else {
-                "Match the other deck's tempo; align the nearest beat when both play"
+                "Follow the sync master's tempo and align beats when both decks play"
             })
             .disabled(
                 state.track.is_none()
                     || self.grids[index].is_none()
-                    || self.sync_reference(index).is_none(),
+                    || (!self.keyboard_shift && self.sync_reference(index).is_none()),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.keyboard_shift {
@@ -3503,8 +3533,8 @@ impl Render for Shell {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn four_deck_sync_uses_longest_continuous_playback() {
-        use super::{SyncPlayback, select_sync_reference};
+    fn sync_elects_one_master_when_deck_two_joins_deck_three() {
+        use super::{SyncPlayback, select_sync_master};
         let grid = djcraft_library::TempoResult {
             bpm: 120.,
             first_beat_seconds: 0.,
@@ -3517,23 +3547,22 @@ mod tests {
         let later = now + std::time::Duration::from_secs(10);
         playback[2].update(Some("c"), true, now);
         playback[1].update(Some("b"), true, later);
-        // C wins over paired B, even when B's playhead is further into its track.
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
-        assert_eq!(select_sync_reference(2, 4, &grids, &playback), Some(1));
-        assert_eq!(select_sync_reference(0, 2, &grids, &playback), Some(1));
+        assert_eq!(select_sync_master(None, 4, &grids, &playback), Some(2));
+        assert_eq!(select_sync_master(Some(1), 4, &grids, &playback), Some(1));
+        assert_eq!(select_sync_master(Some(2), 2, &grids, &playback), Some(1));
         playback[2].update(Some("c"), true, later);
         assert_eq!(playback[2].started, Some(now));
         playback[2].update(Some("c"), false, later);
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(1));
+        assert_eq!(select_sync_master(None, 4, &grids, &playback), Some(1));
         playback[2].update(Some("c"), true, later + std::time::Duration::from_secs(1));
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(1));
+        assert_eq!(select_sync_master(None, 4, &grids, &playback), Some(1));
         grids[1] = None;
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
+        assert_eq!(select_sync_master(Some(1), 4, &grids, &playback), Some(2));
         playback[2].update(Some("replacement"), false, later);
         assert_eq!(playback[2].started, None);
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), Some(2));
+        assert_eq!(select_sync_master(None, 4, &grids, &playback), Some(0));
         grids.fill(None);
-        assert_eq!(select_sync_reference(0, 4, &grids, &playback), None);
+        assert_eq!(select_sync_master(Some(2), 4, &grids, &playback), None);
     }
 
     use super::{

@@ -1,5 +1,9 @@
 # djcraft feature list
 
+- [x] Beat and key sync use a single eligible master deck. Automatic sync
+      favours the longest-playing deck; Shift + Sync picks the master explicitly.
+      The master never follows another deck.
+
 - [x] Beat Jump keeps the waveform refreshing through audio callback delivery
       in either direction, including while the deck is paused.
 
