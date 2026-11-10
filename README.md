@@ -75,7 +75,9 @@ cargo run --locked -- one.mp3 two.mp3
 cargo run --locked -- -quick
 ```
 
-The development shell sets `DJCRAFT_DATA_DIR` to an isolated development library.
+The development shell uses your configured `DJCRAFT_DATA_DIR` when available
+and otherwise selects an isolated development library. To test with different
+data, set `DJCRAFT_DATA_DIR` for that shell before launching the app.
 For the Numark starter profile, use `./tools/run-mixtrack.ps1` as described in
 [controller setup](docs/CONTROLLERS.md).
 

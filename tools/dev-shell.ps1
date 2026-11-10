@@ -7,7 +7,12 @@ if (-not (Test-Path (Join-Path $cargoBin 'cargo.exe'))) {
 }
 $env:Path = "$cargoBin;$env:Path"
 $env:CARGO_TARGET_DIR = Join-Path $env:LOCALAPPDATA 'DJCraft\target'
-$env:DJCRAFT_DATA_DIR = Join-Path $env:LOCALAPPDATA 'DJCraft-Development'
+if (-not $env:DJCRAFT_DATA_DIR) {
+    $env:DJCRAFT_DATA_DIR = [Environment]::GetEnvironmentVariable('DJCRAFT_DATA_DIR', 'User')
+    if (-not $env:DJCRAFT_DATA_DIR) {
+        $env:DJCRAFT_DATA_DIR = Join-Path $env:LOCALAPPDATA 'DJCraft-Development'
+    }
+}
 if (-not $env:CPAL_ASIO_DIR) {
     $localAsioSdk = Join-Path $env:LOCALAPPDATA 'DJCraft\build-tools\asio\ASIOSDK'
     if ((Test-Path (Join-Path $localAsioSdk 'common\asio.h')) -and
