@@ -1939,7 +1939,14 @@ impl Shell {
                         let _ = engine.preview_skip(30.);
                     }
                 } else if action == djcraft_protocol::BrowserAction::FullView {
-                    self.show(if self.tab == Tab::Library { Tab::Live } else { Tab::Library }, cx);
+                    self.show(
+                        if self.tab == Tab::Library {
+                            Tab::Live
+                        } else {
+                            Tab::Library
+                        },
+                        cx,
+                    );
                 } else {
                     if matches!(
                         action,
