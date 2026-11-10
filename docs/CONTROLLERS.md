@@ -35,7 +35,9 @@ Reloop / Exit exits or recalls the last loop. While
 a loop is active, Cue/Loop Call left and right halve and double it. The In and
 Out lamps follow the loop marker and active loop. These buttons leave the
 current performance pad page selected.
-The profile has 849 entries. The Smart Rotary Selector tilt and press gestures
+The profile has 1321 entries. The four channel meters show post-fader deck
+level, before crossfader routing. Pad-mode lamps follow the last mode reported
+by the controller. The Smart Rotary Selector tilt and press gestures
 navigate the browser through fcScript. Shifted browsing jumps to list ends,
 opens folders or playlists, and zooms the main waveforms. Preview auditions the
 selected file on the headphone cue bus without loading a deck; Shift+Preview

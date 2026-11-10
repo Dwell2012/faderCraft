@@ -16,6 +16,7 @@ Use this with a current faderCraft build and the bundled DDJ-GRV6 mapping. For e
 - [ ] Shift + Cue returns to track start. Sync stays enabled until toggled off; Shift + Sync selects the reference deck. Key Sync follows that deck's key, and Shift + Key Sync resets pitch shift. Shift + Master Tempo cycles tempo range. Tap Shift + Quantize at a steady rhythm and check the temporary TAP BPM display without changing the saved library BPM.
 - [ ] Hold both deck-select buttons on the same side to enter Dual Deck. Check Play, Cue, Sync, jog, pad modes and tempo fader affect the pair while the two channel faders remain independent. A single deck-select press should exit Dual Deck.
 - [ ] Test headphone Cue, Key Lock, Slip, Vinyl and Quantize. Check both the app state and the related hardware lamp.
+- [ ] Play one deck at a time and check its channel meter. Lower its channel fader and confirm the meter falls. Move the crossfader and confirm the channel meter still follows the deck's post-fader level.
 - [ ] Test deck selection, tempo fader, trim, high/mid/low EQ, channel volume and Sound Color FX. Confirm that each control affects only its intended deck.
 - [ ] In Vinyl mode, scratch the platter in both directions, release it while moving, and release it while stationary. Try the rim while playing and stopped. Listen for jumps, lag or motion after the wheel stops.
 
@@ -29,6 +30,7 @@ Use this with a current faderCraft build and the bundled DDJ-GRV6 mapping. For e
 - [ ] Select Hot Cue, Stems, Beat Jump and Sampler modes; use Shift with the mode buttons for Keyboard, Pad FX, Beat Loop and Key Shift. In four-deck view, selecting a pad mode should expand Pads if collapsed.
 - [ ] Set and recall a Hot Cue, then Shift-delete it. Check the saved cue and pad lamp. In Slip mode, hold a Hot Cue and release it; playback should return to the advancing hidden playhead.
 - [ ] Test Stems pads and Shift-solo; Beat Jump pads with a beat grid; and Sampler play and Shift-stop, including lamp feedback.
+- [ ] Check the four Stems preset lamps and the shifted Hot Cue/Sampler lamps. Change pad mode and check that the previous mode lamp clears. Beat Jump, Keyboard and Pad FX pads should acknowledge a held press.
 - [ ] Hold and release Pad FX pads, including the Shift bank. The effect should be momentary and previous slot settings should return on release.
 - [ ] Test all Beat Loop lengths and Key Shift pads. Note the exact pad if its page changes correctly but its action does not.
 - [ ] Hold each Shift + Beat Loop pad. It should open Loop Roll, loop only while held, and resume from the uninterrupted playhead on release. Normal Beat Loop pads should still toggle loops. No Slicer assignment is bundled because the MIDI table does not identify a dedicated Slicer control.

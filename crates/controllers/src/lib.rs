@@ -519,6 +519,10 @@ pub struct Modifier {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LedFeedback {
+    ChannelMeter { deck: u8 },
+    PadMode { deck: u8, mode: PadMode },
+    KeyLock { deck: u8 },
+    RhythmShift { deck: u8 },
     Sync { deck: u8 },
     Slip { deck: u8 },
     Loaded { deck: u8 },
@@ -534,9 +538,21 @@ pub enum LedFeedback {
     Loop { deck: u8 },
     Quantize { deck: u8 },
     Stem { deck: u8, slot: u8 },
+    StemPreset { deck: u8, slot: u8 },
     HotCue { deck: u8, slot: u8 },
     Sample { deck: u8, slot: u8 },
     Effect { deck: u8, slot: u8 },
+}
+
+fn channel_meter(peak: f32) -> u8 {
+    match 20. * peak.log10() {
+        db if db >= 0. => 0x77,
+        db if db >= -6. => 0x65,
+        db if db >= -12. => 0x57,
+        db if db >= -24. => 0x41,
+        db if db >= -36. => 0x26,
+        _ => 0,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -633,19 +649,21 @@ impl Profile {
                         usize::from(*deck) < djcraft_protocol::DECKS && *slot < 4
                     }
                     LedFeedback::Sample { slot, .. } => *slot < 16,
+                    LedFeedback::StemPreset { slot, .. } => (4..8).contains(slot),
                     LedFeedback::Effect { slot, .. } => {
                         usize::from(*slot) < djcraft_protocol::EFFECT_SLOTS
                     }
                     _ => true,
                 };
-                if !matches!(m.source, Source::Note { .. })
-                    || !valid_slot
-                    || !m.modifiers.is_empty()
-                {
-                    return Err(format!(
-                        "{}: LED requires a note, valid slot and no modifiers",
-                        m.id
-                    ));
+                let valid_address = match feedback {
+                    LedFeedback::ChannelMeter { deck } => {
+                        usize::from(*deck) < djcraft_protocol::DECKS
+                            && matches!(m.source, Source::Cc { .. })
+                    }
+                    _ => matches!(m.source, Source::Note { .. }),
+                };
+                if !valid_address || !valid_slot || !m.modifiers.is_empty() {
+                    return Err(format!("{}: invalid LED address, slot or modifiers", m.id));
                 }
             }
             if let Binding::PadMode { deck, .. } = m.binding
@@ -805,6 +823,7 @@ pub struct Bridge {
     commands: Vec<HostCommand>,
     delete_modes: std::collections::BTreeSet<(String, u8)>,
     beat_fx_selector_seen: std::collections::BTreeSet<String>,
+    observed_grv6_pad_modes: [Option<PadMode>; djcraft_protocol::DECKS],
 }
 
 impl Bridge {
@@ -839,6 +858,7 @@ impl Bridge {
             commands: Vec::new(),
             delete_modes: Default::default(),
             beat_fx_selector_seen: Default::default(),
+            observed_grv6_pad_modes: Default::default(),
         })
     }
 
@@ -951,9 +971,21 @@ impl Bridge {
                 let Binding::Led { feedback } = &m.binding else {
                     return None;
                 };
+                if let LedFeedback::ChannelMeter { deck } = *feedback
+                    && let Source::Cc { channel, number } = m.source
+                {
+                    let peak = state.decks.get(usize::from(deck)).map_or(0., |s| s.peak);
+                    return Some([0xb0 | channel, number, channel_meter(peak)]);
+                }
                 let Source::Note { channel, number } = m.source else {
                     return None;
                 };
+                if let LedFeedback::PadMode { deck, .. } = *feedback {
+                    self.observed_grv6_pad_modes
+                        .get(usize::from(deck))
+                        .copied()
+                        .flatten()?;
+                }
                 let (deck, slot) = match *feedback {
                     LedFeedback::MasterCue => {
                         return Some([
@@ -969,7 +1001,11 @@ impl Bridge {
                             if state.colour_fx_bypassed { 0 } else { 127 },
                         ]);
                     }
-                    LedFeedback::Sync { deck }
+                    LedFeedback::ChannelMeter { .. } => return None,
+                    LedFeedback::PadMode { deck, .. }
+                    | LedFeedback::KeyLock { deck }
+                    | LedFeedback::RhythmShift { deck }
+                    | LedFeedback::Sync { deck }
                     | LedFeedback::ColourFx { deck }
                     | LedFeedback::Pressed { deck }
                     | LedFeedback::LoopIn { deck }
@@ -983,6 +1019,7 @@ impl Bridge {
                     LedFeedback::Quantize { deck } => (deck, 0),
                     LedFeedback::HotCue { deck, slot }
                     | LedFeedback::Stem { deck, slot }
+                    | LedFeedback::StemPreset { deck, slot }
                     | LedFeedback::Sample { deck, slot }
                     | LedFeedback::Effect { deck, slot } => (deck, usize::from(slot)),
                 };
@@ -990,7 +1027,14 @@ impl Bridge {
                     .decks
                     .get(usize::from(deck))
                     .is_some_and(|s| match feedback {
-                        LedFeedback::MasterCue | LedFeedback::ColourFxMaster => unreachable!(),
+                        LedFeedback::MasterCue
+                        | LedFeedback::ColourFxMaster
+                        | LedFeedback::ChannelMeter { .. } => unreachable!(),
+                        LedFeedback::KeyLock { .. } => s.key_lock,
+                        LedFeedback::RhythmShift { .. } => s.rhythm_shift,
+                        LedFeedback::PadMode { mode, .. } => {
+                            self.observed_grv6_pad_modes[usize::from(deck)] == Some(*mode)
+                        }
                         LedFeedback::Sync { .. } => sync_enabled
                             .get(usize::from(deck))
                             .copied()
@@ -1034,6 +1078,14 @@ impl Bridge {
                             }
                         }
                         LedFeedback::Stem { .. } => s.stems_ready && s.stem_gains[slot] > 0.,
+                        LedFeedback::StemPreset { .. } => {
+                            let active = s
+                                .stem_gains
+                                .iter()
+                                .enumerate()
+                                .fold(0, |mask, (i, gain)| mask | (u8::from(*gain > 0.) << i));
+                            s.stems_ready && [1, 14, 15, 0].get(slot - 4) == Some(&active)
+                        }
                         LedFeedback::Sample { .. } => match s.samples.get(slot) {
                             Some(2) => blink,
                             Some(1) => true,
@@ -1222,6 +1274,9 @@ impl Bridge {
     /// Reset pickup and button edges after disconnect/reconnect. Hosts must also
     /// release any held momentary actions before closing a connection.
     pub fn disconnect(&mut self, port: &str) -> Vec<Action> {
+        if port == "DDJ-GRV6" {
+            self.observed_grv6_pad_modes.fill(None);
+        }
         self.delete_modes.retain(|(p, _)| p != port);
         self.held.retain(|(name, _), _| name != port);
         let mut releases = Vec::new();
@@ -1403,6 +1458,14 @@ impl Bridge {
                 };
                 if let Some((deck, mode)) = mode {
                     self.pad_modes[usize::from(deck)] = Some(mode);
+                    if port == "DDJ-GRV6" {
+                        self.observed_grv6_pad_modes[usize::from(deck)] =
+                            Some(if mode == PadMode::LoopRoll {
+                                PadMode::BeatLoop
+                            } else {
+                                mode
+                            });
+                    }
                 }
             }
             let action = match &mapping.binding {

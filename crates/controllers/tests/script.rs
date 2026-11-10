@@ -807,10 +807,54 @@ fn grv6_selector_and_shortcut_buttons_dispatch_browser_actions() {
 }
 
 #[test]
+fn grv6_extended_feedback_follows_levels_and_observed_pad_modes() {
+    let profile =
+        Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json")).unwrap();
+    let mut bridge = Bridge::new(profile).unwrap();
+    let mut state = SessionState::default();
+    state.decks = vec![djcraft_protocol::DeckState::default(); 4];
+    for (deck, peak) in state.decks.iter_mut().zip([0.02, 0.1, 0.35, 1.]) {
+        deck.peak = peak;
+    }
+    state.decks[0].key_lock = true;
+    state.decks[1].stems_ready = true;
+    state.decks[1].stem_gains = [1., 0., 0., 0.];
+    let feedback = bridge.state_feedback("DDJ-GRV6", &state, 0, &[]);
+    for (deck, level) in [0x26, 0x41, 0x57, 0x77].into_iter().enumerate() {
+        assert!(feedback.contains(&[0xb0 | deck as u8, 2, level]));
+    }
+    assert!(feedback.contains(&[0x90, 26, 127]));
+    assert!(feedback.contains(&[0x99, 20, 127]));
+    assert!(feedback.contains(&[0x9a, 21, 0]));
+    assert!(!feedback.iter().any(|message| message[..2] == [0x90, 30]));
+    for number in [30, 27] {
+        bridge.process(
+            "DDJ-GRV6",
+            Event {
+                source: Source::Note { channel: 0, number },
+                value: 127,
+            },
+            &state,
+        );
+        bridge.take_pad_modes();
+        let feedback = bridge.state_feedback("DDJ-GRV6", &state, 0, &[]);
+        assert!(feedback.contains(&[0x90, 30, if number == 30 { 127 } else { 0 }]));
+        assert!(feedback.contains(&[0x90, 27, if number == 27 { 127 } else { 0 }]));
+    }
+    bridge.disconnect("DDJ-GRV6");
+    assert!(
+        !bridge
+            .state_feedback("DDJ-GRV6", &state, 0, &[])
+            .iter()
+            .any(|message| message[..2] == [0x90, 30])
+    );
+}
+
+#[test]
 fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     let profile = Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"))
         .expect("starter profile should validate without hardware");
-    assert_eq!(profile.mappings.len(), 849);
+    assert_eq!(profile.mappings.len(), 1321);
     let mut bridge = Bridge::new(profile).unwrap();
     let mut state = SessionState::default();
     state.decks = vec![djcraft_protocol::DeckState::default(); djcraft_protocol::DECKS];
@@ -888,9 +932,9 @@ fn bundled_grv6_profile_compiles_and_routes_each_deck() {
     for deck in 0..4 {
         for (number, expected) in [
             (72, HostCommand::TrackStart { deck }),
-            (28, HostCommand::SetSyncMaster { deck }),
-            (100, HostCommand::KeySync { deck }),
-            (101, HostCommand::KeyReset { deck }),
+            (92, HostCommand::SetSyncMaster { deck }),
+            (101, HostCommand::KeySync { deck }),
+            (100, HostCommand::KeyReset { deck }),
             (104, HostCommand::TapBpm { deck }),
         ] {
             let source = Source::Note {

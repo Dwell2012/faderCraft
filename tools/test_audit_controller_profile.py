@@ -17,8 +17,8 @@ class ControllerProfileAuditTests(unittest.TestCase):
     def test_bundled_grv6_matches_document(self):
         errors, documented, inputs = audit(self.profile, self.reference)
         self.assertEqual(errors, [])
-        self.assertEqual(documented, 802)
-        self.assertEqual(inputs, 672)
+        self.assertEqual(documented, 1321)
+        self.assertEqual(inputs, 715)
 
     def test_swapped_mixer_control_is_detected(self):
         profile = copy.deepcopy(self.profile)

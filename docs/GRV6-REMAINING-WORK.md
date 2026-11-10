@@ -1,6 +1,6 @@
 # GRV6 mapping: remaining work
 
-The goal is for every GRV6 control and shifted function to do useful work in faderCraft. faderCraft features without a corresponding GRV6 control do not need a factory GRV6 assignment. The bundled profile contains 849 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
+The goal is for every GRV6 control and shifted function to do useful work in faderCraft. faderCraft features without a corresponding GRV6 control do not need a factory GRV6 assignment. The bundled profile contains 1321 bindings. Functional input mappings use fcScript; the MIDI adapter still decodes jog motion and relative browser movement, and LED bindings report app state. The mapping is validated against the transcribed AlphaTheta MIDI list and offline packet tests, but the latest changes need a physical GRV6 check. Use [the hardware checklist](GRV6-HARDWARE-TEST-CHECKLIST.md) for that run.
 
 ## Next implementation work
 

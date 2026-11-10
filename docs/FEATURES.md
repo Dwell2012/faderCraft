@@ -1,5 +1,10 @@
 # djcraft feature list
 
+- [~] DDJ-GRV6 channel meters follow the post-fader deck peaks. Pad-mode,
+      stem preset, shifted cue/sample, key-lock and Rhythm Shift lamps follow
+      state, and other mapped buttons acknowledge presses.
+      [Physical feedback verification and lamps for unmapped controls pending.]
+
 - [x] The Colour FX Filter sweeps faster just off centre while retaining its
       neutral detent and 20 Hz–20 kHz nominal endpoints.
 
@@ -525,7 +530,7 @@ release; Shift-clicking Hot Cues retains its existing delete behavior.
 - [~] MIDI Learn [Rust API and JSON profile import/export, Shift conditions,
       state-aware toggles, absolute/relative controls and fader soft takeover;
       graphical editor/Learn UI pending. Numark starter needs hardware validation.]
-- [~] DDJ-GRV6 mapping [849 documented bindings, including fcScript transport
+- [~] DDJ-GRV6 mapping [1321 documented bindings, including fcScript transport
       and timing controls, Dual Deck transport, pad modes, momentary Pad FX,
       Shift + Beat Loop rolls, Beat FX routing, hierarchical browser navigation,
       selector shortcuts, and stateful
