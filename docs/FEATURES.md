@@ -1,5 +1,8 @@
 # djcraft feature list
 
+- [x] Beat Jump keeps the waveform refreshing through audio callback delivery
+      in either direction, including while the deck is paused.
+
 - [~] DDJ-GRV6 channel meters follow the post-fader deck peaks. Pad-mode,
       stem preset, shifted cue/sample, key-lock and Rhythm Shift lamps follow
       state, and other mapped buttons acknowledge presses.

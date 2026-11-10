@@ -1737,6 +1737,8 @@ impl Mixer {
                 deck.loop_region = None;
                 deck.roll_position = None;
                 deck.nudge_frames = 0.;
+                deck.nudge_timeout = None;
+                deck.prepared_at = None;
                 deck.stretching = false;
             }
             Command::PadLoop {

@@ -1986,6 +1986,26 @@ fn slicer_roll_restores_uninterrupted_position_and_arm_loop_waits() {
 }
 
 #[test]
+fn consecutive_jumps_accumulate_in_both_directions_before_an_audio_callback() {
+    let (mut engine, mut mixer) = engine_with(ramp(8.));
+    engine
+        .apply(Role::Host, deck(DeckAction::Seek { seconds: 4. }))
+        .unwrap();
+    render(&mut mixer, 0.01);
+    for (seconds, target) in [(-0.5, 2.5), (0.5, 4.)] {
+        for _ in 0..3 {
+            engine
+                .apply(Role::Host, deck(DeckAction::Jump { seconds }))
+                .unwrap();
+        }
+        render(&mut mixer, 0.01);
+        let state = &engine.state().decks[0];
+        assert!(!state.playing);
+        assert!((state.position_seconds - target).abs() < 0.001);
+    }
+}
+
+#[test]
 fn stem_pads_work_with_classic_eq_and_mute_the_route() {
     let (mut engine, mut mixer) = Engine::headless(RATE);
     let track = Arc::new(Track::from_samples(

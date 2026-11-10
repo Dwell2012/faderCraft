@@ -348,6 +348,7 @@ impl Shell {
             unreachable!()
         };
         let cue_anchor = self.transport_anchor_for(deck, &action);
+        let jumping = matches!(action, DeckAction::Jump { .. });
         let metadata = matches!(
             action,
             DeckAction::SetCueAppearance { .. } | DeckAction::SetHotCues { .. }
@@ -365,7 +366,9 @@ impl Shell {
         if !okay {
             self.pads[deck].notice = "Action unavailable: check loaded audio and beat grid.".into();
         }
-        if !metadata {
+        if okay && jumping {
+            self.refresh_after_jump(deck);
+        } else if !metadata {
             self.display_positions[deck] = DisplayPosition::default();
         }
         if okay {

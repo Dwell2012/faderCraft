@@ -304,6 +304,7 @@ pub struct Shell {
     last_frame: Instant,
     overview_cache: [Rc<std::cell::RefCell<crate::waveform::OverviewCache>>; DECKS],
     pending_seeks: [Option<(f64, Instant)>; DECKS],
+    jump_refresh_until: [Option<Instant>; DECKS],
     startup_seek: Option<f64>,
     mixer_values: [f32; mixer_controls::CONTROL_COUNT],
     mixer_last_change: [Option<Instant>; mixer_controls::CONTROL_COUNT],
@@ -650,6 +651,7 @@ impl Shell {
             preview_revision: 0,
             overview_cache: std::array::from_fn(|_| Rc::default()),
             pending_seeks: [None; DECKS],
+            jump_refresh_until: [None; DECKS],
             startup_seek: std::env::var("DJCRAFT_START_SEEK_SECONDS")
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
@@ -1417,6 +1419,15 @@ impl Shell {
         cx.notify();
     }
 
+    fn refresh_after_jump(&mut self, deck: usize) {
+        self.pending_seeks[deck] = None;
+        self.display_positions[deck] = DisplayPosition::default();
+        // The audio callback resolves relative jumps against its actual playhead.
+        // Keep a paused waveform redrawing long enough to receive that position.
+        self.jump_refresh_until[deck] =
+            Some(Instant::now() + std::time::Duration::from_millis(250));
+    }
+
     /// Sends a deck action to the engine as the session host.
     fn send(&mut self, deck: usize, action: DeckAction) {
         let cue_anchor = self.transport_anchor_for(deck, &action);
@@ -1476,10 +1487,12 @@ impl Shell {
         if let Some(display) = self.display_positions.get_mut(deck) {
             match &action {
                 DeckAction::Seek { seconds } | DeckAction::CuePreview { seconds, .. } => {
+                    self.jump_refresh_until[deck] = None;
                     display.0 = Some(*seconds);
                     self.pending_seeks[deck] = Some((*seconds, Instant::now()));
                 }
                 DeckAction::Load { .. } | DeckAction::Unload => {
+                    self.jump_refresh_until[deck] = None;
                     display.0 = None;
                     self.pending_seeks[deck] = None;
                 }
@@ -1516,6 +1529,13 @@ impl Shell {
                 ..
             }
         );
+        let jumping = matches!(
+            &action,
+            Action::Deck {
+                action: DeckAction::Jump { .. },
+                ..
+            }
+        );
         match engine.apply(Role::Host, action) {
             Ok(()) if loading => {
                 if let Some(path) = self.deck_paths.get(deck).and_then(|p| p.as_deref()) {
@@ -1530,6 +1550,9 @@ impl Shell {
             Err(reason) => eprintln!("action rejected: {reason:?}"),
             Ok(()) => {
                 self.cue_anchor[deck] = cue_anchor;
+                if jumping {
+                    self.refresh_after_jump(deck);
+                }
                 if unloading {
                     self.deck_paths[deck] = None;
                 }
@@ -3231,6 +3254,12 @@ impl Render for Shell {
         }
 
         for (index, deck) in decks.iter_mut().enumerate() {
+            if let Some(until) = self.jump_refresh_until[index] {
+                self.display_positions[index] = DisplayPosition::default();
+                if now >= until {
+                    self.jump_refresh_until[index] = None;
+                }
+            }
             // Audio consumes seek commands on its next callback. Keep the
             // requested position visible until acknowledged, including paused seeks.
             if let Some((target, sent)) = self.pending_seeks[index] {
@@ -3280,6 +3309,7 @@ impl Render for Shell {
             || self.wheel_scrub.is_some()
             || decks.iter().any(moving)
             || self.pending_seeks.iter().any(Option::is_some)
+            || self.jump_refresh_until.iter().any(Option::is_some)
             || self.mixer_peaks.iter().any(|peak| *peak > 0.001)
             || self
                 .mixer_clip_until
