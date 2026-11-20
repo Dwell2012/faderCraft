@@ -951,7 +951,14 @@ fn imports_a_virtualdj_folder() {
             missing: 0
         }
     );
-    let dance = library.playlists().unwrap()[1].id;
+    let imported = library.playlists().unwrap();
+    let wedding_folder = library.folders().unwrap().pop().unwrap();
+    assert_eq!(wedding_folder.name, "Weddings");
+    assert_eq!(imported[0].name, "Saturday");
+    assert_eq!(imported[0].folder, None);
+    assert_eq!(imported[1].name, "First dance");
+    assert_eq!(imported[1].folder, Some(wedding_folder.id));
+    let dance = imported[1].id;
     let query = TrackQuery {
         playlist: Some(dance),
         ..Default::default()
@@ -963,6 +970,8 @@ fn imports_a_virtualdj_folder() {
         .map(|t| t.title)
         .collect();
     assert_eq!(titles, ["Two", "One"]);
+    assert_eq!(library.import_playlists(&playlists).unwrap().tracks, 0);
+    assert_eq!(library.folders().unwrap().len(), 1);
 
     // A folder that is not VirtualDJ's, and a file that is not a playlist.
     assert!(read_playlists(&music.0).is_err());
@@ -983,6 +992,40 @@ fn imports_a_selected_playlist_folder() {
     assert_eq!(playlists[0].name, "Events / Party");
     assert_eq!(playlists[1].name, "Set");
     assert_eq!(playlists[1].files, vec![folder.0.join("track.mp3")]);
+
+    let mut library = Library::open_in_memory().unwrap();
+    library.import_playlists(&playlists).unwrap();
+    let event_folder = library
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.name == "Events")
+        .unwrap();
+    let party = library
+        .playlists()
+        .unwrap()
+        .into_iter()
+        .find(|playlist| playlist.name == "Party")
+        .unwrap();
+    assert_eq!(party.folder, Some(event_folder.id));
+}
+
+#[test]
+fn importing_a_foldered_playlist_upgrades_an_old_flat_name() {
+    let mut library = Library::open_in_memory().unwrap();
+    let old = library.create_playlist("Albums / Bat Out of Hell").unwrap();
+    let imported = [djcraft_library::ImportedPlaylist {
+        name: "Albums / Bat Out of Hell".into(),
+        files: vec![],
+    }];
+    library.import_playlists(&imported).unwrap();
+    let playlists = library.playlists().unwrap();
+    assert_eq!(playlists.len(), 1);
+    assert_eq!(playlists[0].id, old.id);
+    assert_eq!(playlists[0].name, "Bat Out of Hell");
+    let folder = library.folders().unwrap().pop().unwrap();
+    assert_eq!(folder.name, "Albums");
+    assert_eq!(playlists[0].folder, Some(folder.id));
 }
 
 #[test]
@@ -1630,6 +1673,7 @@ fn batch_tag_changes_are_reviewed_applied_and_undone() {
         names,
         [
             "Daft Punk - One More Time (Original Mix).wav",
+            "faderCraft",
             "fisher - edited elsewhere.wav"
         ]
     );
@@ -1857,6 +1901,16 @@ fn playlists_have_folders_and_order() {
     // Folders hold playlists and other folders; deleting one keeps them.
     let gigs = library.create_folder("Gigs", None).unwrap();
     let summer = library.create_folder("Summer", Some(gigs.id)).unwrap();
+    let direct = library
+        .create_playlist_in_folder("  Album tracks  ", Some(summer.id))
+        .unwrap();
+    assert_eq!(direct.name, "Album tracks");
+    assert_eq!(direct.folder, Some(summer.id));
+    assert!(
+        library
+            .create_playlist_in_folder("  ", Some(summer.id))
+            .is_err()
+    );
     let set = library.create_playlist("Opening").unwrap();
     library.move_playlist(set.id, Some(summer.id)).unwrap();
     assert!(library.move_folder(gigs.id, Some(summer.id)).is_err());
@@ -1864,8 +1918,20 @@ fn playlists_have_folders_and_order() {
     library.delete_folder(summer.id).unwrap();
     let folders = library.folders().unwrap();
     assert_eq!(folders.len(), 1);
-    let opening = library.playlists().unwrap().pop().unwrap();
+    let opening = library
+        .playlists()
+        .unwrap()
+        .into_iter()
+        .find(|playlist| playlist.id == set.id)
+        .unwrap();
     assert_eq!(opening.folder, Some(gigs.id));
+    let direct = library
+        .playlists()
+        .unwrap()
+        .into_iter()
+        .find(|playlist| playlist.id == direct.id)
+        .unwrap();
+    assert_eq!(direct.folder, Some(gigs.id));
 
     // Tracks can be put in another order.
     library

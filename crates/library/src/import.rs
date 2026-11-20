@@ -383,17 +383,40 @@ impl Library {
                     None => summary.missing += 1,
                 }
             }
+            let (name, folder) = self.imported_playlist_destination(&imported.name)?;
             let existing: Option<i64> = self
                 .conn
                 .query_row(
-                    "SELECT id FROM playlists WHERE name = ?1",
-                    [&imported.name],
+                    "SELECT id FROM playlists WHERE name = ?1 AND folder_id IS ?2",
+                    params![name, folder],
                     |row| row.get(0),
                 )
                 .optional()?;
             let playlist = match existing {
                 Some(id) => id,
-                None => self.create_playlist(&imported.name)?.id,
+                None => {
+                    // Earlier imports flattened folder names into the playlist
+                    // name. Keep their entries when upgrading that layout.
+                    let legacy: Option<i64> = if folder.is_some() {
+                        self.conn
+                            .query_row(
+                                "SELECT id FROM playlists WHERE name = ?1 AND folder_id IS NULL",
+                                [&imported.name],
+                                |row| row.get(0),
+                            )
+                            .optional()?
+                    } else {
+                        None
+                    };
+                    match legacy {
+                        Some(id) => {
+                            self.rename_playlist(id, &name)?;
+                            self.move_playlist(id, folder)?;
+                            id
+                        }
+                        None => self.create_playlist_in_folder(&name, folder)?.id,
+                    }
+                }
             };
             // Imports are repeatable: keep intentional repeats in the source,
             // but do not append the same occurrences on every re-import.
@@ -417,6 +440,34 @@ impl Library {
             summary.playlists += 1;
         }
         Ok(summary)
+    }
+
+    /// Resolve imported "Folder / Playlist" names into real playlist folders.
+    fn imported_playlist_destination(&self, full_name: &str) -> Result<(String, Option<i64>)> {
+        let parts: Vec<_> = full_name
+            .split(" / ")
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect();
+        let Some(name) = parts.last() else {
+            return Err(Error::Import("a playlist needs a name".into()));
+        };
+        let mut parent = None;
+        for part in &parts[..parts.len() - 1] {
+            let existing: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT id FROM playlist_folders WHERE parent_id IS ?1 AND name = ?2",
+                    params![parent, part],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            parent = Some(match existing {
+                Some(id) => id,
+                None => self.create_folder(part, parent)?.id,
+            });
+        }
+        Ok(((*name).to_string(), parent))
     }
 
     /// The library track for a file, adding it if needed. A file inside one

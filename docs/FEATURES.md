@@ -258,6 +258,13 @@ Feature set modelled on Mixed In Key 10.
       One computer at a time, close and finish syncing before switching; no
       concurrent merge support. Registered tracks retain cue/preparation identity
       after relinking files from different music locations.
+- [~] One `faderCraft/tracks.sqlite` per explicitly added music folder owns
+      track hot cues, cue appearance, saved loops, preparation, manual beat-grid
+      anchors, current-set played flags and lifetime play counts using relative
+      paths and stable tokens. Manual section cues and notes also live there.
+      Existing global JSON is migrated on load and retained as a backup;
+      user notes UI and remaining track overrides still need folder-local
+      integration. Playlists stay in the main library.
 - [x] Reviewed recording date/year edits with undo; omitted dates preserve existing values (programmatic tag edits).
 - [x] Batch tag alignment with undo (writes the analysed BPM, key and energy
       into the tags of every track in the list; any batch of tag changes can
@@ -297,8 +304,13 @@ Feature set modelled on Mixed In Key 10.
 
 - [x] Track browser with virtualised table, sorting, column chooser, search
 - [~] Playlists and folders (fixed playlist order with repeat entries, folders
-      inside folders, rename, move, reorder by menu or drag and drop; sidebar
+      inside folders, create playlists directly inside folders, rename, move,
+      import nested playlist paths as real folders, reorder by menu or drag and drop; sidebar
       reordering pending). Former playlist sublists are flattened on upgrade.
+- [ ] Build album and compilation playlist folders only after identifying a
+      specific release and matching every track in its full track list to a
+      local recording; preserve release order without copying audio. Keep
+      incomplete or unverified releases as review candidates, not playlists.
 - [x] Crates and nested sub-crates in the Perform browser. Each crate contains
       a track at most once; its table can be sorted by any column.
 - [x] Smart playlists (rule-based) (title, artist, album, genre, BPM,
