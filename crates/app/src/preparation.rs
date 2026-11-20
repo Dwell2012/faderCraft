@@ -1,28 +1,31 @@
+use djcraft_library::folder_state::TrackJsonField;
 use djcraft_protocol::{PhraseLabel, PhraseMarker, TrackPreparation};
 use std::{collections::BTreeMap, path::Path};
 pub type Preparations = BTreeMap<String, TrackPreparation>;
 pub fn load(root: &Path) -> Preparations {
-    crate::track_identity::normalize(
+    crate::folder_store::load(
         root,
-        "track-preparation.json",
-        std::fs::read(root.join("track-preparation.json"))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Preparations>(&b).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|(_, p)| p.valid())
-            .collect(),
+        TrackJsonField::Preparation,
+        crate::track_identity::normalize(
+            root,
+            "track-preparation.json",
+            std::fs::read(root.join("track-preparation.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Preparations>(&b).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, p)| p.valid())
+                .collect(),
+        ),
     )
 }
 pub fn save(root: &Path, preparations: &Preparations) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let temporary = root.join("track-preparation.json.tmp");
-    std::fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(preparations).map_err(|e| e.to_string())?,
+    crate::folder_store::save(
+        root,
+        "track-preparation.json",
+        TrackJsonField::Preparation,
+        preparations,
     )
-    .map_err(|e| e.to_string())?;
-    std::fs::rename(temporary, root.join("track-preparation.json")).map_err(|e| e.to_string())
 }
 pub fn suggest(
     track: &djcraft_engine::Track,

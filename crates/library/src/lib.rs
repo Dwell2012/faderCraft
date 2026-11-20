@@ -8,6 +8,7 @@ pub mod artwork;
 mod camelot;
 mod export;
 mod flow;
+pub mod folder_state;
 mod history;
 mod import;
 pub mod lookup;
@@ -882,6 +883,7 @@ impl Library {
         self.replace_cues(id, &cues)?;
         self.conn
             .execute("UPDATE tracks SET cues_manual = 1 WHERE id = ?1", [id])?;
+        self.save_folder_manual_cues(id)?;
         Ok(())
     }
 
@@ -989,6 +991,7 @@ impl Library {
                 "first beat must fall within the track".into(),
             ));
         }
+        self.save_folder_beat_grid(id, Some((first_beat_seconds, downbeat)))?;
         Ok(())
     }
 
@@ -996,6 +999,7 @@ impl Library {
         self.conn.execute(
             "UPDATE tracks SET tempo_first_beat_manual=NULL, tempo_downbeat_manual=NULL WHERE id=?1", [id],
         )?;
+        self.save_folder_beat_grid(id, None)?;
         Ok(())
     }
 
@@ -1008,19 +1012,28 @@ impl Library {
     }
 
     pub fn create_playlist(&self, name: &str) -> Result<Playlist> {
+        self.create_playlist_in_folder(name, None)
+    }
+
+    /// Creates a playlist directly in a folder, or at the top level.
+    pub fn create_playlist_in_folder(&self, name: &str, folder: Option<i64>) -> Result<Playlist> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Library("a playlist needs a name".into()));
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         self.conn.execute(
-            "INSERT INTO playlists (name, created_at) VALUES (?1, ?2)",
-            params![name, now],
+            "INSERT INTO playlists (name, created_at, folder_id) VALUES (?1, ?2, ?3)",
+            params![name, now, folder],
         )?;
         Ok(Playlist {
             id: self.conn.last_insert_rowid(),
             name: name.to_string(),
             track_count: 0,
-            folder: None,
+            folder,
             parent: None,
             rules: None,
         })
@@ -1251,6 +1264,7 @@ impl Library {
     /// folder is not read until [`Library::scan`] is called.
     pub fn add_folder(&self, folder: &Path) -> Result<Source> {
         let folder = canonical(folder)?;
+        folder_state::FolderState::open(&folder)?;
         let location = folder.to_string_lossy().into_owned();
         let name = folder
             .file_name()
@@ -1260,11 +1274,13 @@ impl Library {
             "INSERT OR IGNORE INTO sources (kind, location, name) VALUES ('folder', ?1, ?2)",
             params![location, name],
         )?;
-        Ok(self.conn.query_row(
+        let source = self.conn.query_row(
             "SELECT id, name, location, kind FROM sources WHERE kind = 'folder' AND location = ?1",
             [&location],
             source_from_row,
-        )?)
+        )?;
+        self.sync_folder_state(source.id)?;
+        Ok(source)
     }
 
     pub fn source(&self, id: i64) -> Result<Option<Source>> {

@@ -234,7 +234,11 @@ pub fn initialize() -> io::Result<()> {
     };
     SESSION
         .set(session)
-        .map_err(|_| io::Error::other("Storage already initialized"))
+        .map_err(|_| io::Error::other("Storage already initialized"))?;
+    Library::open(&database_path())
+        .and_then(|library| library.seed_unmigrated_folder_states())
+        .map_err(io::Error::other)?;
+    Ok(())
 }
 
 fn publish(session: &Session) -> io::Result<()> {

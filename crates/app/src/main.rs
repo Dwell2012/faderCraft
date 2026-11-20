@@ -2,6 +2,7 @@ mod analysis;
 mod attack_cache;
 mod controllers;
 mod flow_view;
+mod folder_store;
 mod library_view;
 mod lookup_view;
 mod loop_store;

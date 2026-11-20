@@ -1,26 +1,24 @@
+use djcraft_library::folder_state::TrackJsonField;
 use djcraft_protocol::{HOT_CUES, HotCue};
 use std::collections::BTreeMap;
 use std::path::Path;
 pub type CueStore = BTreeMap<String, [Option<HotCue>; HOT_CUES]>;
 pub fn load(root: &Path) -> CueStore {
-    crate::track_identity::normalize(
+    crate::folder_store::load(
         root,
-        "hot-cues.json",
-        std::fs::read(root.join("hot-cues.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default(),
+        TrackJsonField::HotCues,
+        crate::track_identity::normalize(
+            root,
+            "hot-cues.json",
+            std::fs::read(root.join("hot-cues.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_default(),
+        ),
     )
 }
 pub fn save(root: &Path, cues: &CueStore) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let path = root.join("hot-cues.json.tmp");
-    std::fs::write(
-        &path,
-        serde_json::to_vec_pretty(cues).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
-    std::fs::rename(path, root.join("hot-cues.json")).map_err(|e| e.to_string())
+    crate::folder_store::save(root, "hot-cues.json", TrackJsonField::HotCues, cues)
 }
 #[cfg(test)]
 mod tests {
@@ -51,24 +49,26 @@ mod tests {
 
 pub type AppearanceStore = BTreeMap<String, [djcraft_protocol::CueAppearance; HOT_CUES]>;
 pub fn load_appearances(root: &Path) -> AppearanceStore {
-    crate::track_identity::normalize(
+    crate::folder_store::load(
         root,
-        "cue-appearance.json",
-        std::fs::read(root.join("cue-appearance.json"))
-            .ok()
-            .and_then(|v| serde_json::from_slice(&v).ok())
-            .unwrap_or_default(),
+        TrackJsonField::CueAppearance,
+        crate::track_identity::normalize(
+            root,
+            "cue-appearance.json",
+            std::fs::read(root.join("cue-appearance.json"))
+                .ok()
+                .and_then(|v| serde_json::from_slice(&v).ok())
+                .unwrap_or_default(),
+        ),
     )
 }
 pub fn save_appearances(root: &Path, styles: &AppearanceStore) -> Result<(), String> {
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let tmp = root.join("cue-appearance.json.tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(styles).map_err(|e| e.to_string())?,
+    crate::folder_store::save(
+        root,
+        "cue-appearance.json",
+        TrackJsonField::CueAppearance,
+        styles,
     )
-    .map_err(|e| e.to_string())?;
-    std::fs::rename(tmp, root.join("cue-appearance.json")).map_err(|e| e.to_string())
 }
 /// Distinct shades of lime/green for A and sapphire/cyan for B, across 16 slots.
 pub fn cue_colour(deck: usize, slot: usize, style: &djcraft_protocol::CueAppearance) -> u32 {

@@ -299,6 +299,7 @@ fn controller_row(current: Option<usize>, len: usize, steps: i32) -> Option<usiz
 /// What the library asks the rest of the app to do.
 pub enum LibraryEvent {
     NewSet,
+    FolderStateLoaded,
     SeparateStems {
         path: PathBuf,
     },
@@ -1463,11 +1464,12 @@ impl LibraryView {
                 self.groups = library.groups()?;
                 self.folders = library.folders()?;
             }
-            let played = library
+            let mut played: HashSet<PathBuf> = library
                 .play_history(library.current_set()?)?
                 .into_iter()
                 .map(|entry| entry.path)
                 .collect();
+            played.extend(library.folder_played_paths()?);
             Ok::<_, djcraft_library::Error>((
                 library.sources()?,
                 self.source_folders_dirty
@@ -3660,6 +3662,9 @@ impl LibraryView {
                 this.source_folders_dirty = true;
                 this.reload(cx);
                 cx.emit(LibraryEvent::Changed);
+                if result.is_ok() {
+                    cx.emit(LibraryEvent::FolderStateLoaded);
+                }
                 if this.running_scans == 0 {
                     this.analyse(cx);
                 }
@@ -4783,6 +4788,29 @@ impl LibraryView {
                 };
                 let name = name.clone();
                 menu = menu
+                    .item(act(
+                        "New playlist inside…",
+                        Box::new(move |this, window, cx| {
+                            this.ask_name(
+                                "New playlist",
+                                "",
+                                "Create",
+                                move |this, name, cx| {
+                                    this.collapsed.remove(&id);
+                                    let Some(library) = &this.library else {
+                                        return;
+                                    };
+                                    match library.create_playlist_in_folder(&name, Some(id)) {
+                                        Ok(playlist) => this.playlist = Some(playlist.id),
+                                        Err(error) => this.error = Some(error.to_string().into()),
+                                    }
+                                    this.reload(cx);
+                                },
+                                window,
+                                cx,
+                            )
+                        }),
+                    ))
                     .item(act(
                         "New folder inside…",
                         Box::new(move |this, window, cx| {

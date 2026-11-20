@@ -152,6 +152,7 @@ impl FlowView {
             LibraryEvent::Load { id, .. } => this.append_track(*id, cx),
             LibraryEvent::Selected { id } => this.play_track(*id, cx),
             LibraryEvent::SeparateStems { .. }
+            | LibraryEvent::FolderStateLoaded
             | LibraryEvent::NewSet
             | LibraryEvent::Changed
             | LibraryEvent::Columns(_)

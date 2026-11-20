@@ -408,6 +408,9 @@ impl Library {
             }
         }
         transaction.commit()?;
+        if summary.added != 0 || summary.relinked != 0 {
+            self.sync_folder_state(source_id)?;
+        }
         Ok(summary)
     }
 }
@@ -442,6 +445,13 @@ pub(crate) fn collect_audio_files(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(crate::folder_state::DIRECTORY)
+            {
                 continue;
             }
             let Ok(metadata) = path.metadata() else {

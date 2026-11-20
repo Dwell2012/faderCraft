@@ -120,7 +120,13 @@ fn could_be_track(root: &Path, path: &Path) -> bool {
         Ok(relative) => relative.to_path_buf(),
         Err(_) => path.file_name().map(PathBuf::from).unwrap_or_default(),
     };
-    if hidden(&within) {
+    if hidden(&within)
+        || within.components().any(|part| {
+            part.as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(crate::folder_state::DIRECTORY)
+        })
+    {
         return false;
     }
     // A folder that came or went takes its tracks with it, and a path that
@@ -187,6 +193,10 @@ mod tests {
         assert!(!concerns_library(
             root,
             &event(created, "/music/.trash/one.mp3")
+        ));
+        assert!(!concerns_library(
+            root,
+            &event(created, "/music/faderCraft/tracks.sqlite")
         ));
         assert!(!concerns_library(
             root,

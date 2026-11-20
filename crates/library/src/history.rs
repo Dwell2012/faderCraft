@@ -20,6 +20,7 @@ impl Library {
     pub fn new_set(&self) -> Result<i64> {
         self.conn
             .execute("INSERT INTO play_sets DEFAULT VALUES", [])?;
+        self.clear_folder_played_flags()?;
         self.current_set()
     }
 
@@ -29,6 +30,7 @@ impl Library {
             "INSERT OR IGNORE INTO play_history(set_id, path, title) VALUES ((SELECT MAX(id) FROM play_sets), ?1, ?2)",
             params![path.to_string_lossy(), title],
         )?;
+        self.record_folder_play(path)?;
         Ok(())
     }
 

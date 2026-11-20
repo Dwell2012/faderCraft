@@ -524,6 +524,15 @@ impl Shell {
             view.set_watching(settings.watch_folders);
         });
         cx.subscribe(&library, |this, _, event: &LibraryEvent, cx| match event {
+            LibraryEvent::FolderStateLoaded => {
+                let root = data_dir();
+                this.pad_cues = crate::pad_store::load(&root);
+                this.cue_appearances = crate::pad_store::load_appearances(&root);
+                this.saved_loops = crate::loop_store::load(&root);
+                this.preparations = crate::preparation::load(&root);
+                this.refresh_grids(cx);
+                cx.notify();
+            }
             LibraryEvent::NewSet => {
                 this.play_history = Default::default();
                 this.browser.update(cx, |view, cx| view.refresh(cx));
@@ -549,6 +558,7 @@ impl Shell {
         .detach();
         let browser = cx.new(|cx| LibraryView::new(true, false, window, cx));
         cx.subscribe(&browser, |this, _, event: &LibraryEvent, cx| match event {
+            LibraryEvent::FolderStateLoaded => {}
             LibraryEvent::NewSet => {
                 this.play_history = Default::default();
                 cx.notify();
