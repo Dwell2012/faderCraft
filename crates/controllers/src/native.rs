@@ -8,12 +8,38 @@ use std::sync::{
     mpsc::{self, Receiver},
 };
 
+/// ALSA appends the sequencer "client:port" address to port names
+/// (`DDJ-1000:DDJ-1000 MIDI 1 36:0`). The client number changes when a device is
+/// replugged, so it is dropped to give profiles a stable name. Names that do not
+/// end in ` <digits>:<digits>` (Windows, macOS) pass through unchanged.
+pub(crate) fn stable_port_name(name: &str) -> &str {
+    match name.rsplit_once(' ') {
+        Some((base, tail))
+            if tail
+                .split_once(':')
+                .is_some_and(|(c, p)| is_number(c) && is_number(p)) =>
+        {
+            base
+        }
+        _ => name,
+    }
+}
+
+fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
 pub fn input_ports() -> Result<Vec<String>, String> {
     let input = MidiInput::new("faderCraft discovery").map_err(|e| e.to_string())?;
     input
         .ports()
         .iter()
-        .map(|p| input.port_name(p).map_err(|e| e.to_string()))
+        .map(|p| {
+            input
+                .port_name(p)
+                .map(|n| stable_port_name(&n).to_owned())
+                .map_err(|e| e.to_string())
+        })
         .collect()
 }
 
@@ -41,7 +67,11 @@ impl Output {
         let ports: Vec<_> = output
             .ports()
             .into_iter()
-            .filter(|p| output.port_name(p).is_ok_and(|n| n == name))
+            .filter(|p| {
+                output
+                    .port_name(p)
+                    .is_ok_and(|n| stable_port_name(&n) == name)
+            })
             .collect();
         if ports.len() != 1 {
             return Err(format!(
@@ -65,7 +95,11 @@ impl Input {
         let ports: Vec<_> = input
             .ports()
             .into_iter()
-            .filter(|p| input.port_name(p).is_ok_and(|n| n == name))
+            .filter(|p| {
+                input
+                    .port_name(p)
+                    .is_ok_and(|n| stable_port_name(&n) == name)
+            })
             .collect();
         if ports.len() != 1 {
             return Err(format!(
@@ -132,6 +166,17 @@ fn packet_time(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn alsa_client_address_is_dropped_from_port_names() {
+        assert_eq!(
+            stable_port_name("DDJ-1000:DDJ-1000 MIDI 1 36:0"),
+            "DDJ-1000:DDJ-1000 MIDI 1"
+        );
+        assert_eq!(stable_port_name("DDJ-GRV6"), "DDJ-GRV6");
+        assert_eq!(stable_port_name("MIDIIN2 (DDJ-1000)"), "MIDIIN2 (DDJ-1000)");
+        assert_eq!(stable_port_name("Port 1 a:0"), "Port 1 a:0");
+        assert_eq!(stable_port_name(""), "");
+    }
     #[test]
     fn driver_timestamps_survive_callback_batches_and_clock_reset() {
         let now = std::time::Instant::now();

@@ -1604,6 +1604,12 @@ impl Shell {
                 .map(|grid| grid.map(|g| g.bpm))
                 .collect::<Vec<_>>(),
         );
+        #[cfg(target_os = "linux")]
+        controllers.set_jog_screen_tracks(std::array::from_fn(|deck| {
+            self.engine
+                .as_ref()
+                .and_then(|engine| engine.track(deck).cloned())
+        }));
         for action in controllers.take_releases() {
             self.controller_action(action, cx);
         }

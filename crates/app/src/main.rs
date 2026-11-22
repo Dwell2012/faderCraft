@@ -11,6 +11,8 @@ mod organise_view;
 mod pad_store;
 mod performance_settings;
 mod preparation;
+#[cfg(target_os = "linux")]
+mod screen_wave;
 mod settings;
 mod settings_view;
 mod shell;

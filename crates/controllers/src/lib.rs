@@ -9,6 +9,9 @@ use std::time::Instant;
 mod jog;
 pub use jog::JogConfig;
 
+pub mod ddj1000_link;
+#[cfg(all(feature = "native", target_os = "linux"))]
+pub mod ddj1000_screens;
 #[cfg(feature = "native")]
 pub mod native;
 
@@ -476,6 +479,16 @@ pub enum BeatFxControl {
     Toggle,
     Depth,
     Step { forward: bool },
+}
+
+/// Pioneer's MIDI lists specify ON = 0x7F for their LEDs; other bundled
+/// controllers use a dimmer default.
+fn led_on_velocity(port: &str) -> u8 {
+    if port == "DDJ-GRV6" || port.starts_with("DDJ-1000") {
+        0x7f
+    } else {
+        100
+    }
 }
 
 // Beat choices supported by the engine, paired with the GRV6 indicator values.
@@ -1096,7 +1109,7 @@ impl Bridge {
                             .get(slot)
                             .is_some_and(|fx| fx.active_in_slot(slot)),
                     });
-                let on_velocity = if port == "DDJ-GRV6" { 0x7f } else { 100 };
+                let on_velocity = led_on_velocity(port);
                 Some([0x90 | channel, number, if on { on_velocity } else { 0 }])
             })
             .collect();
@@ -1176,7 +1189,7 @@ impl Bridge {
                     .jogs
                     .get(&mapping.id)
                     .map_or(config.scratch_enabled, |j| j.enabled());
-                let on_velocity = if port == "DDJ-GRV6" { 0x7f } else { 100 };
+                let on_velocity = led_on_velocity(port);
                 Some([
                     0x90 | channel,
                     number,

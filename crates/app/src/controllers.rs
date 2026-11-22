@@ -253,6 +253,13 @@ pub struct Controllers {
     state_leds: std::collections::BTreeMap<String, Vec<[u8; 3]>>,
     started: std::time::Instant,
     outputs: std::collections::BTreeMap<String, (Output, Vec<[u8; 3]>)>,
+    tempo_bpms: Vec<Option<f64>>,
+    #[cfg(target_os = "linux")]
+    screens: Option<djcraft_controllers::ddj1000_screens::ScreenLink>,
+    /// The track each jog-screen waveform was computed for, and whether it was
+    /// complete when sampled.
+    #[cfg(target_os = "linux")]
+    screen_waves: [Option<(std::sync::Arc<djcraft_engine::Track>, bool)>; 4],
 }
 
 fn route_fx1_to_colour(profile: &mut Profile) {
@@ -334,7 +341,76 @@ impl Controllers {
         self.bridge.set_vinyl_mode(deck, enabled)
     }
     pub fn set_tempo_bpms(&mut self, bpms: &[Option<f64>]) {
+        self.tempo_bpms.clear();
+        self.tempo_bpms.extend_from_slice(bpms);
         self.bridge.set_tempo_bpms(bpms);
+    }
+
+    /// Keep each jog screen's overview waveform in step with the deck's track.
+    /// Sampling waits until a track has finished decoding.
+    #[cfg(target_os = "linux")]
+    pub fn set_jog_screen_tracks(
+        &mut self,
+        tracks: [Option<std::sync::Arc<djcraft_engine::Track>>; 4],
+    ) {
+        let Some(link) = &self.screens else {
+            self.screen_waves = Default::default();
+            return;
+        };
+        for (deck, track) in tracks.into_iter().enumerate() {
+            let complete = track.as_ref().is_some_and(|t| t.is_complete());
+            let current = &self.screen_waves[deck];
+            let unchanged = match (&track, current) {
+                (None, None) => true,
+                (Some(new), Some((old, done))) => {
+                    std::sync::Arc::ptr_eq(new, old) && (*done || !complete)
+                }
+                _ => false,
+            };
+            if unchanged {
+                continue;
+            }
+            link.set_waveform(deck, track.as_deref().and_then(crate::screen_wave::columns));
+            self.screen_waves[deck] = track.map(|t| (t, complete));
+        }
+    }
+
+    /// Feed the DDJ-1000 jog screens while that controller is connected and
+    /// allowed; stop the link when it goes away.
+    #[cfg(target_os = "linux")]
+    fn update_jog_screens(&mut self, state: &SessionState) {
+        use djcraft_controllers::{ddj1000_link::ScreenDeck, ddj1000_screens};
+        let present = self
+            .inputs
+            .iter()
+            .any(|(name, _)| name == ddj1000_screens::PORT);
+        if !present {
+            self.screens = None;
+            return;
+        }
+        let link = self
+            .screens
+            .get_or_insert_with(ddj1000_screens::ScreenLink::start);
+        let mut decks = [ScreenDeck::default(); 4];
+        for (index, screen) in decks.iter_mut().enumerate() {
+            let Some(deck) = state.decks.get(index) else {
+                continue;
+            };
+            let Some(track) = deck.track.as_ref().filter(|_| !deck.loading) else {
+                continue;
+            };
+            let base_bpm = self.tempo_bpms.get(index).copied().flatten().unwrap_or(0.);
+            *screen = ScreenDeck {
+                loaded: true,
+                playing: deck.playing,
+                leader: false,
+                position_ms: (deck.position_seconds.max(0.) * 1000.) as u32,
+                duration_ms: (track.duration_seconds.max(0.) * 1000.) as u32,
+                bpm: base_bpm * deck.tempo,
+                tempo_percent: (deck.tempo - 1.) * 100.,
+            };
+        }
+        link.update(decks);
     }
     pub fn load(
         settings: &crate::settings::Settings,
@@ -350,6 +426,7 @@ impl Controllers {
             vec![
                 profile.clone(),
                 profile_for_settings("@grv6", settings, scratch_modes)?,
+                profile_for_settings("@ddj1000", settings, scratch_modes)?,
             ]
         } else {
             Vec::new()
@@ -373,6 +450,11 @@ impl Controllers {
             browser_folders: false,
             state_leds: Default::default(),
             started: std::time::Instant::now(),
+            tempo_bpms: Vec::new(),
+            #[cfg(target_os = "linux")]
+            screens: None,
+            #[cfg(target_os = "linux")]
+            screen_waves: Default::default(),
         };
         controllers.rescan();
         Ok(Some(controllers))
@@ -695,6 +777,8 @@ impl Controllers {
     ) -> Vec<Action> {
         let actions = self.bridge.tick(state);
         self.monitor = state.monitor;
+        #[cfg(target_os = "linux")]
+        self.update_jog_screens(state);
         let ports: Vec<_> = self.outputs.keys().cloned().collect();
         for port in ports {
             self.state_leds.insert(
@@ -947,6 +1031,9 @@ pub fn read_mapping(selection: &str) -> Result<Profile, String> {
         "@grv6" => {
             return Profile::from_json(include_str!("../../../profiles/alphatheta-ddj-grv6.json"));
         }
+        "@ddj1000" => {
+            return Profile::from_json(include_str!("../../../profiles/pioneer-ddj-1000.json"));
+        }
         "" => std::env::var_os("DJCRAFT_CONTROLLER_MAP")
             .map(std::path::PathBuf::from)
             .or_else(|| installed.exists().then_some(installed)),
@@ -977,6 +1064,7 @@ pub fn mapping_choices() -> Vec<(String, String)> {
         (String::new(), "Automatic (detected controller)".into()),
         ("@bundled".into(), "Numark MixTrack Pro II (bundled)".into()),
         ("@grv6".into(), "AlphaTheta DDJ-GRV6 (starter)".into()),
+        ("@ddj1000".into(), "Pioneer DDJ-1000 (core starter)".into()),
         ("@disabled".into(), "Disabled".into()),
     ];
     if let Ok(entries) = std::fs::read_dir(crate::storage::machine_dir().join("controllers")) {
