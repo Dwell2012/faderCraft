@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use id3::frame::ExtendedText;
+use id3::{TagLike as Id3TagLike, Version as Id3Version};
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{Accessor, ItemKey, Tag, TagExt};
@@ -53,6 +55,13 @@ pub struct TrackEdit {
     pub date: Option<String>,
     pub title: String,
     pub artist: String,
+    /// Release-level credit, such as "Various Artists" for a compilation.
+    /// `None` preserves the file's existing value.
+    #[serde(default)]
+    pub album_artist: Option<String>,
+    /// Additional credited performers. `None` preserves the existing value.
+    #[serde(default)]
+    pub contributors: Option<String>,
     pub album: String,
     pub genre: String,
     pub bpm: Option<f64>,
@@ -85,7 +94,17 @@ pub fn read_artwork(path: &Path) -> Option<Artwork> {
 /// What a file's tags say, as they say it: an empty title stays empty
 /// rather than taking the file's name.
 pub(crate) fn read_file_tags(path: &Path) -> Result<TrackEdit> {
-    let file = lofty::read_from_path(path).map_err(|e| Error::Tags(e.to_string()))?;
+    let file = match lofty::read_from_path(path) {
+        Ok(file) => file,
+        Err(error)
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp3")) =>
+        {
+            return read_id3_file_tags(path).map_err(|_| Error::Tags(error.to_string()));
+        }
+        Err(error) => return Err(Error::Tags(error.to_string())),
+    };
     let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) else {
         return Ok(TrackEdit {
             date: Some(String::new()),
@@ -102,6 +121,8 @@ pub(crate) fn read_file_tags(path: &Path) -> Result<TrackEdit> {
         date: Some(item(ItemKey::RecordingDate).unwrap_or_default()),
         title: text(tag.title()),
         artist: text(tag.artist()),
+        album_artist: Some(item(ItemKey::AlbumArtist).unwrap_or_default()),
+        contributors: Some(item(ItemKey::TrackArtists).unwrap_or_default()),
         album: text(tag.album()),
         genre: text(tag.genre()),
         bpm: item(ItemKey::Bpm)
@@ -122,7 +143,17 @@ pub fn read_tagged_bpm(path: &Path) -> Option<f64> {
 /// Writes details into a file's own tags, leaving everything else in the
 /// tag (artwork, other fields) as it was.
 pub(crate) fn write_tags(path: &Path, edit: &TrackEdit) -> Result<()> {
-    let file = lofty::read_from_path(path).map_err(|e| Error::Tags(e.to_string()))?;
+    let file = match lofty::read_from_path(path) {
+        Ok(file) => file,
+        Err(error)
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp3")) =>
+        {
+            return write_id3_tags(path, edit).map_err(|_| Error::Tags(error.to_string()));
+        }
+        Err(error) => return Err(Error::Tags(error.to_string())),
+    };
     let mut tag = file
         .primary_tag()
         .or_else(|| file.first_tag())
@@ -147,6 +178,18 @@ pub(crate) fn write_tags(path: &Path, edit: &TrackEdit) -> Result<()> {
     match text(&edit.artist) {
         Some(artist) => tag.set_artist(artist),
         None => tag.remove_artist(),
+    }
+    if let Some(album_artist) = &edit.album_artist {
+        tag.remove_key(ItemKey::AlbumArtist);
+        if let Some(album_artist) = text(album_artist) {
+            tag.insert_text(ItemKey::AlbumArtist, album_artist);
+        }
+    }
+    if let Some(contributors) = &edit.contributors {
+        tag.remove_key(ItemKey::TrackArtists);
+        if let Some(contributors) = text(contributors) {
+            tag.insert_text(ItemKey::TrackArtists, contributors);
+        }
     }
     match text(&edit.album) {
         Some(album) => tag.set_album(album),
@@ -182,7 +225,108 @@ pub(crate) fn write_tags(path: &Path, edit: &TrackEdit) -> Result<()> {
             tag.insert_text(ItemKey::ContentGroup, grouping);
         }
     }
-    tag.save_to_path(path, WriteOptions::default())
+    match tag.save_to_path(path, WriteOptions::default()) {
+        Ok(()) => Ok(()),
+        Err(error)
+            if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mp3")) =>
+        {
+            write_id3_tags(path, edit).map_err(|_| Error::Tags(error.to_string()))
+        }
+        Err(error) => Err(Error::Tags(error.to_string())),
+    }
+}
+
+fn read_id3_file_tags(path: &Path) -> Result<TrackEdit> {
+    let tag = id3::Tag::read_from_path(path).map_err(|e| Error::Tags(e.to_string()))?;
+    let item = |key: &str| {
+        tag.get(key)
+            .and_then(|frame| frame.content().text())
+            .map(str::to_string)
+    };
+    let contributors = tag
+        .extended_texts()
+        .find(|text| text.description.eq_ignore_ascii_case("ARTISTS"))
+        .map(|text| text.value.clone())
+        .unwrap_or_default();
+    Ok(TrackEdit {
+        date: Some(item("TDRC").or_else(|| item("TYER")).unwrap_or_default()),
+        title: tag.title().unwrap_or_default().to_string(),
+        artist: tag.artist().unwrap_or_default().to_string(),
+        album_artist: Some(tag.album_artist().unwrap_or_default().to_string()),
+        contributors: Some(contributors),
+        album: tag.album().unwrap_or_default().to_string(),
+        genre: tag.genre().unwrap_or_default().to_string(),
+        bpm: item("TBPM").and_then(|bpm| bpm.parse().ok()),
+        key: item("TKEY").filter(|key| !key.is_empty()),
+        comment: Some(
+            tag.comments()
+                .next()
+                .map(|comment| comment.text.clone())
+                .unwrap_or_default(),
+        ),
+        grouping: Some(item("TIT1").unwrap_or_default()),
+    })
+}
+
+fn write_id3_tags(path: &Path, edit: &TrackEdit) -> Result<()> {
+    let mut tag = id3::Tag::read_from_path(path).map_err(|e| Error::Tags(e.to_string()))?;
+    let version = match tag.version() {
+        Id3Version::Id3v22 => Id3Version::Id3v23,
+        version => version,
+    };
+    let set = |tag: &mut id3::Tag, key: &str, value: &str| {
+        if value.trim().is_empty() {
+            tag.remove(key);
+        } else {
+            tag.set_text(key, value.trim());
+        }
+    };
+    set(&mut tag, "TIT2", &edit.title);
+    set(&mut tag, "TPE1", &edit.artist);
+    set(&mut tag, "TALB", &edit.album);
+    set(&mut tag, "TCON", &edit.genre);
+    if let Some(album_artist) = &edit.album_artist {
+        set(&mut tag, "TPE2", album_artist);
+    }
+    if let Some(date) = &edit.date {
+        tag.remove("TYER");
+        set(&mut tag, "TDRC", date);
+    }
+    if let Some(bpm) = edit.bpm {
+        set(&mut tag, "TBPM", &format!("{bpm:.2}"));
+    } else {
+        tag.remove("TBPM");
+    }
+    if let Some(key) = &edit.key {
+        set(&mut tag, "TKEY", key);
+    } else {
+        tag.remove("TKEY");
+    }
+    if let Some(grouping) = &edit.grouping {
+        set(&mut tag, "TIT1", grouping);
+    }
+    if let Some(contributors) = &edit.contributors {
+        tag.remove_extended_text(Some("ARTISTS"), None);
+        if !contributors.trim().is_empty() {
+            tag.add_frame(ExtendedText {
+                description: "ARTISTS".into(),
+                value: contributors.trim().into(),
+            });
+        }
+    }
+    if let Some(comment) = &edit.comment {
+        tag.remove_comment(None, None);
+        if !comment.trim().is_empty() {
+            tag.add_frame(id3::frame::Comment {
+                lang: "eng".into(),
+                description: String::new(),
+                text: comment.trim().into(),
+            });
+        }
+    }
+    tag.write_to_path(path, version)
         .map_err(|e| Error::Tags(e.to_string()))
 }
 
@@ -212,7 +356,8 @@ pub(crate) fn store_track(
          ON CONFLICT (source_id, locator) DO UPDATE SET
              title = excluded.title, artist = excluded.artist,
              album = excluded.album, genre = excluded.genre,
-             duration = excluded.duration, bpm = excluded.bpm, key = excluded.key,
+             duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE tracks.duration END,
+             bpm = excluded.bpm, key = excluded.key,
              file_size = excluded.file_size, modified_at = excluded.modified_at,
              year = excluded.year, year_checked = 1, missing = 0,
              tempo_version = NULL",
@@ -521,6 +666,22 @@ fn read_tags(path: &Path) -> Tags {
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty());
         }
+    } else if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mp3"))
+        && let Ok(edit) = read_id3_file_tags(path)
+    {
+        tags.title = edit.title;
+        tags.artist = edit.artist;
+        tags.album = edit.album;
+        tags.genre = edit.genre;
+        tags.bpm = edit.bpm;
+        tags.key = edit.key;
+        tags.year = edit
+            .date
+            .as_deref()
+            .and_then(|date| date.get(..4))
+            .and_then(|year| year.parse().ok());
     }
     if tags.title.is_empty() {
         tags.title = path

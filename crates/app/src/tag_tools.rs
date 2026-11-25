@@ -1,13 +1,14 @@
 //! Dialogs for changing tags: the review shown before any file is written,
 //! and the small forms that set up find and replace and renaming.
 
-use djcraft_library::{Cleanup, PlannedChange, TagField};
+use djcraft_library::{BatchTagEdit, Cleanup, PlannedChange, TagField};
 use gpui_kit::component::{
     ActiveTheme, Disableable,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 pub enum ReviewEvent {
@@ -158,7 +159,112 @@ pub enum FormEvent {
     Replace(Cleanup),
     /// Plan renaming with this template and show the review.
     Rename(String),
+    BatchEdit(BatchTagEdit),
     Cancel,
+}
+
+/// Edit shared values for all tracks currently listed in the Library tab.
+pub struct BatchEditForm {
+    inputs: Vec<Entity<InputState>>,
+    only_blank: bool,
+    invalid_bpm: bool,
+}
+
+impl BatchEditForm {
+    const LABELS: [&'static str; 9] = [
+        "Title",
+        "Artist",
+        "Album artist",
+        "Contributing artists",
+        "Album",
+        "Year",
+        "Genre",
+        "BPM",
+        "Key",
+    ];
+
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let inputs = Self::LABELS
+            .iter()
+            .map(|label| cx.new(|cx| InputState::new(window, cx).placeholder(*label)))
+            .collect();
+        Self {
+            inputs,
+            only_blank: true,
+            invalid_bpm: false,
+        }
+    }
+
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        let values: Vec<Option<String>> = self
+            .inputs
+            .iter()
+            .map(|input| {
+                let value = input.read(cx).value().trim().to_string();
+                (!value.is_empty()).then_some(value)
+            })
+            .collect();
+        let bpm = match values[7].as_deref() {
+            Some(value) => match value.parse::<f64>() {
+                Ok(bpm) if bpm.is_finite() && bpm > 0.0 => Some(bpm),
+                _ => {
+                    self.invalid_bpm = true;
+                    cx.notify();
+                    return;
+                }
+            },
+            None => None,
+        };
+        if values.iter().all(Option::is_none) {
+            return;
+        }
+        self.invalid_bpm = false;
+        cx.emit(FormEvent::BatchEdit(BatchTagEdit {
+            title: values[0].clone(),
+            artist: values[1].clone(),
+            album_artist: values[2].clone(),
+            contributors: values[3].clone(),
+            album: values[4].clone(),
+            date: values[5].clone(),
+            genre: values[6].clone(),
+            bpm,
+            key: values[8].clone(),
+            only_blank: self.only_blank,
+        }));
+    }
+}
+
+impl EventEmitter<FormEvent> for BatchEditForm {}
+impl FormSubmit for BatchEditForm {
+    fn submit_form(&mut self, cx: &mut Context<Self>) {
+        self.submit(cx);
+    }
+}
+impl Render for BatchEditForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let ready = self
+            .inputs
+            .iter()
+            .any(|input| !input.read(cx).value().trim().is_empty());
+        div().flex().flex_col().gap_3()
+            .child(div().text_sm().text_color(muted).child(
+                "Set any fields shared by the tracks in the current list. Leave a field empty to keep each track's value. Review every change before writing."
+            ))
+            .child(div().id("batch-tag-fields").flex().flex_col().gap_2().max_h(px(400.)).overflow_y_scroll()
+                .children(self.inputs.iter().enumerate().map(|(index, input)| {
+                    div().flex().flex_col().gap_1()
+                        .child(div().text_xs().text_color(muted).child(Self::LABELS[index]))
+                        .child(Input::new(input))
+                })))
+            .child(Checkbox::new("batch-only-blank").label("Fill empty tags only")
+                .checked(self.only_blank)
+                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                    this.only_blank = *checked; cx.notify();
+                })))
+            .when(self.invalid_bpm, |view| view.child(div().text_sm().child("BPM must be a positive number.")))
+            .child(form_buttons("batch-edit", "Preview changes", ready, cx))
+    }
 }
 
 /// The form for find and replace.

@@ -45,6 +45,16 @@ impl PlannedChange {
         ]
         .into_iter()
         .collect();
+        if a.album_artist.is_some() {
+            differences.push(("Album artist", opt(&b.album_artist), opt(&a.album_artist)));
+        }
+        if a.contributors.is_some() {
+            differences.push((
+                "Contributing artists",
+                opt(&b.contributors),
+                opt(&a.contributors),
+            ));
+        }
         if a.comment.is_some() {
             differences.push(("Comment", opt(&b.comment), opt(&a.comment)));
         }
@@ -157,6 +167,21 @@ pub struct AlignOptions {
     pub energy: Placement,
 }
 
+/// Values to apply to every listed track. Unset fields are left alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BatchTagEdit {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album_artist: Option<String>,
+    pub contributors: Option<String>,
+    pub album: Option<String>,
+    pub date: Option<String>,
+    pub genre: Option<String>,
+    pub bpm: Option<f64>,
+    pub key: Option<String>,
+    pub only_blank: bool,
+}
+
 /// A text field the clean-up tools work on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TagField {
@@ -215,6 +240,98 @@ const SMALL_WORDS: &[&str] = &[
 ];
 
 impl Library {
+    /// Suggest conservative tags from a file name and its Artist/Album folders.
+    /// Existing descriptive tags win; every suggestion still goes through review.
+    pub fn plan_auto_tag(&self, ids: &[i64]) -> Result<Vec<PlannedChange>> {
+        self.plan_each(ids, |library, id, mut after| {
+            let path = library.track_path(id)?;
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                return Ok(after);
+            };
+            let parts: Vec<_> = path
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            let artist_index = parts
+                .iter()
+                .position(|part| part.eq_ignore_ascii_case("Artists"))
+                .map(|index| index + 1);
+            let artist_folder = artist_index.and_then(|index| parts.get(index));
+            let (filename_artist, filename_title) = title_from_filename(stem);
+            if after.artist.trim().is_empty() {
+                if let Some(artist) = filename_artist.or(artist_folder.map(String::as_str)) {
+                    after.artist = artist.to_string();
+                }
+            }
+            if generic_title(&after.title) || after.title.trim().is_empty() {
+                if let Some(title) = filename_title {
+                    after.title = title.to_string();
+                } else if artist_folder.is_some() {
+                    let title = strip_track_number(stem);
+                    if !title.is_empty() && !generic_title(title) {
+                        after.title = title.to_string();
+                    }
+                }
+            }
+            if after.album.trim().is_empty() {
+                if let Some(album) = artist_index.and_then(|index| parts.get(index + 1)) {
+                    if path
+                        .parent()
+                        .and_then(Path::file_name)
+                        .is_some_and(|folder| folder.to_string_lossy() == album.as_str())
+                    {
+                        let (album, year) =
+                            album_from_folder(album, artist_folder.map(String::as_str));
+                        if !album.is_empty() && !album.eq_ignore_ascii_case("Unknown Release") {
+                            after.album = album.to_string();
+                            if after
+                                .date
+                                .as_deref()
+                                .is_none_or(|date| date.trim().is_empty())
+                            {
+                                after.date = year.map(str::to_string);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(after)
+        })
+    }
+    /// Preview a shared edit for many tracks, preserving all other fields.
+    pub fn plan_batch_edit(&self, ids: &[i64], edit: &BatchTagEdit) -> Result<Vec<PlannedChange>> {
+        self.plan_each(ids, |_, _, mut after| {
+            let text = |target: &mut String, value: &Option<String>| {
+                if let Some(value) = value
+                    && (!edit.only_blank || target.trim().is_empty())
+                {
+                    *target = value.clone();
+                }
+            };
+            let optional = |target: &mut Option<String>, value: &Option<String>| {
+                if let Some(value) = value
+                    && (!edit.only_blank
+                        || target.as_deref().is_none_or(|old| old.trim().is_empty()))
+                {
+                    *target = Some(value.clone());
+                }
+            };
+            text(&mut after.title, &edit.title);
+            text(&mut after.artist, &edit.artist);
+            optional(&mut after.album_artist, &edit.album_artist);
+            optional(&mut after.contributors, &edit.contributors);
+            text(&mut after.album, &edit.album);
+            optional(&mut after.date, &edit.date);
+            text(&mut after.genre, &edit.genre);
+            if let Some(bpm) = edit.bpm
+                && (!edit.only_blank || after.bpm.is_none())
+            {
+                after.bpm = Some(bpm);
+            }
+            optional(&mut after.key, &edit.key);
+            Ok(after)
+        })
+    }
     /// The file's current tags for a track, and where the file is.
     pub fn file_tags(&self, id: i64) -> Result<(PathBuf, TrackEdit)> {
         let path = self.track_path(id)?;
@@ -235,6 +352,12 @@ impl Library {
         let mut after = edit.clone();
         if after.date.is_none() {
             after.date = before.date.clone();
+        }
+        if after.album_artist.is_none() {
+            after.album_artist = before.album_artist.clone();
+        }
+        if after.contributors.is_none() {
+            after.contributors = before.contributors.clone();
         }
         if after.comment.is_none() {
             after.comment = before.comment.clone();
@@ -537,6 +660,8 @@ impl Library {
         let same = |a: &TrackEdit, b: &TrackEdit| {
             a.title == b.title
                 && a.artist == b.artist
+                && (expected.album_artist.is_none() || a.album_artist == b.album_artist)
+                && (expected.contributors.is_none() || a.contributors == b.contributors)
                 && a.album == b.album
                 && a.genre == b.genre
                 && a.key == b.key
@@ -695,6 +820,65 @@ fn occupied(target: &Path, source: &Path) -> bool {
         (Ok(_), Err(_)) => true,
         (Err(_), _) => false,
     }
+}
+
+fn strip_track_number(stem: &str) -> &str {
+    let stem = stem.trim();
+    let count = stem
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if count == 0 || count > 3 {
+        return stem;
+    }
+    let suffix = &stem[count..];
+    if suffix
+        .chars()
+        .next()
+        .is_some_and(|ch| ['.', '-', '_', ' '].contains(&ch))
+    {
+        suffix.trim_start_matches(['.', '-', '_', ' ']).trim()
+    } else {
+        stem
+    }
+}
+
+fn generic_title(title: &str) -> bool {
+    let title = title.trim();
+    title.is_empty()
+        || title.bytes().all(|byte| byte.is_ascii_digit())
+        || title
+            .to_ascii_lowercase()
+            .strip_prefix("track ")
+            .is_some_and(|rest| rest.trim().bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+fn title_from_filename(stem: &str) -> (Option<&str>, Option<&str>) {
+    let stem = strip_track_number(stem);
+    let Some((artist, title)) = stem.split_once(" - ") else {
+        return (None, None);
+    };
+    let artist = artist.trim();
+    let title = strip_track_number(title);
+    if artist.is_empty() || title.is_empty() || generic_title(artist) || generic_title(title) {
+        (None, None)
+    } else {
+        (Some(artist), Some(title))
+    }
+}
+
+fn album_from_folder<'a>(folder: &'a str, artist: Option<&str>) -> (&'a str, Option<&'a str>) {
+    let folder = folder.trim();
+    let (year, rest) = folder
+        .split_once(" - ")
+        .filter(|(year, _)| year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit()))
+        .map_or((None, folder), |(year, rest)| (Some(year), rest));
+    let album = artist
+        .and_then(|artist| rest.strip_prefix(artist))
+        .and_then(|rest| rest.strip_prefix(" - "))
+        .unwrap_or(rest)
+        .trim();
+    (album, year)
 }
 
 fn lower(path: &Path) -> PathBuf {

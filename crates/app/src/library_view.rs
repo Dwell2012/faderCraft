@@ -32,7 +32,9 @@ use gpui_kit::*;
 
 use crate::lookup_view::{LookupEvent, LookupField, LookupView};
 use crate::organise_view::{DuplicatesView, NameForm, OrganiseEvent, RelocateView, SmartForm};
-use crate::tag_tools::{FormEvent, RenameForm, ReplaceForm, ReviewEvent, ReviewView};
+use crate::tag_tools::{
+    BatchEditForm, FormEvent, RenameForm, ReplaceForm, ReviewEvent, ReviewView,
+};
 
 /// How often the track list is refreshed while a scan is running.
 const SCAN_REFRESH: Duration = Duration::from_millis(400);
@@ -171,6 +173,8 @@ impl Origin {
 enum EditField {
     Title,
     Artist,
+    AlbumArtist,
+    Contributors,
     Album,
     Genre,
     Bpm,
@@ -178,9 +182,11 @@ enum EditField {
 }
 
 impl EditField {
-    const ALL: [EditField; 6] = [
+    const ALL: [EditField; 8] = [
         EditField::Title,
         EditField::Artist,
+        EditField::AlbumArtist,
+        EditField::Contributors,
         EditField::Album,
         EditField::Genre,
         EditField::Bpm,
@@ -191,6 +197,8 @@ impl EditField {
         match self {
             EditField::Title => "Title",
             EditField::Artist => "Artist",
+            EditField::AlbumArtist => "Album artist",
+            EditField::Contributors => "Contributing artists",
             EditField::Album => "Album",
             EditField::Genre => "Genre",
             EditField::Bpm => "BPM",
@@ -941,7 +949,7 @@ pub struct LibraryView {
     /// The track shown in the info panel.
     inspected: Option<Track>,
     /// One text box per [`EditField`], in that order.
-    fields: [Entity<InputState>; 6],
+    fields: [Entity<InputState>; 8],
     artwork: Option<Arc<Image>>,
     grid_preview: Option<Arc<djcraft_engine::Track>>,
     grid_preview_center: f64,
@@ -1781,9 +1789,28 @@ impl LibraryView {
     /// Opens a track in the info panel.
     fn inspect(&mut self, track: Track, window: &mut Window, cx: &mut Context<Self>) {
         let bpm = track.bpm.map(format_bpm).unwrap_or_default();
+        let credits = self
+            .library
+            .as_ref()
+            .and_then(|library| library.file_tags(track.id).ok())
+            .map(|(_, edit)| edit);
         for (field, text) in [
             (EditField::Title, track.title.as_str()),
             (EditField::Artist, track.artist.as_str()),
+            (
+                EditField::AlbumArtist,
+                credits
+                    .as_ref()
+                    .and_then(|edit| edit.album_artist.as_deref())
+                    .unwrap_or(""),
+            ),
+            (
+                EditField::Contributors,
+                credits
+                    .as_ref()
+                    .and_then(|edit| edit.contributors.as_deref())
+                    .unwrap_or(""),
+            ),
             (EditField::Album, track.album.as_str()),
             (EditField::Genre, track.genre.as_str()),
             (EditField::Bpm, bpm.as_str()),
@@ -1882,6 +1909,8 @@ impl LibraryView {
             date: None,
             title: self.field_text(EditField::Title, cx),
             artist: self.field_text(EditField::Artist, cx),
+            album_artist: Some(self.field_text(EditField::AlbumArtist, cx)),
+            contributors: Some(self.field_text(EditField::Contributors, cx)),
             album: self.field_text(EditField::Album, cx),
             genre: self.field_text(EditField::Genre, cx),
             bpm,
@@ -2100,6 +2129,15 @@ impl LibraryView {
                         cx,
                     );
                 }
+                FormEvent::BatchEdit(edit) => {
+                    let edit = edit.clone();
+                    this.run_tool(
+                        "Edit tags",
+                        |library, ids| library.plan_batch_edit(ids, &edit),
+                        window,
+                        cx,
+                    );
+                }
                 FormEvent::Cancel => {}
             }
         })
@@ -2131,6 +2169,18 @@ impl LibraryView {
                 };
                 let mut menu = menu
                     .label("Tags of every track in the list")
+                    .item(item("Edit tags in bulk…".into(), |this, window, cx| {
+                        let form = cx.new(|cx| BatchEditForm::new(window, cx));
+                        this.open_form("Edit tags in bulk", form, window, cx);
+                    }))
+                    .item(item("Auto-tag from names and folders…".into(), |this, window, cx| {
+                        this.run_tool(
+                            "Auto-tag from names and folders",
+                            |library, ids| library.plan_auto_tag(ids),
+                            window,
+                            cx,
+                        );
+                    }))
                     .item(item("Write BPM, key and energy…".into(), |this, window, cx| {
                         let settings = cx
                             .try_global::<crate::settings::Settings>()
@@ -2472,15 +2522,20 @@ impl LibraryView {
             let value = match field {
                 EditField::Title => track.title.as_str(),
                 EditField::Artist => track.artist.as_str(),
+                EditField::AlbumArtist | EditField::Contributors => "",
                 EditField::Album => track.album.as_str(),
                 EditField::Genre => track.genre.as_str(),
                 EditField::Bpm => bpm.as_str(),
                 EditField::Key => track.key.as_deref().unwrap_or(""),
             };
+            let value = match field {
+                EditField::AlbumArtist | EditField::Contributors => self.field_text(field, cx),
+                _ => value.to_string(),
+            };
             column.child(if value.is_empty() {
                 div().text_color(muted).child("—")
             } else {
-                div().child(value.to_string())
+                div().child(value)
             })
         };
         div()
@@ -2541,6 +2596,8 @@ impl LibraryView {
             )
             .child(labelled(EditField::Title))
             .child(labelled(EditField::Artist))
+            .child(labelled(EditField::AlbumArtist))
+            .child(labelled(EditField::Contributors))
             .child(
                 div()
                     .flex()

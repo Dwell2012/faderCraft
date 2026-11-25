@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use djcraft_library::{
-    AlignOptions, Camelot, Cleanup, ClipPlacement, CuePoint, EnergyBand, FolderWatcher, Group,
-    ImportSummary, KeepTagged, KeyFit, KeyResult, Library, Placement, Rule, ScanSummary,
-    SmartRules, SourceKind, TagField, TempoResult, TextField, TextOp, TrackEdit, TrackQuery,
-    discover_playlists, read_artwork, read_playlists,
+    AlignOptions, BatchTagEdit, Camelot, Cleanup, ClipPlacement, CuePoint, EnergyBand,
+    FolderWatcher, Group, ImportSummary, KeepTagged, KeyFit, KeyResult, Library, Placement, Rule,
+    ScanSummary, SmartRules, SourceKind, TagField, TempoResult, TextField, TextOp, TrackEdit,
+    TrackQuery, discover_playlists, read_artwork, read_playlists,
 };
 use lofty::config::WriteOptions;
 use lofty::tag::{Accessor, ItemKey, Tag, TagExt, TagType};
@@ -1108,6 +1108,8 @@ fn editing_a_track_writes_its_tags() {
         title: "New Title".into(),
         date: None,
         artist: "  New Artist ".into(),
+        album_artist: None,
+        contributors: None,
         album: "The Album".into(),
         genre: String::new(),
         bpm: Some(127.5),
@@ -1229,6 +1231,8 @@ fn measured_tempo_is_stored_and_shown() {
         title: "Renamed".into(),
         date: None,
         artist: "A".into(),
+        album_artist: None,
+        contributors: None,
         album: String::new(),
         genre: String::new(),
         bpm: Some(128.02),
@@ -1462,6 +1466,8 @@ fn tagged_tempo_and_key_can_be_kept_over_measured_ones() {
         title: "Tagged".into(),
         date: None,
         artist: "A".into(),
+        album_artist: None,
+        contributors: None,
         album: String::new(),
         genre: String::new(),
         bpm: Some(126.0),
@@ -1688,6 +1694,120 @@ fn batch_tag_changes_are_reviewed_applied_and_undone() {
 }
 
 #[test]
+fn auto_tag_uses_names_and_artist_folders_without_replacing_good_tags() {
+    let dir = TempDir::new("auto-tag");
+    let album = dir
+        .0
+        .join("Artists")
+        .join("Alex Clare")
+        .join("2012 - Alex Clare - The Lateness of the Hour");
+    write_tagged(
+        &album.join("01 - Up All Night.wav"),
+        "Track 1",
+        "",
+        "",
+        "",
+        "",
+    );
+    write_tagged(
+        &dir.0.join("02 - Daft Punk - One More Time.wav"),
+        "Track 2",
+        "",
+        "",
+        "",
+        "",
+    );
+    write_tagged(
+        &dir.0.join("03 - Unknown.wav"),
+        "Already Correct",
+        "Known Artist",
+        "",
+        "",
+        "",
+    );
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let ids: Vec<_> = library
+        .tracks(&TrackQuery::default())
+        .unwrap()
+        .into_iter()
+        .map(|track| track.id)
+        .collect();
+    let changes = library.plan_auto_tag(&ids).unwrap();
+    assert_eq!(changes.len(), 2);
+    let folder = changes
+        .iter()
+        .find(|change| change.path.file_name().unwrap() == "01 - Up All Night.wav")
+        .unwrap();
+    assert_eq!(
+        (
+            &*folder.after.artist,
+            &*folder.after.title,
+            &*folder.after.album
+        ),
+        ("Alex Clare", "Up All Night", "The Lateness of the Hour")
+    );
+    assert_eq!(folder.after.date.as_deref(), Some("2012"));
+    let named = changes
+        .iter()
+        .find(|change| change.path.file_name().unwrap() == "02 - Daft Punk - One More Time.wav")
+        .unwrap();
+    assert_eq!(
+        (&*named.after.artist, &*named.after.title),
+        ("Daft Punk", "One More Time")
+    );
+}
+
+#[test]
+fn batch_edit_fills_missing_fields_without_replacing_existing_tags() {
+    let dir = TempDir::new("batch-edit");
+    write_tagged(&dir.0.join("a.wav"), "First", "", "", "", "");
+    write_tagged(&dir.0.join("b.wav"), "Second", "Original", "", "", "");
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let tracks = library.tracks(&TrackQuery::default()).unwrap();
+    let ids: Vec<_> = tracks.iter().map(|track| track.id).collect();
+    let edit = BatchTagEdit {
+        artist: Some("Shared".into()),
+        album: Some("Compilation".into()),
+        date: Some("2020".into()),
+        bpm: Some(125.0),
+        only_blank: true,
+        ..Default::default()
+    };
+    let changes = library.plan_batch_edit(&ids, &edit).unwrap();
+    assert_eq!(changes.len(), 2);
+    library.apply_changes("Bulk edit", &changes).unwrap();
+    let a = library
+        .file_tags(
+            tracks
+                .iter()
+                .find(|track| track.title == "First")
+                .unwrap()
+                .id,
+        )
+        .unwrap()
+        .1;
+    let b = library
+        .file_tags(
+            tracks
+                .iter()
+                .find(|track| track.title == "Second")
+                .unwrap()
+                .id,
+        )
+        .unwrap()
+        .1;
+    assert_eq!(a.artist, "Shared");
+    assert_eq!(b.artist, "Original");
+    assert_eq!(a.album, "Compilation");
+    assert_eq!(b.date.as_deref(), Some("2020"));
+    assert_eq!(b.bpm, Some(125.0));
+}
+
+#[test]
 fn unrelated_tag_edits_preserve_detected_bpm_and_key() {
     for tagged in [false, true] {
         let dir = TempDir::new("metadata-analysis");
@@ -1769,6 +1889,8 @@ fn tags_are_written_and_read_back_in_every_format() {
             title: format!("Title {}", track.title),
             date: Some("1999".into()),
             artist: "Artist Ü".into(),
+            album_artist: Some("Various Artists".into()),
+            contributors: Some("Guest Performer".into()),
             album: "Album".into(),
             genre: "Tech House".into(),
             bpm: Some(127.5),
@@ -1792,6 +1914,43 @@ fn tags_are_written_and_read_back_in_every_format() {
         assert_eq!(track.artist, "Artist Ü");
         assert_eq!(track.camelot, Camelot::parse("8A"), "{}", track.title);
     }
+}
+
+#[test]
+fn id3_tags_survive_when_mpeg_properties_cannot_be_parsed() {
+    use id3::TagLike as _;
+
+    let dir = TempDir::new("id3-fallback");
+    let path = dir.0.join("damaged.mp3");
+    std::fs::write(&path, b"not an MPEG frame").unwrap();
+    let mut tag = id3::Tag::new();
+    tag.set_title("Original title");
+    tag.set_artist("Track performer");
+    tag.write_to_path(&path, id3::Version::Id3v24).unwrap();
+
+    let mut library = Library::open_in_memory().unwrap();
+    let source = library.add_folder(&dir.0).unwrap();
+    library.scan(source.id, |_| {}).unwrap();
+    let track = library
+        .tracks(&TrackQuery::default())
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(track.title, "Original title");
+    assert_eq!(track.artist, "Track performer");
+
+    let (_, mut edit) = library.file_tags(track.id).unwrap();
+    edit.album = "Verified album".into();
+    edit.album_artist = Some("Various Artists".into());
+    library.edit_track(track.id, &edit).unwrap();
+    let (_, read_back) = library.file_tags(track.id).unwrap();
+    assert_eq!(read_back.album, "Verified album");
+    assert_eq!(read_back.album_artist.as_deref(), Some("Various Artists"));
+    assert!(
+        std::fs::read(&path)
+            .unwrap()
+            .ends_with(b"not an MPEG frame")
+    );
 }
 
 #[test]
