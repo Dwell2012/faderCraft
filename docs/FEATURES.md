@@ -1,5 +1,9 @@
 # djcraft feature list
 
+- [~] GitHub Release packages for Windows, macOS and Linux, with an About-page
+      update check. Public publishing awaits ASIO distribution clearance;
+      macOS signing and installer verification remain.
+
 - [x] Beat and key sync use a single eligible master deck. Automatic sync
       favours the longest-playing deck; Shift + Sync picks the master explicitly.
       The master never follows another deck.
@@ -269,6 +273,11 @@ Feature set modelled on Mixed In Key 10.
 - [x] Batch tag alignment with undo (writes the analysed BPM, key and energy
       into the tags of every track in the list; any batch of tag changes can
       be undone)
+- [x] Bulk tag editor in Library tools for shared title, artist, album artist,
+      contributing artists, album, year, genre, BPM and key; optionally fill
+      empty tags only, preview each file and undo the batch
+- [x] Auto-tag from filenames and Artists/artist/album folders in Library tools;
+      fill missing or generic fields, preview each file and undo the batch
 - [x] Choose where key and energy are written: key field, comment, grouping,
       or as a prefix/suffix on title or artist
 - [x] Tag clean-up tools: find and replace across the library, remove extra
@@ -523,7 +532,7 @@ Feature set modelled on Mixed In Key 10.
       (see [STEMS.md](STEMS.md) for source grouping and setup)
 - [~] Per-stem level / full cut, mousewheel, double-click reset and smoothed gains
       (dedicated solo buttons still missing)
-- [~] Sampler with banks, one-shot and loop modes [16-slot persistent bank with original defaults; multiple named banks pending]
+- [~] Sampler with banks and per-pad right-click playback modes: one shot, click to stop, loop on end, and ¼, ½, 1, 2, or 4 beats using the active deck grid. Each bank's pad choices persist across restarts.
 - [ ] Vocal position markers on the waveform
 
 ### Step sequencer
