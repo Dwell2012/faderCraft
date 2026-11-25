@@ -91,9 +91,14 @@ impl Shell {
                         .flex()
                         .items_center()
                         .gap(px(4.))
+                        .p(px(4.))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(rgb(0x000000))
                         .child(
                             Button::new(("saved-loop-recall", deck * 16 + slot))
                                 .small()
+                                .h(px(30.))
                                 .outline()
                                 .rounded(ButtonRounded::None)
                                 .flex_1()
@@ -107,6 +112,7 @@ impl Shell {
                         .child(
                             Button::new(("saved-loop-delete", deck * 16 + slot))
                                 .small()
+                                .h(px(30.))
                                 .outline()
                                 .rounded(ButtonRounded::None)
                                 .w(px(30.))
@@ -135,15 +141,21 @@ impl Shell {
             .gap(px(4.))
             .p(px(4.))
             .child(
-                div()
+                self.side_panel_section(cx)
                     .text_sm()
                     .font_weight(FontWeight::BOLD)
                     .child(format!("SAVED LOOPS · DECK {}", deck_label(deck))),
             )
-            .child(div().truncate().text_size(px(10.)).child(title))
+            .child(
+                self.side_panel_section(cx)
+                    .truncate()
+                    .text_size(px(10.))
+                    .child(title),
+            )
             .child(
                 Button::new(("save-current-loop", deck))
                     .small()
+                    .h(px(30.))
                     .outline()
                     .rounded(ButtonRounded::None)
                     .label("Save loop")
@@ -161,6 +173,10 @@ impl Shell {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .p(px(4.))
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(rgb(0x000000))
                     .child(rows),
             )
             .when(!self.loop_notice[deck].is_empty(), |panel| {

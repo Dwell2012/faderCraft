@@ -1,6 +1,6 @@
 use super::*;
-use djcraft_protocol::SamplerAction;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use djcraft_protocol::{SamplePlayback, SamplerAction};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_kit::component::{
     WindowExt,
     input::{Input, InputState},
@@ -8,10 +8,8 @@ use gpui_kit::component::{
 
 #[derive(Default)]
 pub(super) struct SamplerUi {
-    mode: usize,
     capture_deck: usize,
     capture_beats: Option<u8>,
-    repeat: bool,
     locked: bool,
     hold: Option<usize>,
     notice: String,
@@ -22,8 +20,6 @@ impl Shell {
     pub(super) fn sampler_side_panel(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
         let state = &self.sampler_state;
         let accent = rgb(0x48d1dd);
-        let mode = self.sampler_ui.mode;
-        let repeat = self.sampler_ui.repeat;
         let locked = self.sampler_ui.locked;
         let slot = self.sampler_slot;
         let list = self.sampler_list;
@@ -32,6 +28,10 @@ impl Shell {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .p(px(4.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(rgb(0x000000))
             .flex()
             .flex_col()
             .gap(px(4.));
@@ -43,6 +43,7 @@ impl Shell {
                 let loading = state.loading[index];
                 let empty = state.slots[index] == 0;
                 let error = state.errors[index].as_ref();
+                let playback = state.playback[index];
                 let name = if loading {
                     "Loading…".into()
                 } else if error.is_some() {
@@ -114,21 +115,74 @@ impl Shell {
                                     if empty {
                                         this.choose_side_sample(index, cx);
                                     } else {
-                                        this.trigger_side_sample(index, false, cx);
+                                        this.trigger_side_sample(index, cx);
                                     }
                                 }
                                 cx.notify();
                                 cx.stop_propagation();
                             }),
                         )
-                        .on_mouse_down(
-                            MouseButton::Right,
-                            cx.listener(move |this, _, _, cx| {
-                                this.sampler_slot = index;
-                                this.trigger_side_sample(index, true, cx);
-                                cx.stop_propagation();
-                            }),
-                        ),
+                        .context_menu({
+                            let weak = cx.weak_entity();
+                            move |mut menu, window, cx| {
+                                for (label, choice) in [
+                                    ("One shot", SamplePlayback::OneShot),
+                                    ("Click to stop", SamplePlayback::ClickToStop),
+                                ] {
+                                    let weak = weak.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(label)
+                                            .checked(playback == choice)
+                                            .on_click(move |_, _, cx| {
+                                                let _ = weak.update(cx, |this, cx| {
+                                                    this.sampler_send(
+                                                        SamplerAction::SetPlayback {
+                                                            slot: index as u8,
+                                                            mode: choice,
+                                                        },
+                                                        cx,
+                                                    );
+                                                });
+                                            }),
+                                    );
+                                }
+                                let loop_weak = weak.clone();
+                                menu.submenu_with_icon(
+                                    None,
+                                    "Loop",
+                                    window,
+                                    cx,
+                                    move |mut submenu, _, _| {
+                                        for (label, choice) in [
+                                            ("Loop on end", SamplePlayback::LoopOnEnd),
+                                            ("¼ beat", SamplePlayback::LoopQuarterBeat),
+                                            ("½ beat", SamplePlayback::LoopHalfBeat),
+                                            ("1 beat", SamplePlayback::LoopPerBeat),
+                                            ("2 beats", SamplePlayback::LoopTwoBeats),
+                                            ("4 beats", SamplePlayback::LoopFourBeats),
+                                        ] {
+                                            let weak = loop_weak.clone();
+                                            submenu = submenu.item(
+                                                PopupMenuItem::new(label)
+                                                    .checked(playback == choice)
+                                                    .on_click(move |_, _, cx| {
+                                                        let _ = weak.update(cx, |this, cx| {
+                                                            this.sampler_send(
+                                                                SamplerAction::SetPlayback {
+                                                                    slot: index as u8,
+                                                                    mode: choice,
+                                                                },
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }),
+                                            );
+                                        }
+                                        submenu
+                                    },
+                                )
+                            }
+                        }),
                 );
             }
             samples = samples.child(pads);
@@ -142,7 +196,7 @@ impl Shell {
             .gap(px(4.))
             .p(px(4.))
             .child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .gap(px(4.))
                     .items_center()
@@ -150,6 +204,8 @@ impl Shell {
                     .child(
                         Button::new("sampler-new-bank")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label("New")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -159,6 +215,8 @@ impl Shell {
                     .child(
                         Button::new("sampler-rename-bank")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label("Rename")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -167,35 +225,14 @@ impl Shell {
                     ),
             )
             .child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .gap(px(4.))
                     .child(
-                        Button::new("sampler-side-mode")
-                            .xsmall()
-                            .outline()
-                            .label(["On/Off", "Hold", "Stutter"][mode])
-                            .tooltip("Cycle trigger mode; right-click any pad to stop")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.release_side_sample(cx);
-                                this.sampler_ui.mode = (mode + 1) % 3;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("sampler-side-repeat")
-                            .xsmall()
-                            .outline()
-                            .label("Loop")
-                            .selected(repeat)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.sampler_ui.repeat = !repeat;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
                         Button::new("sampler-side-view")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label(if list { "Pads" } else { "List" })
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -206,6 +243,8 @@ impl Shell {
                     .child(
                         Button::new("sampler-side-stop")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label("Stop all")
                             .tooltip("Stop every playing sample in the sampler")
@@ -219,12 +258,14 @@ impl Shell {
             .child(samples)
             .child(self.sampler_capture_controls(decks, cx))
             .child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .gap(px(4.))
                     .child(
                         Button::new("sampler-side-load")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label(format!("Load {:02}", slot + 1))
                             .disabled(locked)
@@ -237,6 +278,8 @@ impl Shell {
                     .child(
                         Button::new("sampler-side-clear")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label("Clear")
                             .disabled(locked || state.slots[slot] == 0)
@@ -249,6 +292,8 @@ impl Shell {
                     .child(
                         Button::new("sampler-side-lock")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label(if locked { "Locked" } else { "Unlocked" })
                             .selected(locked)
@@ -259,7 +304,7 @@ impl Shell {
                     ),
             )
             .child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .gap(px(4.))
                     .items_center()
@@ -270,6 +315,8 @@ impl Shell {
                     .children([-0.05f32, 0.05].into_iter().enumerate().map(|(i, delta)| {
                         Button::new(("sampler-side-volume", i))
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .outline()
                             .label(if delta < 0. { "−" } else { "+" })
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -317,6 +364,8 @@ impl Shell {
         let bank_weak = weak.clone();
         let source_menu = Button::new("sampler-capture-source")
             .xsmall()
+            .h(px(30.))
+            .rounded(ButtonRounded::None)
             .outline()
             .label(format!("Deck {}", deck_label(source)))
             .dropdown_caret(true)
@@ -337,7 +386,7 @@ impl Shell {
                 }
                 menu
             });
-        let length = Button::new("sampler-capture-length").xsmall().outline()
+        let length = Button::new("sampler-capture-length").xsmall().h(px(30.)).rounded(ButtonRounded::None).outline()
             .label(beats.map_or_else(|| "Loop / 4b".to_string(), |b| format!("{b} beats")))
             .dropdown_caret(true)
             .tooltip("Use the active deck loop (otherwise four beats), or capture a beat length from the playhead")
@@ -351,9 +400,9 @@ impl Shell {
                 }
                 menu
             });
-        div().flex().flex_col().gap(px(4.)).flex_shrink_0()
+        self.side_panel_section(cx).flex().flex_col().gap(px(4.)).flex_shrink_0()
             .child(div().flex().gap(px(4.)).child(source_menu).child(length)
-                .child(Button::new("sampler-capture").xsmall().outline().label(format!("Capture {:02}", slot + 1))
+                .child(Button::new("sampler-capture").xsmall().h(px(30.)).rounded(ButtonRounded::None).outline().label(format!("Capture {:02}", slot + 1))
                     .disabled(self.sampler_ui.locked || !ready || range.is_none() || self.sampler_state.loading[slot])
                     .tooltip("Save only the selected deck's enabled stems into this sample slot; independent of deck faders and other decks")
                     .on_click(cx.listener(move |this, _, _, cx| this.capture_side_sample(cx)))))
@@ -419,6 +468,8 @@ impl Shell {
         let weak = cx.weak_entity();
         Button::new("sampler-bank-menu")
             .xsmall()
+            .h(px(30.))
+            .rounded(ButtonRounded::None)
             .outline()
             .flex_1()
             .min_w_0()
@@ -625,26 +676,31 @@ impl Shell {
         .detach();
     }
 
-    fn trigger_side_sample(&mut self, slot: usize, stop: bool, cx: &mut Context<Self>) {
+    fn trigger_side_sample(&mut self, slot: usize, cx: &mut Context<Self>) {
         self.release_side_sample(cx);
         if self.sampler_state.slots[slot] == 0 || self.sampler_state.loading[slot] {
             return;
         }
-        let play = !stop && (self.sampler_ui.mode != 0 || self.sampler_state.slots[slot] != 2);
-        if self.sampler_send(
+        let mode = self.sampler_state.playback[slot];
+        let play = mode == SamplePlayback::OneShot || self.sampler_state.slots[slot] != 2;
+        let repeat = mode == SamplePlayback::LoopOnEnd || mode.loop_beats().is_some();
+        let period_seconds = mode.loop_beats().map(|beats| {
+            self.grids[self.active_deck]
+                .map(|grid| grid.beat_seconds())
+                .unwrap_or(0.5)
+                * beats
+        });
+        self.sampler_send(
             SamplerAction::Play {
                 slot: slot as u8,
                 play,
                 restart: play,
-                repeat: self.sampler_ui.repeat,
+                repeat,
+                period_seconds,
                 level: 1.,
             },
             cx,
-        ) && play
-            && self.sampler_ui.mode == 1
-        {
-            self.sampler_ui.hold = Some(slot);
-        }
+        );
     }
     pub(super) fn release_side_sample(&mut self, cx: &mut Context<Self>) {
         if let Some(slot) = self.sampler_ui.hold.take() {
@@ -654,6 +710,7 @@ impl Shell {
                     play: false,
                     restart: false,
                     repeat: false,
+                    period_seconds: None,
                     level: 1.,
                 },
                 cx,

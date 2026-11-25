@@ -108,6 +108,7 @@ pub(crate) enum Command {
         play: bool,
         restart: bool,
         repeat: bool,
+        period_frames: Option<f64>,
         level: f32,
     },
     ClearSample {
@@ -1124,6 +1125,7 @@ struct SampleVoice {
     position: f64,
     playing: bool,
     repeat: bool,
+    period_frames: Option<f64>,
     level: f32,
     gain: f32,
     attack_remaining: usize,
@@ -1149,6 +1151,19 @@ impl SampleVoice {
                     *tail = None;
                 }
             }
+            if self.playing
+                && let Some(period) = self.period_frames
+            {
+                if self.position >= self.start + period {
+                    self.position = self.start;
+                    self.gain = 0.;
+                    self.attack_remaining = 32;
+                }
+                if self.position >= self.end {
+                    self.position += 1.;
+                    continue;
+                }
+            }
             if self.playing && self.attack_remaining > 0 {
                 self.gain = self.level * (33 - self.attack_remaining) as f32 / 32.;
                 self.attack_remaining -= 1;
@@ -1169,7 +1184,7 @@ impl SampleVoice {
                 frame[c] += signal[c] * self.gain * edge;
             }
             self.position += 1.;
-            if self.position >= self.end {
+            if self.period_frames.is_none() && self.position >= self.end {
                 if self.repeat && self.playing {
                     self.position = self.start;
                     self.gain = 0.;
@@ -1604,6 +1619,7 @@ impl Mixer {
                 play,
                 restart,
                 repeat,
+                period_frames,
                 level,
             } => {
                 let sample = &mut self.samples[slot];
@@ -1635,6 +1651,7 @@ impl Mixer {
                 }
                 sample.playing = play && sample.track.is_some();
                 sample.repeat = repeat;
+                sample.period_frames = period_frames;
                 sample.level = level;
             }
             Command::AutoScratch {
@@ -2632,4 +2649,31 @@ mod preparation_tests {
 /// Loop end is exclusive: jumping exactly there exits the loop.
 pub(crate) fn loop_at(region: Option<[f64; 2]>, position: f64) -> Option<[f64; 2]> {
     region.filter(|[start, end]| position >= *start && position < *end)
+}
+
+#[cfg(test)]
+mod sample_loop_tests {
+    use super::*;
+
+    #[test]
+    fn beat_loop_waits_for_the_next_beat_after_a_short_sample() {
+        let track = Arc::new(Track::from_samples("short", 48_000, vec![0.5; 480 * 2]));
+        let mut voice = SampleVoice {
+            track: Some(track),
+            stem_gains: [1.; 4],
+            start: 0.,
+            end: 480.,
+            playing: true,
+            repeat: true,
+            period_frames: Some(960.),
+            level: 1.,
+            gain: 1.,
+            ..Default::default()
+        };
+        let mut output = vec![0.; 1_500 * 2];
+        voice.render(&mut output);
+        assert!(output[100 * 2].abs() > 0.1);
+        assert!(output[700 * 2].abs() < 0.0001);
+        assert!(output[1_050 * 2].abs() > 0.1);
+    }
 }

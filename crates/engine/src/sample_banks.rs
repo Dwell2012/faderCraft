@@ -1,5 +1,5 @@
 //! Named-bank catalogue. Small metadata files are handled on the control side.
-use djcraft_protocol::SampleBank;
+use djcraft_protocol::{SampleBank, SamplePlayback};
 use std::path::PathBuf;
 
 #[derive(Clone)]
@@ -70,6 +70,62 @@ impl Banks {
                 root.join("banks").join(&self.selected)
             }
         })
+    }
+    pub fn load_playback(&self) -> Result<[SamplePlayback; 16], String> {
+        let Some(path) = self.path() else {
+            return Ok(Default::default());
+        };
+        let text = match std::fs::read_to_string(path.join("playback-v1.txt")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Default::default());
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut lines = text.lines();
+        if lines.next() != Some("1") {
+            return Err("Unsupported sampler playback settings".into());
+        }
+        let mut modes = [SamplePlayback::default(); 16];
+        for mode in &mut modes {
+            *mode = match lines.next() {
+                Some("one_shot") => SamplePlayback::OneShot,
+                Some("click_to_stop") => SamplePlayback::ClickToStop,
+                Some("loop_on_end") => SamplePlayback::LoopOnEnd,
+                Some("loop_quarter_beat") => SamplePlayback::LoopQuarterBeat,
+                Some("loop_half_beat") => SamplePlayback::LoopHalfBeat,
+                Some("loop_per_beat") => SamplePlayback::LoopPerBeat,
+                Some("loop_two_beats") => SamplePlayback::LoopTwoBeats,
+                Some("loop_four_beats") => SamplePlayback::LoopFourBeats,
+                _ => return Err("Invalid sampler playback settings".into()),
+            };
+        }
+        if lines.next().is_some() {
+            return Err("Invalid sampler playback settings".into());
+        }
+        Ok(modes)
+    }
+    pub fn save_playback(&self, modes: &[SamplePlayback; 16]) -> Result<(), String> {
+        let Some(path) = self.path() else {
+            return Ok(());
+        };
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        let mut text = String::from("1\n");
+        for mode in modes {
+            text.push_str(match mode {
+                SamplePlayback::OneShot => "one_shot\n",
+                SamplePlayback::ClickToStop => "click_to_stop\n",
+                SamplePlayback::LoopOnEnd => "loop_on_end\n",
+                SamplePlayback::LoopQuarterBeat => "loop_quarter_beat\n",
+                SamplePlayback::LoopHalfBeat => "loop_half_beat\n",
+                SamplePlayback::LoopPerBeat => "loop_per_beat\n",
+                SamplePlayback::LoopTwoBeats => "loop_two_beats\n",
+                SamplePlayback::LoopFourBeats => "loop_four_beats\n",
+            });
+        }
+        let temporary = path.join("playback-v1.tmp");
+        std::fs::write(&temporary, text).map_err(|error| error.to_string())?;
+        std::fs::rename(temporary, path.join("playback-v1.txt")).map_err(|error| error.to_string())
     }
     pub fn create(&mut self, name: String) -> Result<(), String> {
         self.validate_name(&name, None)?;
@@ -193,6 +249,39 @@ fn valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn playback_modes_survive_restart_and_stay_with_their_bank() {
+        let root = std::env::temp_dir().join(format!(
+            "fadercraft-playback-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut banks = Banks::open(root.clone()).unwrap();
+        let mut modes = [SamplePlayback::OneShot; 16];
+        modes[3] = SamplePlayback::LoopPerBeat;
+        modes[4] = SamplePlayback::LoopQuarterBeat;
+        modes[5] = SamplePlayback::LoopHalfBeat;
+        modes[6] = SamplePlayback::LoopTwoBeats;
+        modes[7] = SamplePlayback::LoopFourBeats;
+        banks.save_playback(&modes).unwrap();
+        banks.create("Other".into()).unwrap();
+        assert_eq!(
+            banks.load_playback().unwrap(),
+            [SamplePlayback::OneShot; 16]
+        );
+        let mut other = [SamplePlayback::OneShot; 16];
+        other[3] = SamplePlayback::ClickToStop;
+        banks.save_playback(&other).unwrap();
+        banks.save().unwrap();
+        let mut reopened = Banks::open(root.clone()).unwrap();
+        assert_eq!(reopened.load_playback().unwrap(), other);
+        reopened.selected = "default".into();
+        assert_eq!(reopened.load_playback().unwrap(), modes);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn names_are_safe_and_ids_survive_renaming() {
         let mut banks = Banks::default();

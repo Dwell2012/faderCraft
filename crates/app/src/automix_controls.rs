@@ -1,6 +1,14 @@
 use super::*;
 use djcraft_protocol::QueueTrack;
 impl Shell {
+    pub(super) fn side_panel_section(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .p(px(4.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(rgb(0x000000))
+    }
+
     pub(super) fn library_side_panel(&self, decks: &[DeckState], cx: &mut Context<Self>) -> Div {
         div()
             .relative()
@@ -9,48 +17,70 @@ impl Shell {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .border_l_1()
+            .gap(px(4.))
+            .p(px(4.))
+            .bg(rgb(0x000000))
+            .border_1()
             .border_color(cx.theme().border)
+            .rounded_lg()
             .child(
-                div().flex().w_full().h(px(30.)).flex_shrink_0().children(
-                    ["AUTOMIX", "SAVED LOOPS", "SAMPLER", "RHYTHM SHIFT"]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(tab, label)| {
-                            div()
-                                .id(("library-side-tab", tab))
-                                .flex()
-                                .flex_1()
-                                .min_w_0()
-                                .h(px(30.))
-                                .items_center()
-                                .justify_center()
-                                .text_size(px(11.))
-                                .when(tab < 3, |button| button.border_r_1())
-                                .border_color(cx.theme().border)
-                                .when(self.library_side_tab == tab, |button| {
-                                    button.bg(cx.theme().background)
-                                })
-                                .when(self.library_side_tab != tab, |button| {
-                                    button.bg(cx.theme().secondary.opacity(0.5)).border_b_1()
-                                })
-                                .child(label)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.library_side_tab = tab;
-                                    if tab == 1 && this.saved_loops_deck.is_none() {
-                                        this.saved_loops_deck = Some(this.active_deck);
-                                    }
-                                    cx.notify();
-                                }))
-                        }),
-                ),
+                div()
+                    .flex()
+                    .w_full()
+                    .h(px(30.))
+                    .flex_shrink_0()
+                    .gap(px(4.))
+                    .children(
+                        ["AUTOMIX", "SAVED LOOPS", "SAMPLER", "RHYTHM SHIFT"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(tab, label)| {
+                                div()
+                                    .id(("library-side-tab", tab))
+                                    .flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(px(30.))
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(11.))
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .when(self.library_side_tab == tab, |button| {
+                                        button.bg(cx.theme().secondary)
+                                    })
+                                    .when(self.library_side_tab != tab, |button| {
+                                        button.bg(cx.theme().secondary.opacity(0.5))
+                                    })
+                                    .child(label)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.library_side_tab = tab;
+                                        if tab == 1 && this.saved_loops_deck.is_none() {
+                                            this.saved_loops_deck = Some(this.active_deck);
+                                        }
+                                        cx.notify();
+                                    }))
+                            }),
+                    ),
             )
-            .child(match self.library_side_tab {
-                0 => self.automix_panel(cx),
-                1 => self.saved_loops_panel(self.saved_loops_deck.unwrap_or(self.active_deck), cx),
-                2 => self.sampler_side_panel(decks, cx),
-                _ => self.rhythm_shift_panel(decks, cx),
-            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(match self.library_side_tab {
+                        0 => self.automix_panel(cx),
+                        1 => self.saved_loops_panel(
+                            self.saved_loops_deck.unwrap_or(self.active_deck),
+                            cx,
+                        ),
+                        2 => self.sampler_side_panel(decks, cx),
+                        _ => self.rhythm_shift_panel(decks, cx),
+                    }),
+            )
             .child(
                 div()
                     .id("library-side-resize")
@@ -181,7 +211,7 @@ impl Shell {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap(px(4.))
                 .p(px(4.))
                 .child(
                     div()
@@ -195,13 +225,13 @@ impl Shell {
                         .child("Uses both decks and the crossfader. Master stays yours."),
                 )
                 .child(
-                    div()
+                    self.side_panel_section(cx)
                         .flex()
-                        .gap_1()
+                        .gap(px(4.))
                         .child(
                             Button::new("auto-start")
 .tooltip("Resume automix on a non-playing deck, or take over the current mix manually.")
-                                .small()
+                                .small().h(px(30.)).rounded(ButtonRounded::None)
                                 .label(if enabled { "Take over" } else { "Resume" })
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.automix_send(
@@ -217,7 +247,7 @@ impl Shell {
                         .child(
                             Button::new("auto-next")
 .tooltip("Start the transition to the next queued track now.")
-                                .small()
+                                .small().h(px(30.)).rounded(ButtonRounded::None)
                                 .label("Next")
                                 .disabled(!enabled || self.automix.transitioning)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -227,7 +257,7 @@ impl Shell {
                         .child(
                             Button::new("auto-clear")
 .tooltip("Clear the remaining automix queue.")
-                                .small()
+                                .small().h(px(30.)).rounded(ButtonRounded::None)
                                 .label("Clear queue")
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.automix_send(MixerAction::AutomixClear, cx)
@@ -235,11 +265,11 @@ impl Shell {
                         ),
                 )
                 .child(
-                    div()
+                    self.side_panel_section(cx)
                         .id("auto-duration")
                         .flex()
                         .items_center()
-                        .gap_1()
+                        .gap(px(4.))
                         .on_scroll_wheel(cx.listener(
                             move |this, event: &ScrollWheelEvent, _, cx| {
                                 let seconds =
@@ -249,7 +279,7 @@ impl Shell {
                             },
                         ))
                         .child(Button::new("auto-shorter")
-.tooltip("Shorten the timed crossfade by one second.").xsmall().label("−").on_click(
+.tooltip("Shorten the timed crossfade by one second.").xsmall().h(px(30.)).rounded(ButtonRounded::None).label("−").on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.automix_send(
                                     MixerAction::AutomixFadeTime {
@@ -261,7 +291,7 @@ impl Shell {
                         ))
                         .child(format!("Fade {seconds:.1}s"))
                         .child(Button::new("auto-longer")
-.tooltip("Lengthen the timed crossfade by one second.").xsmall().label("+").on_click(
+.tooltip("Lengthen the timed crossfade by one second.").xsmall().h(px(30.)).rounded(ButtonRounded::None).label("+").on_click(
                             cx.listener(move |this, _, _, cx| {
                                 this.automix_send(
                                     MixerAction::AutomixFadeTime {
@@ -275,7 +305,7 @@ impl Shell {
                 .child(
                     Button::new("auto-smart")
 .tooltip("Switch between beat-matched EQ transitions and timed crossfades.")
-                        .small()
+                        .small().h(px(30.)).rounded(ButtonRounded::None)
                         .label(if smart { "Beat + EQ" } else { "Timed fade" })
                         .disabled(enabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -287,13 +317,10 @@ impl Shell {
                 } else {
                     "Timed crossfade only"
                 }))
-                .child(div().text_size(px(10.)).child(self.automix.status.clone()));
+                .child(self.side_panel_section(cx).text_size(px(10.)).child(self.automix.status.clone()));
         if let Some(plan) = &self.automix.plan {
             panel = panel.child(
-                div()
-                    .p_2()
-                    .rounded_md()
-                    .bg(rgb(0x152432))
+                self.side_panel_section(cx)
                     .text_size(px(11.))
                     .child(div().child(plan.description.clone()))
                     .child(div().child(plan.vocal_note.clone()))
@@ -324,6 +351,13 @@ impl Shell {
             .flex_1()
             .min_h(px(100.))
             .overflow_y_scroll()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(rgb(0x000000))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
             .drag_over::<DraggedTrack>(|s, _, _, _| s.bg(rgb(0x183849)))
             .on_drop(cx.listener(|this, track: &DraggedTrack, _, cx| {
                 this.enqueue_automix(
@@ -349,7 +383,10 @@ impl Shell {
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(4.))
+                    .p(px(4.))
+                    .border_1()
+                    .border_color(cx.theme().border)
                     .child(
                         div()
                             .flex_1()
@@ -362,6 +399,8 @@ impl Shell {
                         Button::new(("auto-up", index))
                             .tooltip("Move this track earlier in the queue.")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .label("↑")
                             .disabled(index == 0)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -378,6 +417,8 @@ impl Shell {
                         Button::new(("auto-down", index))
                             .tooltip("Move this track later in the queue.")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .label("↓")
                             .disabled(index + 1 >= self.automix.queue.len())
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -394,6 +435,8 @@ impl Shell {
                         Button::new(("auto-remove", index))
                             .tooltip("Remove this track from the queue.")
                             .xsmall()
+                            .h(px(30.))
+                            .rounded(ButtonRounded::None)
                             .label("×")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.automix_send(MixerAction::AutomixRemove { index }, cx)
@@ -405,6 +448,8 @@ impl Shell {
             Button::new("auto-save-playlist")
                 .tooltip("Save the remaining queue as a playlist.")
                 .small()
+                .h(px(30.))
+                .rounded(ButtonRounded::None)
                 .label("Save queue as playlist")
                 .on_click(cx.listener(|this, _, _, cx| this.save_automix_playlist(cx))),
         );

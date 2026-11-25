@@ -86,9 +86,9 @@ impl Shell {
             .min_h_0()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(4.))
             .p(px(4.))
-            .child(div().text_sm().font_weight(FontWeight::BOLD).child("RHYTHM SHIFT"))
+            .child(self.side_panel_section(cx).text_sm().font_weight(FontWeight::BOLD).child("RHYTHM SHIFT"))
             .child(div().text_size(px(10.)).child("Replace a deck's drums with a beat-synced groove. Rolls return at their pack's saved point."));
         for (folder, info) in packs() {
             let label = info.name.clone();
@@ -96,6 +96,9 @@ impl Shell {
                 panel.child(
                     Button::new(format!("rhythm-pack-{}", folder.display()))
                         .small()
+                        .h(px(30.))
+                        .outline()
+                        .rounded(ButtonRounded::None)
                         .label(label)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.rhythm_pack_load(&folder, &info, cx)
@@ -115,10 +118,10 @@ impl Shell {
             }
             let enabled = state.rhythm_shift;
             panel = panel.child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(4.))
                     .child(
                         div()
                             .w(px(48.))
@@ -128,6 +131,9 @@ impl Shell {
                     .child(
                         Button::new(format!("rhythm-enable-{deck}"))
                             .small()
+                            .h(px(30.))
+                            .outline()
+                            .rounded(ButtonRounded::None)
                             .label(if enabled { "On" } else { "Off" })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rhythm_send(
@@ -140,6 +146,9 @@ impl Shell {
                     .children((0..4).map(|slot| {
                         Button::new(format!("rhythm-roll-{deck}-{slot}"))
                             .small()
+                            .h(px(30.))
+                            .outline()
+                            .rounded(ButtonRounded::None)
                             .label(format!("R{}", slot + 1))
                             .disabled(!enabled)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -153,14 +162,17 @@ impl Shell {
             );
             let gain = state.rhythm_gain;
             panel = panel.child(
-                div()
+                self.side_panel_section(cx)
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap(px(4.))
                     .child(div().w(px(48.)).text_size(px(10.)).child("Gain"))
                     .child(
                         Button::new(format!("rhythm-gain-down-{deck}"))
                             .small()
+                            .h(px(30.))
+                            .outline()
+                            .rounded(ButtonRounded::None)
                             .label("−")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rhythm_send(
@@ -181,6 +193,9 @@ impl Shell {
                     .child(
                         Button::new(format!("rhythm-gain-up-{deck}"))
                             .small()
+                            .h(px(30.))
+                            .outline()
+                            .rounded(ButtonRounded::None)
                             .label("+")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rhythm_send(

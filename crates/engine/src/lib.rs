@@ -126,6 +126,7 @@ pub struct Engine {
     sample_errors: [Option<String>; 16],
     sample_pending: Option<sampler::Ready>,
     sample_banks: sample_banks::Banks,
+    sample_playback: [djcraft_protocol::SamplePlayback; 16],
     sampler_error: Option<String>,
     sample_rate: u32,
     rhythm_pack_loaded: bool,
@@ -274,6 +275,7 @@ impl Engine {
             sample_errors: std::array::from_fn(|_| None),
             sample_pending: None,
             sample_banks: Default::default(),
+            sample_playback: Default::default(),
             sampler_error: None,
             sample_rate,
             rhythm_pack_loaded: false,
@@ -354,6 +356,10 @@ impl Engine {
                     return;
                 }
                 self.sample_banks = banks;
+                match self.sample_banks.load_playback() {
+                    Ok(modes) => self.sample_playback = modes,
+                    Err(error) => self.sampler_error = Some(error),
+                }
             }
             Err(error) => {
                 self.sampler_error = Some(error);
@@ -759,14 +765,33 @@ impl Engine {
             SamplerAction::Clear { slot } => {
                 self.request_sample(slot as usize, sampler::Source::Clear)
             }
+            SamplerAction::SetPlayback { slot, mode } => {
+                if slot >= 16 {
+                    return Err(Rejection::InvalidValue);
+                }
+                let mut modes = self.sample_playback;
+                modes[slot as usize] = mode;
+                if let Err(error) = self.sample_banks.save_playback(&modes) {
+                    self.sampler_error = Some(error);
+                    return Err(Rejection::InvalidValue);
+                }
+                self.sample_playback = modes;
+                self.sampler_error = None;
+                Ok(())
+            }
             SamplerAction::Play {
                 slot,
                 play,
                 restart,
                 repeat,
+                period_seconds,
                 level,
             } => {
-                if slot >= 16 || !level.is_finite() || !(0. ..=1.).contains(&level) {
+                if slot >= 16
+                    || !level.is_finite()
+                    || !(0. ..=1.).contains(&level)
+                    || period_seconds.is_some_and(|period| !period.is_finite() || period <= 0.)
+                {
                     return Err(Rejection::InvalidValue);
                 }
                 if self.sample_loading[slot as usize] {
@@ -777,6 +802,7 @@ impl Engine {
                     play,
                     restart,
                     repeat,
+                    period_frames: period_seconds.map(|seconds| seconds * self.sample_rate as f64),
                     level,
                 })
             }
@@ -790,6 +816,7 @@ impl Engine {
                         play: false,
                         restart: false,
                         repeat: false,
+                        period_frames: None,
                         level: 0.,
                     })?;
                 }
@@ -828,6 +855,13 @@ impl Engine {
                 if self.commands.slots() < 16 {
                     return Err(Rejection::Busy);
                 }
+                let playback = match banks.load_playback() {
+                    Ok(modes) => modes,
+                    Err(error) => {
+                        self.sampler_error = Some(error);
+                        return Err(Rejection::InvalidValue);
+                    }
+                };
                 if let Err(error) = banks.save() {
                     self.sampler_error = Some(error);
                     return Err(Rejection::InvalidValue);
@@ -862,6 +896,7 @@ impl Engine {
                     self.send(Command::ClearSample { slot })?;
                 }
                 self.sample_banks = banks;
+                self.sample_playback = playback;
                 self.sampler_error = None;
                 Ok(())
             }
@@ -968,6 +1003,7 @@ impl Engine {
                     play,
                     restart,
                     repeat,
+                    period_frames: None,
                     level,
                 })
             }
@@ -1843,6 +1879,7 @@ impl Engine {
                         self.shared.sample_states()[i]
                     }
                 }),
+                playback: self.sample_playback,
                 error: self.sampler_error.clone(),
             },
             automix: self.automix.state.clone(),

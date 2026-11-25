@@ -4375,6 +4375,7 @@ fn standalone_sampler_ignores_deck_faders_crossfader_and_transport() {
                 play: true,
                 restart: true,
                 repeat: true,
+                period_seconds: None,
                 level: 1.,
             }),
         )
@@ -4582,6 +4583,7 @@ fn deck_stem_capture_freezes_selected_sources_and_survives_reload() {
                         play: true,
                         restart: true,
                         repeat: true,
+                        period_seconds: None,
                         level: 1.,
                     }),
                 )
@@ -4616,6 +4618,7 @@ fn deck_stem_capture_freezes_selected_sources_and_survives_reload() {
                             play: true,
                             restart: true,
                             repeat: true,
+                            period_seconds: None,
                             level: 1.,
                         }),
                     )

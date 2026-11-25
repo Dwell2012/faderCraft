@@ -1001,14 +1001,63 @@ pub enum SamplerAction {
     Clear {
         slot: u8,
     },
+    SetPlayback {
+        slot: u8,
+        mode: SamplePlayback,
+    },
     Play {
         slot: u8,
         play: bool,
         restart: bool,
         repeat: bool,
+        #[serde(default)]
+        period_seconds: Option<f64>,
         level: f32,
     },
     StopAll,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SamplePlayback {
+    #[default]
+    OneShot,
+    ClickToStop,
+    LoopOnEnd,
+    LoopQuarterBeat,
+    LoopHalfBeat,
+    LoopPerBeat,
+    LoopTwoBeats,
+    LoopFourBeats,
+}
+
+impl SamplePlayback {
+    /// Length of a beat-based sampler loop, in beats.
+    pub fn loop_beats(self) -> Option<f64> {
+        match self {
+            Self::LoopQuarterBeat => Some(0.25),
+            Self::LoopHalfBeat => Some(0.5),
+            Self::LoopPerBeat => Some(1.),
+            Self::LoopTwoBeats => Some(2.),
+            Self::LoopFourBeats => Some(4.),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod sample_playback_tests {
+    use super::SamplePlayback;
+
+    #[test]
+    fn beat_lengths_cover_the_sampler_loop_menu() {
+        assert_eq!(SamplePlayback::LoopQuarterBeat.loop_beats(), Some(0.25));
+        assert_eq!(SamplePlayback::LoopHalfBeat.loop_beats(), Some(0.5));
+        assert_eq!(SamplePlayback::LoopPerBeat.loop_beats(), Some(1.));
+        assert_eq!(SamplePlayback::LoopTwoBeats.loop_beats(), Some(2.));
+        assert_eq!(SamplePlayback::LoopFourBeats.loop_beats(), Some(4.));
+        assert_eq!(SamplePlayback::LoopOnEnd.loop_beats(), None);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1026,6 +1075,7 @@ pub struct SamplerState {
     pub loading: [bool; 16],
     pub errors: [Option<String>; 16],
     pub slots: [u8; 16],
+    pub playback: [SamplePlayback; 16],
     pub error: Option<String>,
 }
 impl Default for SamplerState {
@@ -1040,6 +1090,7 @@ impl Default for SamplerState {
             loading: [false; 16],
             errors: Default::default(),
             slots: [0; 16],
+            playback: [SamplePlayback::default(); 16],
             error: None,
         }
     }
