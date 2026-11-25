@@ -117,6 +117,9 @@ pub struct SettingsView {
     controller_present: bool,
     model_download: bool,
     model_notice: String,
+    update_notice: String,
+    update_url: Option<String>,
+    update_checking: bool,
     models_downloaded: [bool; StemModel::ALL.len()],
 }
 
@@ -172,6 +175,9 @@ impl SettingsView {
             controller_present,
             model_download: false,
             model_notice: String::new(),
+            update_notice: String::new(),
+            update_url: None,
+            update_checking: false,
             models_downloaded: StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name())),
         }
     }
@@ -240,6 +246,35 @@ impl SettingsView {
                 };
                 this.models_downloaded =
                     StemModel::ALL.map(|m| crate::stems::model_downloaded(m.name()));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn check_updates(&mut self, cx: &mut Context<Self>) {
+        if self.update_checking {
+            return;
+        }
+        self.update_checking = true;
+        self.update_notice = "Checking GitHub Releases…".into();
+        self.update_url = None;
+        cx.notify();
+        let work = cx
+            .background_executor()
+            .spawn(async { crate::updates::check() });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.update_checking = false;
+                this.update_notice = match result {
+                    Ok(crate::updates::Update::Current) => "This is the latest release.".into(),
+                    Ok(crate::updates::Update::Available { version, url }) => {
+                        this.update_url = Some(url);
+                        format!("{version} is available.")
+                    }
+                    Err(error) => error,
+                };
                 cx.notify();
             });
         })
@@ -908,6 +943,32 @@ impl SettingsView {
                         "Version",
                         "The version of this copy.",
                         self.info(env!("CARGO_PKG_VERSION"), cx),
+                        cx,
+                    ),
+                    self.row(
+                        "Updates",
+                        "Check published GitHub Releases for a newer version.",
+                        Button::new("check-updates")
+                            .outline()
+                            .label("Check for updates")
+                            .disabled(self.update_checking)
+                            .on_click(cx.listener(|this, _, _, cx| this.check_updates(cx))),
+                        cx,
+                    ),
+                    self.row(
+                        "Update status",
+                        "Releases contain the installer and release notes.",
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.info(self.update_notice.clone(), cx))
+                            .when_some(self.update_url.clone(), |row, url| {
+                                row.child(Button::new("open-release")
+                                    .outline()
+                                    .label("Open release")
+                                    .on_click(move |_, _, cx| cx.open_url(&url)))
+                            }),
                         cx,
                     ),
                     self.row(

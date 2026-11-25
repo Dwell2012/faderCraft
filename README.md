@@ -52,6 +52,11 @@ roadmap features. Hardware support and analysis accuracy are still being refined
 
 ## Building and running
 
+Versioned installers and the in-app update check use
+[GitHub Releases](https://github.com/Dwell2012/faderCraft/releases). See the
+[release procedure](docs/RELEASES.md) for package formats and current
+distribution prerequisites.
+
 Clone the repository:
 
 ```powershell

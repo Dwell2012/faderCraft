@@ -18,6 +18,7 @@ mod stems;
 mod storage;
 mod tag_tools;
 mod track_identity;
+mod updates;
 mod waveform;
 mod wheel;
 
