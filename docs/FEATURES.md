@@ -11,6 +11,7 @@
 - [x] Beat Jump keeps the waveform refreshing through audio callback delivery
       in either direction, including while the deck is paused.
 
+- [~] Pioneer DDJ-1000 core starter profile (`@ddj1000`): transport, channel faders, trim, EQ, tempo, loops, hot cues, quantize, slip, Color FX knobs, crossfader, master/booth/headphone levels, browse, load and jog for four decks. Addresses are checked against Pioneer's MIDI list by `tools/audit_ddj1000_profile.py`. [Not yet mapped: pad pages other than Hot Cue, Beat FX, tap BPM and any vinyl-mode toggle. Linux only: the jog screens show time, length, BPM, tempo, play state and a coloured overview waveform (sampled once a track has finished decoding); artwork, key and the tempo-master highlight are missing. Not hardware-verified.]
 - [~] DDJ-GRV6 channel meters follow the post-fader deck peaks. Pad-mode,
       stem preset, shifted cue/sample, key-lock and Rhythm Shift lamps follow
       state, and other mapped buttons acknowledge presses.

@@ -13,6 +13,36 @@ Settings > Controllers selects the mapping: Automatic (detected controller), bun
 
 Controller options are stored per profile. The FX 1 controls choice appears only for a Numark MixTrack Pro II mapping; its bundled and installed versions share that preference. Other controllers do not inherit it. Older global FX 1 settings are migrated to the MixTrack option when settings are loaded.
 
+## Pioneer DDJ-1000 (core starter)
+
+Settings > Controllers offers **Pioneer DDJ-1000 (core starter)**, and Automatic
+detects it. The profile maps the port `DDJ-1000:DDJ-1000 MIDI 1` (the Linux ALSA
+name; the trailing `client:port` number is ignored so replugging does not break
+matching). It covers four-deck transport, channel faders, trim, EQ, tempo, loops,
+quantize, slip, the eight Hot Cue pads, Color FX knobs, crossfader, master, booth
+and headphone levels, browse, load and the jog wheels. Pad pages other than Hot
+Cue, Beat FX, tap BPM and the jog displays are not mapped yet.
+
+Addresses come from Pioneer's *DDJ-1000 List of MIDI Messages* and are recorded in
+`profiles/references/pioneer-ddj-1000.json`. Run
+`python tools/audit_ddj1000_profile.py` after editing the profile. They are
+`documented`, not `hardware-verified`; the channel faders match a live capture.
+On Linux the audio side needs a separate kernel quirk that mainline lacks; MIDI
+works without it.
+
+**Linux jog screens.** The unit shows "NO AUDIO DRIVER", then the rekordbox logo,
+until something logs in. Install `tools/linux/70-ddj1000.rules` (the header lists
+the commands); it clears the message with `tools/ddj1000_announce.py` and lets
+your session open the unit's `hidraw` node. While the controller is allowed,
+faderCraft then logs in over SysEx and sends each deck's time, length, BPM,
+tempo and play state to the jog screens (`ddj1000_link.rs`, `ddj1000_screens.rs`),
+plus a 600-column overview waveform once the track has finished decoding
+(`crates/app/src/screen_wave.rs`; red/green/blue follow low/mid/high energy).
+Artwork, key and the tempo-master highlight are not sent yet.
+The protocol comes from the community's rekordbox capture analysis (see the
+module header); it is not hardware-verified here. Quit other software that logs in
+to the unit (rekordbox, Mixxx screens) first: only one host can be logged in.
+
 ## Startup and hardware changes
 
 The bundled AlphaTheta DDJ-GRV6 starter is an explicit Settings > Controllers

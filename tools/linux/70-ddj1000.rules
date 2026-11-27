@@ -1,0 +1,13 @@
+# Pioneer DJ / AlphaTheta DDJ-1000 on Linux. Install with:
+#   sudo install -m 755 tools/ddj1000_announce.py /usr/local/bin/ddj1000-announce
+#   sudo install -m 644 tools/linux/70-ddj1000.rules /etc/udev/rules.d/70-ddj1000.rules
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=hidraw
+# then unplug and replug the controller.
+
+# Let the logged-in user drive the jog screens (faderCraft writes HID reports).
+KERNEL=="hidraw*", ATTRS{idVendor}=="2b73", ATTRS{idProduct}=="0020", MODE="0660", TAG+="uaccess"
+
+# Send the vendor request that clears "NO AUDIO DRIVER" whenever the unit connects.
+# The script is copied to a root-owned path first: never run a user-writable
+# script as root from udev.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="2b73", ATTR{idProduct}=="0020", RUN+="/usr/bin/systemd-run --no-block --on-active=3 /usr/local/bin/ddj1000-announce"
